@@ -1,4 +1,7 @@
 <resources>
-    <string name="app_name">چند؟</string>
-    <string name="widget_description">نمایش نرخ لحظه‌ای ارز، طلا و رمزارزهای منتخب به تومان</string>
+    <string name="app_name">Chand?!</string>
+    <string name="widget_description">Chand?! — Live Watchlist (EUR, GBP, AED)</string>
+    <string name="widget_single_description">Chand?! — Hero Rate (US Dollar)</string>
+    <string name="widget_crypto_description">Chand?! — Crypto Rates (BTC, ETH, USDT)</string>
+    <string name="widget_2x1_description">Chand?! — Compact 2×1 (USD, EUR, Gold)</string>
 </resources>

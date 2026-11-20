@@ -30,8 +30,11 @@ class PreferencesRepository(private val context: Context) {
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val LANGUAGE = stringPreferencesKey("language")
         val USE_PERSIAN_DIGITS = booleanPreferencesKey("use_persian_digits")
+        val IS_GRID_VIEW = booleanPreferencesKey("is_grid_view")
         val PINNED_IDS = stringSetPreferencesKey("pinned_ids")
         val REFRESH_INTERVAL = intPreferencesKey("refresh_interval_seconds")
+        val WIDGET_TRANSLUCENT = booleanPreferencesKey("widget_translucent")
+        val WIDGET_OPACITY_PERCENT = intPreferencesKey("widget_opacity_percent")
         val CACHED_SNAPSHOT = stringPreferencesKey("cached_snapshot_json")
         val CACHED_UPDATED_AT = longPreferencesKey("cached_updated_at")
     }
@@ -43,18 +46,24 @@ class PreferencesRepository(private val context: Context) {
 
         val language = prefs[Keys.LANGUAGE]?.let { name ->
             AppLanguage.entries.firstOrNull { it.name == name }
-        } ?: AppLanguage.FA
+        } ?: AppLanguage.EN
 
         val usePersianDigits = prefs[Keys.USE_PERSIAN_DIGITS] ?: (language == AppLanguage.FA)
+        val isGridView = prefs[Keys.IS_GRID_VIEW] ?: true
         val pinnedIds = prefs[Keys.PINNED_IDS] ?: AppPreferences.DEFAULT_PINNED_IDS
         val refreshInterval = prefs[Keys.REFRESH_INTERVAL] ?: 30
+        val widgetTranslucent = prefs[Keys.WIDGET_TRANSLUCENT] ?: true
+        val widgetOpacityPercent = prefs[Keys.WIDGET_OPACITY_PERCENT] ?: 70
 
         AppPreferences(
             themeMode = theme,
             language = language,
             usePersianDigits = usePersianDigits,
+            isGridView = isGridView,
             pinnedIds = pinnedIds,
-            refreshIntervalSeconds = refreshInterval
+            refreshIntervalSeconds = refreshInterval,
+            widgetTranslucent = widgetTranslucent,
+            widgetOpacityPercent = widgetOpacityPercent
         )
     }
 
@@ -75,8 +84,20 @@ class PreferencesRepository(private val context: Context) {
         context.chandDataStore.edit { it[Keys.USE_PERSIAN_DIGITS] = enabled }
     }
 
+    suspend fun setIsGridView(isGrid: Boolean) {
+        context.chandDataStore.edit { it[Keys.IS_GRID_VIEW] = isGrid }
+    }
+
     suspend fun setRefreshInterval(seconds: Int) {
         context.chandDataStore.edit { it[Keys.REFRESH_INTERVAL] = seconds }
+    }
+
+    suspend fun setWidgetTranslucent(enabled: Boolean) {
+        context.chandDataStore.edit { it[Keys.WIDGET_TRANSLUCENT] = enabled }
+    }
+
+    suspend fun setWidgetOpacityPercent(percent: Int) {
+        context.chandDataStore.edit { it[Keys.WIDGET_OPACITY_PERCENT] = percent }
     }
 
     suspend fun togglePin(assetId: String): Set<String> {

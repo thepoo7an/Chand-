@@ -48,6 +48,7 @@ data class MarketAsset(
     val priceToman: Double,
     val priceUsd: Double? = null,
     val change24hPercent: Double = 0.0,
+    val change24hToman: Double = 0.0,
     val high24hToman: Double = priceToman,
     val low24hToman: Double = priceToman,
     val sparkline: List<Double> = emptyList(),
@@ -70,13 +71,16 @@ data class CachedMarketSnapshot(
 
 data class AppPreferences(
     val themeMode: ThemeMode = ThemeMode.AMOLED,
-    val language: AppLanguage = AppLanguage.FA,
-    val usePersianDigits: Boolean = true,
+    val language: AppLanguage = AppLanguage.EN,
+    val usePersianDigits: Boolean = false,
+    val isGridView: Boolean = true,
     val pinnedIds: Set<String> = DEFAULT_PINNED_IDS,
-    val refreshIntervalSeconds: Int = 30
+    val refreshIntervalSeconds: Int = 30,
+    val widgetTranslucent: Boolean = true,
+    val widgetOpacityPercent: Int = 70
 ) {
     companion object {
-        val DEFAULT_PINNED_IDS = setOf("USD", "EUR", "GOLD_18K", "COIN_EMAMI", "USDT", "BTC")
+        val DEFAULT_PINNED_IDS = setOf("USD", "EUR", "AED", "GBP", "GOLD_18K", "COIN_QUARTER", "COIN_HALF", "USDT", "BTC", "ETH")
     }
 }
 

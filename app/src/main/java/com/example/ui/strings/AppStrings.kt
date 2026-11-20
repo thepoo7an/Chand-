@@ -5,6 +5,7 @@ import com.example.model.AssetCategory
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
@@ -46,6 +47,11 @@ data class ChandStrings(
     val langPersian: String,
     val langEnglish: String,
     val persianDigitsLabel: String,
+    val layoutSection: String,
+    val layoutGrid: String,
+    val layoutList: String,
+    val watchlistTitle: String,
+    val watchlistSubtitle: String,
     val autoRefreshSection: String,
     val manualRefreshOnly: String,
     val secondsUnit: String,
@@ -58,7 +64,11 @@ data class ChandStrings(
     val categoryGold: String,
     val categoryCrypto: String,
     val tomanAssetName: String,
-    val chartInteractiveHint: String
+    val chartInteractiveHint: String,
+    val widgetSection: String,
+    val widgetTranslucentLabel: String,
+    val widgetOpacityLabel: String,
+    val widgetPreviewTitle: String
 ) {
     fun categoryLabel(category: AssetCategory): String = when (category) {
         AssetCategory.ALL -> categoryAll
@@ -70,11 +80,11 @@ data class ChandStrings(
 }
 
 val FaStrings = ChandStrings(
-    appTitle = "چند؟",
-    marketTab = "نرخ لحظه‌ای",
-    converterTab = "مبدل ارز",
+    appTitle = "Chand?!",
+    marketTab = "بازار",
+    converterTab = "مبدل",
     liveBadge = "زنده",
-    updating = "در حال بروزرسانی...",
+    updating = "بروزرسانی...",
     offlineCachedBanner = "حالت آفلاین — نمایش آخرین نرخ ذخیره شده",
     searchPlaceholder = "جستجوی دلار، یورو، طلا، بیت‌کوین...",
     pinnedSectionTitle = "برگزیده‌ها",
@@ -82,7 +92,7 @@ val FaStrings = ChandStrings(
     emptySearchTitle = "موردی پیدا نشد",
     emptySearchSubtitle = "نام فارسی، انگلیسی یا نماد ارز دیگری را امتحان کنید.",
     emptyPinnedTitle = "هیچ ارزی پین نشده است",
-    emptyPinnedSubtitle = "با لمس آیکون سنجاق، ارزهای مهم خود را به بالا اضافه کنید.",
+    emptyPinnedSubtitle = "با دکمه + ارزهای مورد علاقه خود را انتخاب کنید.",
     tomanUnit = "تومان",
     usdUnit = "دلار",
     high24h = "سقف ۲۴ساعت",
@@ -106,6 +116,11 @@ val FaStrings = ChandStrings(
     langPersian = "فارسی (راست‌چین)",
     langEnglish = "English (LTR)",
     persianDigitsLabel = "نمایش ارقام فارسی (۱۲۳)",
+    layoutSection = "نحوه نمایش کارت‌ها",
+    layoutGrid = "کارت دوتایی",
+    layoutList = "لیست ردیفی",
+    watchlistTitle = "مدیریت کارت‌های برگزیده",
+    watchlistSubtitle = "ارزهایی را که می‌خواهید در صفحه اصلی و ویجت‌ها نمایش داده شوند انتخاب کنید.",
     autoRefreshSection = "بروزرسانی خودکار",
     manualRefreshOnly = "دستی",
     secondsUnit = "ثانیه",
@@ -114,15 +129,19 @@ val FaStrings = ChandStrings(
     ratePerOnePrefix = "هر ۱ واحد =",
     categoryAll = "همه",
     categoryPinned = "پین‌شده",
-    categoryFiat = "ارز آزاد",
+    categoryFiat = "ارزها",
     categoryGold = "طلا و سکه",
     categoryCrypto = "رمزارز",
     tomanAssetName = "تومان ایران",
-    chartInteractiveHint = "برای مشاهده قیمت دقیق روی نمودار بکشید"
+    chartInteractiveHint = "برای مشاهده قیمت دقیق روی نمودار بکشید",
+    widgetSection = "ویجت صفحه اصلی",
+    widgetTranslucentLabel = "حالت نیمه‌شفاف (Translucent)",
+    widgetOpacityLabel = "شفافیت شیشه‌ای ویجت",
+    widgetPreviewTitle = "پیش‌نمایش ویجت 2×1 (دلار، یورو، طلا)"
 )
 
 val EnStrings = ChandStrings(
-    appTitle = "Chand?",
+    appTitle = "Chand?!",
     marketTab = "Markets",
     converterTab = "Converter",
     liveBadge = "LIVE",
@@ -134,7 +153,7 @@ val EnStrings = ChandStrings(
     emptySearchTitle = "No matching assets",
     emptySearchSubtitle = "Try searching another currency name or ticker.",
     emptyPinnedTitle = "No pinned assets yet",
-    emptyPinnedSubtitle = "Tap the pin icon on any currency to keep it on top.",
+    emptyPinnedSubtitle = "Tap + to pin your favorite currencies to the grid.",
     tomanUnit = "TMN",
     usdUnit = "USD",
     high24h = "24h High",
@@ -158,6 +177,11 @@ val EnStrings = ChandStrings(
     langPersian = "فارسی (RTL)",
     langEnglish = "English (LTR)",
     persianDigitsLabel = "Persian Digits (۱۲۳)",
+    layoutSection = "Card Layout",
+    layoutGrid = "2-Column Grid",
+    layoutList = "List View",
+    watchlistTitle = "Customize Watchlist",
+    watchlistSubtitle = "Choose which currencies & assets stay pinned on your home grid and widgets.",
     autoRefreshSection = "Auto Refresh",
     manualRefreshOnly = "Manual",
     secondsUnit = "s",
@@ -170,7 +194,11 @@ val EnStrings = ChandStrings(
     categoryGold = "Gold & Coin",
     categoryCrypto = "Crypto",
     tomanAssetName = "Iranian Toman",
-    chartInteractiveHint = "Drag across the chart to inspect price points"
+    chartInteractiveHint = "Drag across the chart to inspect price points",
+    widgetSection = "Home Screen Widgets",
+    widgetTranslucentLabel = "Translucent Glass Style",
+    widgetOpacityLabel = "Glass Opacity",
+    widgetPreviewTitle = "2×1 Compact Preview (USD • EUR • GOLD)"
 )
 
 fun stringsFor(language: AppLanguage): ChandStrings =
@@ -216,6 +244,52 @@ object NumberFormatters {
         return applyDigits(formatted, usePersianDigits)
     }
 
+    /**
+     * Formats large Toman amounts (e.g., BTC in Billions / ETH in Millions) in crisp Chand?! card style
+     * while preserving exact comma-separated digits for standard currencies and 18K gold.
+     */
+    fun formatCardPrice(amount: Double, usePersianDigits: Boolean): String {
+        val absAmt = abs(amount)
+        val raw = when {
+            absAmt >= 1_000_000_000.0 -> {
+                val b = amount / 1_000_000_000.0
+                "${twoDecimalFmt.format(b)}B"
+            }
+            absAmt >= 100_000_000.0 -> {
+                val m = amount / 1_000_000.0
+                "${twoDecimalFmt.format(m)}M"
+            }
+            absAmt >= 100.0 -> integerFmt.format(amount)
+            absAmt >= 1.0 -> twoDecimalFmt.format(amount)
+            else -> fourDecimalFmt.format(amount)
+        }
+        return applyDigits(raw, usePersianDigits)
+    }
+
+    /**
+     * Formats Chand?!-style Toman delta with arrow: e.g. ↑50, ↓5.35K, ↓2.2M
+     */
+    fun formatDeltaWithArrow(
+        changeToman: Double,
+        changePct: Double,
+        usePersianDigits: Boolean
+    ): String {
+        val arrow = when {
+            changeToman > 0.001 || changePct > 0.005 -> "↑"
+            changeToman < -0.001 || changePct < -0.005 -> "↓"
+            else -> "• "
+        }
+        val absDelta = abs(changeToman)
+        val body = when {
+            absDelta >= 1_000_000.0 -> "${twoDecimalFmt.format(absDelta / 1_000_000.0)}M"
+            absDelta >= 1_000.0 -> "${twoDecimalFmt.format(absDelta / 1_000.0)}K"
+            absDelta >= 1.0 -> integerFmt.format(absDelta)
+            abs(changePct) > 0.005 -> "${String.format(Locale.US, "%.2f", abs(changePct))}%"
+            else -> "0"
+        }
+        return applyDigits("$arrow$body", usePersianDigits)
+    }
+
     fun formatUsd(amount: Double, usePersianDigits: Boolean): String {
         val formatted = when {
             abs(amount) >= 100.0 -> integerFmt.format(amount)
@@ -233,8 +307,38 @@ object NumberFormatters {
 
     fun formatTime(millis: Long, usePersianDigits: Boolean): String {
         if (millis <= 0L) return ""
-        val sdf = SimpleDateFormat("HH:mm:ss", Locale.US)
+        val sdf = SimpleDateFormat("HH:mm", Locale.US)
         return applyDigits(sdf.format(Date(millis)), usePersianDigits)
+    }
+
+    fun formatJalaliDateTime(millis: Long, usePersianDigits: Boolean): String {
+        if (millis <= 0L) return ""
+        val cal = Calendar.getInstance().apply { timeInMillis = millis }
+        val gy = cal.get(Calendar.YEAR)
+        val gm = cal.get(Calendar.MONTH) + 1
+        val gd = cal.get(Calendar.DAY_OF_MONTH)
+        val (jy, jm, jd) = gregorianToJalali(gy, gm, gd)
+        val timeFmt = SimpleDateFormat("h:mm a", Locale.US).format(Date(millis))
+        val dateStr = "$jm/$jd/$jy, $timeFmt"
+        return applyDigits(dateStr, usePersianDigits)
+    }
+
+    private fun gregorianToJalali(gy: Int, gm: Int, gd: Int): Triple<Int, Int, Int> {
+        val gdm = intArrayOf(0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)
+        var gy2 = if (gm > 2) gy + 1 else gy
+        var days = 355666 + (365 * gy) + ((gy2 + 3) / 4) - ((gy2 + 99) / 100) +
+            ((gy2 + 399) / 400) + gd + gdm[gm - 1]
+        var jy = -1595 + (33 * (days / 12053))
+        days %= 12053
+        jy += 4 * (days / 1461)
+        days %= 1461
+        if (days > 365) {
+            jy += (days - 1) / 365
+            days = (days - 1) % 365
+        }
+        val jm = if (days < 186) 1 + (days / 31) else 7 + ((days - 186) / 30)
+        val jd = 1 + if (days < 186) (days % 31) else ((days - 186) % 30)
+        return Triple(jy, jm, jd)
     }
 
     fun formatChartDate(timestampSec: Long, usePersianDigits: Boolean, shortTimeOnly: Boolean): String {

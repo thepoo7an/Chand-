@@ -1,6 +1,6 @@
 {
-  "name": "چند؟ (Chand?)",
-  "description": "ردیاب لحظه‌ای نرخ ارزهای آزاد، طلا، سکه و رمزارز بر پایه تومان ایران با مبدل سریع، نمودار و ویجت",
+  "name": "Chand?!",
+  "description": "AMOLED live currency, gold & crypto tracker in Iranian Toman with quick converter, interactive charts, and 3 home widgets",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -2,13 +2,18 @@ package com.example.data
 
 import android.content.Context
 import androidx.glance.appwidget.updateAll
+import com.example.model.AppLanguage
 import com.example.model.AppPreferences
 import com.example.model.AssetHistoryPoint
 import com.example.model.CachedMarketSnapshot
 import com.example.model.MarketAsset
+import com.example.model.ThemeMode
 import com.example.model.TimeRange
 import com.example.network.MarketRemoteDataSource
-import com.example.widget.ChandGlanceWidget
+import com.example.widget.ChandCompact2x1Widget
+import com.example.widget.ChandCompactCryptoWidget
+import com.example.widget.ChandSingleAssetWidget
+import com.example.widget.ChandWideListWidget
 import kotlinx.coroutines.flow.Flow
 
 data class MarketSyncResult(
@@ -36,7 +41,7 @@ class MarketRepository(
                 sourceSummary = result.sourceSummary
             )
             prefsRepo.saveCachedSnapshot(snapshot)
-            runCatching { ChandGlanceWidget().updateAll(context) }
+            updateAllWidgets()
             return MarketSyncResult(
                 assets = result.assets,
                 updatedAtMillis = result.fetchedAtMillis,
@@ -59,23 +64,42 @@ class MarketRepository(
 
     suspend fun togglePin(assetId: String) {
         prefsRepo.togglePin(assetId)
-        runCatching { ChandGlanceWidget().updateAll(context) }
+        updateAllWidgets()
     }
 
-    suspend fun setThemeMode(mode: com.example.model.ThemeMode) {
+    suspend fun setThemeMode(mode: ThemeMode) {
         prefsRepo.setThemeMode(mode)
-        runCatching { ChandGlanceWidget().updateAll(context) }
+        updateAllWidgets()
     }
 
-    suspend fun setLanguage(language: com.example.model.AppLanguage) {
+    suspend fun setLanguage(language: AppLanguage) {
         prefsRepo.setLanguage(language)
-        runCatching { ChandGlanceWidget().updateAll(context) }
+        updateAllWidgets()
     }
 
     suspend fun setUsePersianDigits(enabled: Boolean) {
         prefsRepo.setUsePersianDigits(enabled)
-        runCatching { ChandGlanceWidget().updateAll(context) }
+        updateAllWidgets()
     }
 
+    suspend fun setIsGridView(isGrid: Boolean) = prefsRepo.setIsGridView(isGrid)
+
     suspend fun setRefreshInterval(seconds: Int) = prefsRepo.setRefreshInterval(seconds)
+
+    suspend fun setWidgetTranslucent(enabled: Boolean) {
+        prefsRepo.setWidgetTranslucent(enabled)
+        updateAllWidgets()
+    }
+
+    suspend fun setWidgetOpacityPercent(percent: Int) {
+        prefsRepo.setWidgetOpacityPercent(percent)
+        updateAllWidgets()
+    }
+
+    private suspend fun updateAllWidgets() {
+        runCatching { ChandSingleAssetWidget().updateAll(context) }
+        runCatching { ChandWideListWidget().updateAll(context) }
+        runCatching { ChandCompactCryptoWidget().updateAll(context) }
+        runCatching { ChandCompact2x1Widget().updateAll(context) }
+    }
 }

@@ -4,26 +4,27 @@ import androidx.compose.ui.graphics.Color
 
 // Brand & Semantic Accents
 val CyanElectric = Color(0xFF22D3EE)
-val SkyFinancial = Color(0xFF0284C7)
+val SkyFinancial = Color(0xFF0F172A)
 val SkySoft = Color(0xFF38BDF8)
 
-val GainEmerald = Color(0xFF10B981)
-val GainEmeraldLightBg = Color(0xFFE6F8F1)
+val GainEmerald = Color(0xFF16A34A)
+val GainEmeraldLightBg = Color(0xFFE7F7EE)
 val GainEmeraldDarkBg = Color(0xFF0B2E23)
 
-val LossCoral = Color(0xFFEF4444)
+val LossCoral = Color(0xFFDC2626)
 val LossCoralLightBg = Color(0xFFFEECEC)
 val LossCoralDarkBg = Color(0xFF331418)
 
 val GoldAmber = Color(0xFFF59E0B)
 
-// Light Theme (Clean Swiss Paper)
-val LightBg = Color(0xFFF5F7FA)
+// Light Theme (Warm Swiss Alabaster inspired by Chand?!)
+val LightBg = Color(0xFFEFECE6)
+val LightBgBottom = Color(0xFFE3DDD3)
 val LightSurface = Color(0xFFFFFFFF)
-val LightSurfaceVariant = Color(0xFFEBEEF3)
-val LightTextPrimary = Color(0xFF0B1220)
-val LightTextSecondary = Color(0xFF5B6577)
-val LightBorder = Color(0xFFE2E6EE)
+val LightSurfaceVariant = Color(0xFFF6F4F0)
+val LightTextPrimary = Color(0xFF111317)
+val LightTextSecondary = Color(0xFF6B7280)
+val LightBorder = Color(0xFFE5E0D8)
 
 // Standard Dark Theme (Obsidian Slate)
 val DarkBg = Color(0xFF0E131B)

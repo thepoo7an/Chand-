@@ -66,6 +66,7 @@ import com.example.model.AppPreferences
 import com.example.model.AssetCategory
 import com.example.model.MarketAsset
 import com.example.model.MarketUiState
+import com.example.ui.components.AssetBadge
 import com.example.ui.strings.ChandStrings
 import com.example.ui.strings.NumberFormatters
 import com.example.ui.theme.LocalMarketColors
@@ -473,7 +474,13 @@ private fun ConverterSideCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(text = asset.badgeText, fontSize = 20.sp)
+                    AssetBadge(
+                        assetId = asset.id,
+                        category = asset.category,
+                        fallbackText = asset.badgeText,
+                        accentHex = asset.accentHex,
+                        size = 30.dp
+                    )
                     Column {
                         Text(
                             text = asset.symbol,
@@ -654,7 +661,13 @@ private fun AssetPickerSheet(
                                 .padding(horizontal = 14.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(text = item.badgeText, fontSize = 22.sp)
+                            AssetBadge(
+                                assetId = item.id,
+                                category = item.category,
+                                fallbackText = item.badgeText,
+                                accentHex = item.accentHex,
+                                size = 34.dp
+                            )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(

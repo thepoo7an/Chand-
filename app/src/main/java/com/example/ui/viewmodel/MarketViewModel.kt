@@ -205,9 +205,27 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setIsGridView(isGrid: Boolean) {
+        viewModelScope.launch {
+            repository.setIsGridView(isGrid)
+        }
+    }
+
     fun setRefreshInterval(seconds: Int) {
         viewModelScope.launch {
             repository.setRefreshInterval(seconds)
+        }
+    }
+
+    fun setWidgetTranslucent(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setWidgetTranslucent(enabled)
+        }
+    }
+
+    fun setWidgetOpacityPercent(percent: Int) {
+        viewModelScope.launch {
+            repository.setWidgetOpacityPercent(percent)
         }
     }
 

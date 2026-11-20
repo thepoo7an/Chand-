@@ -8,8 +8,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -29,6 +31,7 @@ data class RemoteFetchResult(
 
 class MarketRemoteDataSource(
     private val client: OkHttpClient = OkHttpClient.Builder()
+        .cache(null)
         .connectTimeout(7, TimeUnit.SECONDS)
         .readTimeout(7, TimeUnit.SECONDS)
         .callTimeout(10, TimeUnit.SECONDS)
@@ -39,10 +42,11 @@ class MarketRemoteDataSource(
         val priceToman: Double,
         val highToman: Double,
         val lowToman: Double,
+        val changeToman: Double,
         val changePct: Double
     )
 
-    private data class WallexQuote(
+    private data class ExchangeQuote(
         val priceToman: Double?,
         val priceUsd: Double?,
         val changePct: Double
@@ -52,22 +56,29 @@ class MarketRemoteDataSource(
         coroutineScope {
             val tgjuDeferred = async { fetchTgjuQuotes() }
             val wallexDeferred = async { fetchWallexQuotes() }
+            val bitpinDeferred = async { fetchBitpinQuotes() }
             val nobitexUsdtDeferred = async { fetchNobitexOrderbook("USDTIRT") }
+            val binanceDeferred = async { fetchBinanceQuotes() }
             val fxDeferred = async { fetchOpenExchangeRates() }
-            val coinGeckoDeferred = async { fetchCoinGeckoUsdQuotes() }
+            val frankfurterDeferred = async { fetchFrankfurterRates() }
 
             val tgju = tgjuDeferred.await()
             val wallex = wallexDeferred.await()
+            val bitpin = bitpinDeferred.await()
             val nobitexUsdt = nobitexUsdtDeferred.await()
-            val fxUsdRates = fxDeferred.await()
-            val coinGecko = coinGeckoDeferred.await()
+            val binance = binanceDeferred.await()
+            val openErRates = fxDeferred.await()
+            val frankfurterRates = frankfurterDeferred.await()
+
+            val fxUsdRates = openErRates.ifEmpty { frankfurterRates }
 
             val activeSources = mutableListOf<String>()
             if (tgju.isNotEmpty()) activeSources.add("TGJU")
             if (wallex.isNotEmpty()) activeSources.add("Wallex")
+            if (bitpin.isNotEmpty()) activeSources.add("Bitpin")
             if (nobitexUsdt != null) activeSources.add("Nobitex")
+            if (binance.isNotEmpty()) activeSources.add("Binance")
             if (fxUsdRates.isNotEmpty()) activeSources.add("FX")
-            if (coinGecko.isNotEmpty() && wallex.isEmpty()) activeSources.add("CoinGecko")
 
             if (activeSources.isEmpty()) {
                 return@coroutineScope RemoteFetchResult(
@@ -80,16 +91,28 @@ class MarketRemoteDataSource(
 
             val now = System.currentTimeMillis()
 
-            // Anchor USDT/TMN and USD/TMN
-            val usdtWallex = wallex["USDT"]
-            val usdtToman = usdtWallex?.priceToman
-                ?: nobitexUsdt
-                ?: tgju["price_dollar_rl"]?.priceToman
-                ?: 68_500.0
+            // Live 24/7 median Tether (USDT/TMN) across Wallex, Bitpin, Nobitex
+            val usdtCandidates = listOfNotNull(
+                wallex["USDT"]?.priceToman,
+                bitpin["USDT"]?.priceToman,
+                nobitexUsdt
+            ).filter { it > 1000.0 }.sorted()
+
+            val usdtToman = when {
+                usdtCandidates.size >= 3 -> usdtCandidates[1]
+                usdtCandidates.isNotEmpty() -> usdtCandidates.average()
+                else -> tgju["price_dollar_rl"]?.priceToman ?: 68_500.0
+            }
+
+            val usdtChangePct = wallex["USDT"]?.changePct
+                ?: bitpin["USDT"]?.changePct
+                ?: tgju["price_dollar_rl"]?.changePct
+                ?: 0.0
 
             val usdQuote = tgju["price_dollar_rl"]
             val usdToman = usdQuote?.priceToman ?: usdtToman
-            val usdChange = usdQuote?.changePct ?: usdtWallex?.changePct ?: 0.0
+            val usdChangePct = usdQuote?.changePct ?: usdtChangePct
+            val usdChangeToman = usdQuote?.changeToman ?: (usdToman * usdChangePct / 100.0)
 
             fun resolveFiat(
                 id: String,
@@ -108,22 +131,24 @@ class MarketRemoteDataSource(
                 var priceToman = tQuote?.priceToman ?: crossPriceToman ?: return null
                 var highToman = tQuote?.highToman ?: priceToman * 1.006
                 var lowToman = tQuote?.lowToman ?: priceToman * 0.994
+                var changeToman = tQuote?.changeToman ?: (priceToman * usdChangePct / 100.0)
 
-                // Guard against 100-unit quotes (e.g. JPY / IQD in TGJU)
                 if (crossPriceToman != null && crossPriceToman > 0.0) {
                     val ratio = priceToman / crossPriceToman
                     if (ratio > 50.0 && ratio < 200.0) {
                         priceToman /= 100.0
                         highToman /= 100.0
                         lowToman /= 100.0
+                        changeToman /= 100.0
                     } else if (ratio > 500.0 && ratio < 2000.0) {
                         priceToman /= 1000.0
                         highToman /= 1000.0
                         lowToman /= 1000.0
+                        changeToman /= 1000.0
                     }
                 }
 
-                val change = tQuote?.changePct ?: usdChange
+                val changePct = tQuote?.changePct ?: usdChangePct
                 val src = if (tQuote != null) "TGJU" else "FX + USD"
 
                 return MarketAsset(
@@ -136,10 +161,11 @@ class MarketRemoteDataSource(
                     accentHex = accent,
                     priceToman = priceToman,
                     priceUsd = if (fxPerUsd != null && fxPerUsd > 0.0) 1.0 / fxPerUsd else null,
-                    change24hPercent = change,
+                    change24hPercent = changePct,
+                    change24hToman = changeToman,
                     high24hToman = maxOf(highToman, priceToman),
                     low24hToman = minOf(lowToman, priceToman),
-                    sparkline = buildSparkline(priceToman, change, id.hashCode()),
+                    sparkline = buildSparkline(priceToman, changePct, id.hashCode()),
                     sourceLabel = src,
                     updatedAtMillis = now
                 )
@@ -159,20 +185,21 @@ class MarketRemoteDataSource(
                     accentHex = 0xFF10B981,
                     priceToman = usdToman,
                     priceUsd = 1.0,
-                    change24hPercent = usdChange,
+                    change24hPercent = usdChangePct,
+                    change24hToman = usdChangeToman,
                     high24hToman = maxOf(usdQuote?.highToman ?: (usdToman * 1.008), usdToman),
                     low24hToman = minOf(usdQuote?.lowToman ?: (usdToman * 0.992), usdToman),
-                    sparkline = buildSparkline(usdToman, usdChange, "USD".hashCode()),
-                    sourceLabel = if (usdQuote != null) "TGJU" else "Tether Index",
+                    sparkline = buildSparkline(usdToman, usdChangePct, "USD".hashCode()),
+                    sourceLabel = if (usdQuote != null) "TGJU" else "USDT Median",
                     updatedAtMillis = now
                 )
             )
 
-            // Other major fiat currencies
             listOfNotNull(
                 resolveFiat("EUR", "EUR", "یورو", "Euro", "🇪🇺", 0xFF3B82F6, "price_eur", "EUR"),
                 resolveFiat("AED", "AED", "درهم امارات", "UAE Dirham", "🇦🇪", 0xFF14B8A6, "price_aed", "AED"),
                 resolveFiat("GBP", "GBP", "پوند انگلیس", "British Pound", "🇬🇧", 0xFF6366F1, "price_gbp", "GBP"),
+                resolveFiat("KWD", "KWD", "دینار کویت", "Kuwaiti Dinar", "🇰🇼", 0xFF059669, "price_kwd", "KWD"),
                 resolveFiat("TRY", "TRY", "لیر ترکیه", "Turkish Lira", "🇹🇷", 0xFFEF4444, "price_try", "TRY"),
                 resolveFiat("CAD", "CAD", "دلار کانادا", "Canadian Dollar", "🇨🇦", 0xFFF43F5E, "price_cad", "CAD"),
                 resolveFiat("CHF", "CHF", "فرانک سوئیس", "Swiss Franc", "🇨🇭", 0xFFEC4899, "price_chf", "CHF"),
@@ -183,14 +210,12 @@ class MarketRemoteDataSource(
                 resolveFiat("IQD", "IQD", "دینار عراق", "Iraqi Dinar", "🇮🇶", 0xFF84CC16, "price_iqd", "IQD")
             ).forEach { assets.add(it) }
 
-            // 2. Gold & Coins (from TGJU, or derived via global Gold Oz / 18k parity if TGJU unreachable)
+            // 2. Gold & Coins (live PAXG Gold Ounce from Binance + TGJU Tehran coins/18K)
+            val binanceGoldOz = binance["PAXG"]?.priceUsd
             val onsRaw = tgju["ons"]
-            val onsUsd = if (onsRaw != null) {
-                // TGJU 'ons' is in USD directly (already divided by 10 in parseTgju, so check magnitude)
-                val rawOns = onsRaw.priceToman * 10.0
-                if (rawOns in 1200.0..5500.0) rawOns else 2650.0
-            } else {
-                2650.0
+            val onsUsd = binanceGoldOz ?: run {
+                val rawOns = (onsRaw?.priceToman ?: 0.0) * 10.0
+                if (rawOns in 1200.0..6500.0) rawOns else 2650.0
             }
             val gram24Theoretical = (onsUsd / 31.1035) * usdToman
             val gram18Theoretical = gram24Theoretical * 0.75
@@ -203,11 +228,18 @@ class MarketRemoteDataSource(
                 badge: String,
                 tgjuKey: String,
                 fallbackPrice: Double,
-                usdValue: Double? = null
+                usdValue: Double? = null,
+                overrideSource: String? = null
             ) {
                 val q = tgju[tgjuKey]
                 val price = if (id == "XAU_OZ") onsUsd * usdToman else (q?.priceToman ?: fallbackPrice)
-                val change = q?.changePct ?: usdChange
+                val changePct = if (id == "XAU_OZ") (binance["PAXG"]?.changePct ?: q?.changePct ?: usdChangePct)
+                else (q?.changePct ?: usdChangePct)
+                val changeToman = if (id == "XAU_OZ") {
+                    price * changePct / 100.0
+                } else {
+                    q?.changeToman ?: (price * changePct / 100.0)
+                }
                 val high = if (id == "XAU_OZ") price * 1.008 else maxOf(q?.highToman ?: (price * 1.01), price)
                 val low = if (id == "XAU_OZ") price * 0.992 else minOf(q?.lowToman ?: (price * 0.99), price)
                 assets.add(
@@ -221,60 +253,81 @@ class MarketRemoteDataSource(
                         accentHex = 0xFFF59E0B,
                         priceToman = price,
                         priceUsd = usdValue ?: (price / usdToman),
-                        change24hPercent = change,
+                        change24hPercent = changePct,
+                        change24hToman = changeToman,
                         high24hToman = high,
                         low24hToman = low,
-                        sparkline = buildSparkline(price, change, id.hashCode()),
-                        sourceLabel = if (q != null) "TGJU" else "XAU Index",
+                        sparkline = buildSparkline(price, changePct, id.hashCode()),
+                        sourceLabel = overrideSource ?: if (q != null) "TGJU" else "PAXG + USD",
                         updatedAtMillis = now
                     )
                 )
             }
 
-            addGoldAsset("GOLD_18K", "18K", "طلای ۱۸ عیار (گرم)", "18K Gold (1g)", "✨", "geram18", gram18Theoretical)
-            addGoldAsset("COIN_EMAMI", "SEKE", "سکه امامی", "Emami Gold Coin", "🪙", "sekee", gram18Theoretical * 11.15)
-            addGoldAsset("COIN_HALF", "NIM", "نیم‌سکه", "Half Gold Coin", "🥇", "nim", gram18Theoretical * 5.95)
-            addGoldAsset("COIN_QUARTER", "ROB", "ربع‌سکه", "Quarter Gold Coin", "🏅", "rob", gram18Theoretical * 3.55)
-            addGoldAsset("XAU_OZ", "XAU", "انس جهانی طلا", "Gold Ounce", "🏆", "ons", onsUsd * usdToman, onsUsd)
+            addGoldAsset("GOLD_18K", "GRAM", "طلای ۱۸ عیار", "Gram", "✨", "geram18", gram18Theoretical)
+            addGoldAsset("COIN_QUARTER", "QUARTER", "ربع سکه", "1/4 Azadi", "🏅", "rob", gram18Theoretical * 3.55)
+            addGoldAsset("COIN_HALF", "HALF", "نیم سکه", "1/2 Azadi", "🥇", "nim", gram18Theoretical * 5.95)
+            addGoldAsset("COIN_EMAMI", "SEKE", "سکه امامی", "Emami Coin", "🪙", "sekee", gram18Theoretical * 11.15)
+            addGoldAsset(
+                id = "XAU_OZ",
+                symbol = "XAU",
+                nameFa = "انس جهانی طلا",
+                nameEn = "Gold Ounce",
+                badge = "🏆",
+                tgjuKey = "ons",
+                fallbackPrice = onsUsd * usdToman,
+                usdValue = onsUsd,
+                overrideSource = if (binanceGoldOz != null) "Binance PAXG" else "TGJU"
+            )
 
-            // 3. Cryptocurrencies (Wallex + Nobitex + CoinGecko fallback)
+            // 3. Cryptocurrencies (Wallex + Bitpin + Nobitex + Binance 24/7)
             data class CryptoMeta(
                 val id: String,
                 val nameFa: String,
                 val nameEn: String,
                 val badge: String,
-                val accent: Long,
-                val geckoId: String
+                val accent: Long
             )
 
             val cryptoList = listOf(
-                CryptoMeta("USDT", "تتر", "Tether", "₮", 0xFF26A17B, "tether"),
-                CryptoMeta("BTC", "بیت‌کوین", "Bitcoin", "₿", 0xFFF7931A, "bitcoin"),
-                CryptoMeta("ETH", "اتریوم", "Ethereum", "Ξ", 0xFF627EEA, "ethereum"),
-                CryptoMeta("TON", "تون‌کوین", "Toncoin", "💎", 0xFF0098EA, "the-open-network"),
-                CryptoMeta("SOL", "سولانا", "Solana", "◎", 0xFF9945FF, "solana"),
-                CryptoMeta("BNB", "بایننس‌کوین", "BNB", "🔶", 0xFFF3BA2F, "binancecoin"),
-                CryptoMeta("XRP", "ریپل", "XRP", "✕", 0xFF38BDF8, "ripple"),
-                CryptoMeta("DOGE", "دوج‌کوین", "Dogecoin", "Ð", 0xFFC2A633, "dogecoin")
+                CryptoMeta("USDT", "تتر", "Tether", "₮", 0xFF26A17B),
+                CryptoMeta("BTC", "بیت‌کوین", "Bitcoin", "₿", 0xFFF7931A),
+                CryptoMeta("ETH", "اتریوم", "Ethereum", "Ξ", 0xFF627EEA),
+                CryptoMeta("TON", "تون‌کوین", "Toncoin", "◆", 0xFF0098EA),
+                CryptoMeta("SOL", "سولانا", "Solana", "◎", 0xFF9945FF),
+                CryptoMeta("BNB", "بایننس‌کوین", "BNB", "◈", 0xFFF3BA2F),
+                CryptoMeta("XRP", "ریپل", "XRP", "✕", 0xFF38BDF8),
+                CryptoMeta("DOGE", "دوج‌کوین", "Dogecoin", "Ð", 0xFFC2A633)
             )
 
             cryptoList.forEach { meta ->
                 val w = wallex[meta.id]
-                val cg = coinGecko[meta.geckoId]
-                val priceUsd = if (meta.id == "USDT") 1.0 else (w?.priceUsd ?: cg?.first)
+                val bp = bitpin[meta.id]
+                val bn = binance[meta.id]
+
+                val priceUsd = if (meta.id == "USDT") 1.0 else (bn?.priceUsd ?: w?.priceUsd ?: bp?.priceUsd)
+                val tmnCandidates = listOfNotNull(w?.priceToman, bp?.priceToman)
                 val priceToman = when {
                     meta.id == "USDT" -> usdtToman
-                    w?.priceToman != null -> w.priceToman
+                    tmnCandidates.isNotEmpty() -> tmnCandidates.average()
                     priceUsd != null -> priceUsd * usdtToman
                     else -> null
                 }
 
                 if (priceToman != null && priceToman > 0.0) {
-                    val change = w?.changePct ?: cg?.second ?: 0.0
+                    val changePct = bn?.changePct ?: w?.changePct ?: bp?.changePct ?: 0.0
+                    val changeToman = priceToman * (changePct / 100.0)
                     val source = when {
-                        meta.id == "USDT" && nobitexUsdt != null && w == null -> "Nobitex"
-                        w != null -> "Wallex"
-                        else -> "CoinGecko"
+                        meta.id == "USDT" -> listOfNotNull(
+                            if (wallex["USDT"]?.priceToman != null) "Wallex" else null,
+                            if (bitpin["USDT"]?.priceToman != null) "Bitpin" else null,
+                            if (nobitexUsdt != null) "Nobitex" else null
+                        ).joinToString("+").ifEmpty { "Live" }
+                        w?.priceToman != null && bp?.priceToman != null -> "Wallex+Bitpin"
+                        w?.priceToman != null -> "Wallex"
+                        bp?.priceToman != null -> "Bitpin"
+                        bn != null -> "Binance"
+                        else -> "Live"
                     }
                     assets.add(
                         MarketAsset(
@@ -287,10 +340,11 @@ class MarketRemoteDataSource(
                             accentHex = meta.accent,
                             priceToman = priceToman,
                             priceUsd = priceUsd,
-                            change24hPercent = change,
-                            high24hToman = priceToman * (1.0 + maxOf(0.008, abs(change) / 100.0)),
-                            low24hToman = priceToman * (1.0 - maxOf(0.008, abs(change) / 100.0)),
-                            sparkline = buildSparkline(priceToman, change, meta.id.hashCode()),
+                            change24hPercent = changePct,
+                            change24hToman = changeToman,
+                            high24hToman = priceToman * (1.0 + maxOf(0.008, abs(changePct) / 100.0)),
+                            low24hToman = priceToman * (1.0 - maxOf(0.008, abs(changePct) / 100.0)),
+                            sparkline = buildSparkline(priceToman, changePct, meta.id.hashCode()),
                             sourceLabel = source,
                             updatedAtMillis = now
                         )
@@ -314,7 +368,6 @@ class MarketRemoteDataSource(
         val nowSec = System.currentTimeMillis() / 1000L
         val fromSec = nowSec - range.lookbackSeconds
 
-        // 1. Try Nobitex UDF for Crypto / USDT directly in Toman
         if (asset.category == AssetCategory.CRYPTO) {
             val nobitexPoints = fetchNobitexUdf("${asset.symbol}IRT", range.nobitexResolution, fromSec, nowSec)
             if (nobitexPoints.size >= 4) {
@@ -322,7 +375,6 @@ class MarketRemoteDataSource(
             }
         }
 
-        // 2. For Fiat / Gold, combine Nobitex USDTIRT history + Frankfurter FX if available for >= 7D
         if (asset.category == AssetCategory.FIAT && range != TimeRange.H24 && asset.symbol != "USD") {
             val fxPoints = fetchFrankfurterHistory(asset.symbol, fromSec, nowSec)
             val usdtPoints = fetchNobitexUdf("USDTIRT", range.nobitexResolution, fromSec, nowSec)
@@ -333,27 +385,27 @@ class MarketRemoteDataSource(
                     AssetHistoryPoint(usdtPt.timestampSec, rawToman)
                 }
                 if (combined.size >= 4) {
-                    // Align final point smoothly to live market price
                     val factor = if (combined.last().priceToman > 0) asset.priceToman / combined.last().priceToman else 1.0
                     return@withContext combined.map { it.copy(priceToman = it.priceToman * factor) }
                 }
             }
         }
 
-        // 3. Fallback for USD / Gold: check USDTIRT UDF and scale cleanly to current asset price
         val usdtFallback = fetchNobitexUdf("USDTIRT", range.nobitexResolution, fromSec, nowSec)
         if (usdtFallback.size >= 4 && usdtFallback.last().priceToman > 0.0) {
             val scale = asset.priceToman / usdtFallback.last().priceToman
             return@withContext usdtFallback.map { it.copy(priceToman = it.priceToman * scale) }
         }
 
-        // 4. Deterministic anchored trend fallback if historical endpoint is offline
         buildAnchoredHistory(asset, range, fromSec, nowSec)
     }
 
     private fun executeGet(url: String): String? = runCatching {
         val request = Request.Builder()
             .url(url)
+            .cacheControl(CacheControl.FORCE_NETWORK)
+            .header("Cache-Control", "no-cache, no-store")
+            .header("Pragma", "no-cache")
             .header("User-Agent", "ChandAndroid/1.0")
             .build()
         client.newCall(request).execute().use { resp ->
@@ -363,7 +415,8 @@ class MarketRemoteDataSource(
     }.getOrNull()
 
     private fun fetchTgjuQuotes(): Map<String, TgjuQuote> {
-        val raw = executeGet("https://call5.tgju.org/ajax.json") ?: return emptyMap()
+        val raw = executeGet("https://call5.tgju.org/ajax.json?t=${System.currentTimeMillis()}")
+            ?: return emptyMap()
         return runCatching {
             val root = JSONObject(raw)
             val current = root.optJSONObject("current") ?: return emptyMap()
@@ -376,13 +429,17 @@ class MarketRemoteDataSource(
                 if (priceRial <= 0.0) continue
                 val highRial = parseNumeric(obj.optString("h")) ?: priceRial
                 val lowRial = parseNumeric(obj.optString("l")) ?: priceRial
+                val diffRial = parseNumeric(obj.optString("d")) ?: 0.0
                 val dp = parseNumeric(obj.optString("dp")) ?: 0.0
                 val dt = obj.optString("dt")
-                val signedDp = if (dt == "low" && dp > 0) -dp else dp
+                val sign = if (dt == "low") -1.0 else 1.0
+                val signedDp = if (dp > 0) sign * dp else dp
+                val signedDiff = if (diffRial > 0) sign * diffRial else diffRial
                 map[k] = TgjuQuote(
                     priceToman = priceRial / 10.0,
                     highToman = highRial / 10.0,
                     lowToman = lowRial / 10.0,
+                    changeToman = signedDiff / 10.0,
                     changePct = signedDp
                 )
             }
@@ -390,7 +447,7 @@ class MarketRemoteDataSource(
         }.getOrDefault(emptyMap())
     }
 
-    private fun fetchWallexQuotes(): Map<String, WallexQuote> {
+    private fun fetchWallexQuotes(): Map<String, ExchangeQuote> {
         val raw = executeGet("https://api.wallex.ir/v1/markets") ?: return emptyMap()
         return runCatching {
             val root = JSONObject(raw)
@@ -418,17 +475,82 @@ class MarketRemoteDataSource(
             }
 
             val allBases = tmnPrices.keys + usdtPrices.keys
-            val result = mutableMapOf<String, WallexQuote>()
+            val result = mutableMapOf<String, ExchangeQuote>()
             for (base in allBases) {
                 val tmn = tmnPrices[base]
                 val usdt = usdtPrices[base]
-                result[base] = WallexQuote(
+                result[base] = ExchangeQuote(
                     priceToman = tmn?.first,
                     priceUsd = usdt?.first,
                     changePct = tmn?.second ?: usdt?.second ?: 0.0
                 )
             }
             result
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun fetchBitpinQuotes(): Map<String, ExchangeQuote> {
+        val raw = executeGet("https://api.bitpin.ir/v1/mkt/markets/") ?: return emptyMap()
+        return runCatching {
+            val root = JSONObject(raw)
+            val results = root.optJSONArray("results") ?: return emptyMap()
+            val tmnPrices = mutableMapOf<String, Pair<Double, Double>>()
+            val usdtPrices = mutableMapOf<String, Pair<Double, Double>>()
+
+            for (i in 0 until results.length()) {
+                val item = results.optJSONObject(i) ?: continue
+                val base = item.optJSONObject("currency1")?.optString("code")
+                    ?: item.optJSONObject("base_currency")?.optString("code")
+                    ?: continue
+                val quote = item.optJSONObject("currency2")?.optString("code")
+                    ?: item.optJSONObject("quote_currency")?.optString("code")
+                    ?: continue
+                val priceInfo = item.optJSONObject("price_info")
+                val price = parseNumeric(priceInfo?.optString("price"))
+                    ?: parseNumeric(item.optString("price"))
+                    ?: continue
+                val change = priceInfo?.optDouble("change", 0.0) ?: 0.0
+                if (quote == "IRT" && price > 0) {
+                    tmnPrices[base] = price to change
+                } else if (quote == "USDT" && price > 0) {
+                    usdtPrices[base] = price to change
+                }
+            }
+
+            val allBases = tmnPrices.keys + usdtPrices.keys
+            val map = mutableMapOf<String, ExchangeQuote>()
+            for (base in allBases) {
+                val tmn = tmnPrices[base]
+                val usdt = usdtPrices[base]
+                map[base] = ExchangeQuote(
+                    priceToman = tmn?.first,
+                    priceUsd = usdt?.first,
+                    changePct = tmn?.second ?: usdt?.second ?: 0.0
+                )
+            }
+            map
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun fetchBinanceQuotes(): Map<String, ExchangeQuote> {
+        val symbols = "[\"BTCUSDT\",\"ETHUSDT\",\"TONUSDT\",\"SOLUSDT\",\"BNBUSDT\",\"XRPUSDT\",\"DOGEUSDT\",\"PAXGUSDT\"]"
+        val raw = executeGet("https://api.binance.com/api/v3/ticker/24hr?symbols=$symbols")
+            ?: return emptyMap()
+        return runCatching {
+            val arr = JSONArray(raw)
+            val map = mutableMapOf<String, ExchangeQuote>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val sym = obj.optString("symbol")
+                if (!sym.endsWith("USDT")) continue
+                val base = sym.removeSuffix("USDT")
+                val price = parseNumeric(obj.optString("lastPrice")) ?: continue
+                val change = parseNumeric(obj.optString("priceChangePercent")) ?: 0.0
+                if (price > 0) {
+                    map[base] = ExchangeQuote(priceToman = null, priceUsd = price, changePct = change)
+                }
+            }
+            map
         }.getOrDefault(emptyMap())
     }
 
@@ -458,21 +580,17 @@ class MarketRemoteDataSource(
         }.getOrDefault(emptyMap())
     }
 
-    private fun fetchCoinGeckoUsdQuotes(): Map<String, Pair<Double, Double>> {
-        val ids = "tether,bitcoin,ethereum,the-open-network,solana,binancecoin,ripple,dogecoin"
-        val raw = executeGet(
-            "https://api.coingecko.com/api/v3/simple/price?ids=$ids&vs_currencies=usd&include_24hr_change=true"
-        ) ?: return emptyMap()
+    private fun fetchFrankfurterRates(): Map<String, Double> {
+        val raw = executeGet("https://api.frankfurter.app/latest?from=USD") ?: return emptyMap()
         return runCatching {
-            val root = JSONObject(raw)
-            val map = mutableMapOf<String, Pair<Double, Double>>()
-            val keys = root.keys()
+            val obj = JSONObject(raw)
+            val rates = obj.optJSONObject("rates") ?: return emptyMap()
+            val map = mutableMapOf<String, Double>()
+            val keys = rates.keys()
             while (keys.hasNext()) {
                 val k = keys.next()
-                val obj = root.optJSONObject(k) ?: continue
-                val usd = obj.optDouble("usd", -1.0)
-                val ch = obj.optDouble("usd_24h_change", 0.0)
-                if (usd > 0.0) map[k] = usd to ch
+                val v = rates.optDouble(k, -1.0)
+                if (v > 0.0) map[k] = v
             }
             map
         }.getOrDefault(emptyMap())

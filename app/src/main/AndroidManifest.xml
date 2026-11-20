@@ -28,14 +28,51 @@
         </activity>
 
         <receiver
+            android:name=".widget.ChandSingleWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_single_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/chand_widget_single_info" />
+        </receiver>
+
+        <receiver
             android:name=".widget.ChandWidgetReceiver"
-            android:exported="false">
+            android:exported="false"
+            android:label="@string/widget_description">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/chand_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ChandCryptoWidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_crypto_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/chand_widget_crypto_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ChandCompact2x1WidgetReceiver"
+            android:exported="false"
+            android:label="@string/widget_2x1_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/chand_widget_2x1_info" />
         </receiver>
     </application>
 

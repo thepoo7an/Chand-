@@ -113,15 +113,13 @@ fun AssetDetailSheet(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(46.dp)
-                        .clip(CircleShape)
-                        .background(Color(asset.accentHex).copy(alpha = 0.16f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(text = asset.badgeText, fontSize = 22.sp)
-                }
+                AssetBadge(
+                    assetId = asset.id,
+                    category = asset.category,
+                    fallbackText = asset.badgeText,
+                    accentHex = asset.accentHex,
+                    size = 46.dp
+                )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
