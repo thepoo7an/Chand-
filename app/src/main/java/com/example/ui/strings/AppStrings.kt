@@ -68,7 +68,11 @@ data class ChandStrings(
     val widgetSection: String,
     val widgetTranslucentLabel: String,
     val widgetOpacityLabel: String,
-    val widgetPreviewTitle: String
+    val widgetPreviewTitle: String,
+    val widgetLockPreviewTitle: String,
+    val rangeHighLabel: String,
+    val rangeLowLabel: String,
+    val historyUnavailable: String
 ) {
     fun categoryLabel(category: AssetCategory): String = when (category) {
         AssetCategory.ALL -> categoryAll
@@ -137,7 +141,11 @@ val FaStrings = ChandStrings(
     widgetSection = "ویجت صفحه اصلی",
     widgetTranslucentLabel = "حالت نیمه‌شفاف (Translucent)",
     widgetOpacityLabel = "شفافیت شیشه‌ای ویجت",
-    widgetPreviewTitle = "پیش‌نمایش ویجت 2×1 (دلار، یورو، طلا)"
+    widgetPreviewTitle = "پیش‌نمایش ویجت 2×1 (دلار، یورو، طلا)",
+    widgetLockPreviewTitle = "پیش‌نمایش ویجت لاک‌اسکرین (بدون پس‌زمینه)",
+    rangeHighLabel = "سقف بازه",
+    rangeLowLabel = "کف بازه",
+    historyUnavailable = "تاریخچه واقعی در دسترس نیست"
 )
 
 val EnStrings = ChandStrings(
@@ -198,7 +206,11 @@ val EnStrings = ChandStrings(
     widgetSection = "Home Screen Widgets",
     widgetTranslucentLabel = "Translucent Glass Style",
     widgetOpacityLabel = "Glass Opacity",
-    widgetPreviewTitle = "2×1 Compact Preview (USD • EUR • GOLD)"
+    widgetPreviewTitle = "2×1 Compact Preview (USD • EUR • GOLD)",
+    widgetLockPreviewTitle = "Lock Screen Widget Preview (No Background)",
+    rangeHighLabel = "Range High",
+    rangeLowLabel = "Range Low",
+    historyUnavailable = "Real history unavailable offline"
 )
 
 fun stringsFor(language: AppLanguage): ChandStrings =
@@ -342,8 +354,31 @@ object NumberFormatters {
     }
 
     fun formatChartDate(timestampSec: Long, usePersianDigits: Boolean, shortTimeOnly: Boolean): String {
-        val pattern = if (shortTimeOnly) "HH:mm" else "MM/dd"
+        val pattern = if (shortTimeOnly) "HH:mm" else "yyyy/MM/dd"
         val sdf = SimpleDateFormat(pattern, Locale.US)
         return applyDigits(sdf.format(Date(timestampSec * 1000L)), usePersianDigits)
+    }
+
+    fun formatChartJalaliDate(
+        timestampSec: Long,
+        usePersianDigits: Boolean,
+        includeTime: Boolean,
+        includeYear: Boolean
+    ): String {
+        if (timestampSec <= 0L) return ""
+        val millis = timestampSec * 1000L
+        val cal = Calendar.getInstance().apply { timeInMillis = millis }
+        val gy = cal.get(Calendar.YEAR)
+        val gm = cal.get(Calendar.MONTH) + 1
+        val gd = cal.get(Calendar.DAY_OF_MONTH)
+        val (jy, jm, jd) = gregorianToJalali(gy, gm, gd)
+        val datePart = if (includeYear) "$jm/$jd/$jy" else "$jm/$jd"
+        val out = if (includeTime) {
+            val timeStr = SimpleDateFormat("HH:mm", Locale.US).format(Date(millis))
+            if (includeYear) "$datePart $timeStr" else timeStr
+        } else {
+            datePart
+        }
+        return applyDigits(out, usePersianDigits)
     }
 }

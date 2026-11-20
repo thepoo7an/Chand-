@@ -63,6 +63,14 @@ data class AssetHistoryPoint(
 )
 
 @Serializable
+data class AssetHistoryResult(
+    val points: List<AssetHistoryPoint>,
+    val sourceLabel: String = "",
+    val isRealData: Boolean = true,
+    val cachedAtMillis: Long = System.currentTimeMillis()
+)
+
+@Serializable
 data class CachedMarketSnapshot(
     val assets: List<MarketAsset>,
     val updatedAtMillis: Long,

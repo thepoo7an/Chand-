@@ -90,6 +90,7 @@ fun ChandApp(
     val selectedDetailAsset by viewModel.selectedAssetForDetail.collectAsStateWithLifecycle()
     val selectedTimeRange by viewModel.selectedTimeRange.collectAsStateWithLifecycle()
     val historyPoints by viewModel.historyPoints.collectAsStateWithLifecycle()
+    val historySourceLabel by viewModel.historySourceLabel.collectAsStateWithLifecycle()
     val isHistoryLoading by viewModel.isHistoryLoading.collectAsStateWithLifecycle()
 
     val fromAssetId by viewModel.fromAssetId.collectAsStateWithLifecycle()
@@ -290,11 +291,13 @@ fun ChandApp(
                 asset = detailAsset,
                 isPinned = detailAsset.id in prefs.pinnedIds,
                 historyPoints = historyPoints,
+                historySourceLabel = historySourceLabel,
                 isHistoryLoading = isHistoryLoading,
                 selectedRange = selectedTimeRange,
                 prefs = prefs,
                 strings = strings,
                 onSelectRange = viewModel::selectTimeRange,
+                onRetryHistory = viewModel::retryHistory,
                 onTogglePin = { viewModel.togglePin(detailAsset.id) },
                 onConvertClick = {
                     viewModel.prepareConverterForAsset(detailAsset.id)

@@ -18,3 +18,7 @@ class ChandCryptoWidgetReceiver : GlanceAppWidgetReceiver() {
 class ChandCompact2x1WidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = ChandCompact2x1Widget()
 }
+
+class ChandLockScreenWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = ChandLockScreenWidget()
+}

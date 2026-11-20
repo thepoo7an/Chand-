@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -396,6 +397,171 @@ fun SettingsSheet(
                             fontSize = 10.sp,
                             color = Color.White.copy(alpha = 0.88f)
                         )
+                    }
+                }
+
+                // Transparent Nothing-Inspired Lock Screen Widget Preview
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color(0xFF000000),
+                                    Color(0xFF0D1117),
+                                    Color(0xFF020617)
+                                )
+                            )
+                        )
+                        .padding(horizontal = 18.dp, vertical = 14.dp)
+                ) {
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Text(
+                                        text = "CHAND",
+                                        fontSize = 10.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color.White.copy(alpha = 0.85f)
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = Color.White
+                                    ) {
+                                        Text(
+                                            text = "USD",
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.Black,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(999.dp),
+                                        color = Color.Transparent,
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.9f))
+                                    ) {
+                                        Text(
+                                            text = NumberFormatters.applyDigits("21:45", prefs.usePersianDigits),
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = Color.White,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .width(4.dp)
+                                            .height(10.dp)
+                                            .background(Color.White)
+                                    )
+                                }
+                                Text(
+                                    text = "✳",
+                                    fontSize = 14.sp,
+                                    color = Color.White
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.Bottom,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Text(
+                                        text = NumberFormatters.applyDigits("269,970", prefs.usePersianDigits),
+                                        fontSize = 22.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = "TMN",
+                                        fontSize = 10.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = Color.White.copy(alpha = 0.65f),
+                                        modifier = Modifier.padding(bottom = 3.dp)
+                                    )
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = Color.White
+                                ) {
+                                    Text(
+                                        text = NumberFormatters.applyDigits("↑1.43%", prefs.usePersianDigits),
+                                        fontSize = 9.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.Black,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                listOf(
+                                    "EUR" to NumberFormatters.applyDigits("297,320", prefs.usePersianDigits),
+                                    "18K" to NumberFormatters.applyDigits("7,403,000", prefs.usePersianDigits)
+                                ).forEach { (sym, valStr) ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(999.dp),
+                                            color = Color.Transparent,
+                                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.85f))
+                                        ) {
+                                            Text(
+                                                text = sym,
+                                                fontSize = 8.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                        Text(
+                                            text = valStr,
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = strings.widgetLockPreviewTitle,
+                                fontSize = 10.sp,
+                                color = Color.White.copy(alpha = 0.72f),
+                                modifier = Modifier.align(Alignment.CenterHorizontally)
+                            )
+                        }
                     }
                 }
             }

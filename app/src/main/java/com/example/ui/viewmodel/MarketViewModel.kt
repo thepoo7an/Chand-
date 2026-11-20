@@ -57,6 +57,9 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     private val _historyPoints = MutableStateFlow<List<AssetHistoryPoint>>(emptyList())
     val historyPoints: StateFlow<List<AssetHistoryPoint>> = _historyPoints.asStateFlow()
 
+    private val _historySourceLabel = MutableStateFlow("")
+    val historySourceLabel: StateFlow<String> = _historySourceLabel.asStateFlow()
+
     private val _isHistoryLoading = MutableStateFlow(false)
     val isHistoryLoading: StateFlow<Boolean> = _isHistoryLoading.asStateFlow()
 
@@ -232,7 +235,9 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     fun openAssetDetail(asset: MarketAsset) {
         _selectedAssetForDetail.value = asset
         _selectedTimeRange.value = TimeRange.H24
-        loadHistoryFor(asset, TimeRange.H24)
+        _historyPoints.value = emptyList()
+        _historySourceLabel.value = ""
+        loadHistoryFor(asset, TimeRange.H24, forceRefresh = false)
     }
 
     fun closeAssetDetail() {
@@ -243,15 +248,25 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     fun selectTimeRange(range: TimeRange) {
         _selectedTimeRange.value = range
         val asset = _selectedAssetForDetail.value ?: return
-        loadHistoryFor(asset, range)
+        loadHistoryFor(asset, range, forceRefresh = false)
     }
 
-    private fun loadHistoryFor(asset: MarketAsset, range: TimeRange) {
+    fun retryHistory() {
+        val asset = _selectedAssetForDetail.value ?: return
+        loadHistoryFor(asset, _selectedTimeRange.value, forceRefresh = true)
+    }
+
+    private fun loadHistoryFor(
+        asset: MarketAsset,
+        range: TimeRange,
+        forceRefresh: Boolean
+    ) {
         historyJob?.cancel()
         historyJob = viewModelScope.launch {
             _isHistoryLoading.value = true
-            val points = repository.fetchHistory(asset, range)
-            _historyPoints.value = points
+            val result = repository.fetchHistory(asset, range, forceRefresh = forceRefresh)
+            _historyPoints.value = result.points
+            _historySourceLabel.value = result.sourceLabel
             _isHistoryLoading.value = false
         }
     }

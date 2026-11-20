@@ -33,6 +33,7 @@ import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.size
 import androidx.glance.layout.width
+import androidx.glance.text.FontFamily
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
@@ -539,5 +540,327 @@ class RefreshAllWidgetsAction : ActionCallback {
         ChandWideListWidget().updateAll(context)
         ChandCompactCryptoWidget().updateAll(context)
         ChandCompact2x1Widget().updateAll(context)
+        ChandLockScreenWidget().updateAll(context)
+    }
+}
+
+private object LockWidgetColors {
+    val pureWhite = ColorProvider(day = Color(0xFFFFFFFF), night = Color(0xFFFFFFFF))
+    val softWhite = ColorProvider(day = Color(0xD9FFFFFF), night = Color(0xD9FFFFFF))
+    val mutedWhite = ColorProvider(day = Color(0x99FFFFFF), night = Color(0x99FFFFFF))
+    val pureBlack = ColorProvider(day = Color(0xFF000000), night = Color(0xFF000000))
+}
+
+/**
+ * Widget 5 (Lock Screen / Transparent): Background-free monochrome pill aesthetic inspired by
+ * Nothing OS lock-screen typography (high-contrast white text, solid white pills, outlined capsules).
+ */
+class ChandLockScreenWidget : GlanceAppWidget() {
+    override val sizeMode: SizeMode = SizeMode.Exact
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val prefsRepo = PreferencesRepository(context)
+        val prefs = prefsRepo.getPreferences()
+        val snapshot = prefsRepo.loadCachedSnapshot()
+        val allAssets = snapshot?.assets.orEmpty()
+
+        val hero = allAssets.firstOrNull { it.id == "USD" }
+            ?: allAssets.firstOrNull { it.id in prefs.pinnedIds }
+            ?: allAssets.firstOrNull()
+
+        val secondaryTargets = listOf("EUR", "GOLD_18K", "GBP", "AED", "BTC")
+        val secondary = secondaryTargets
+            .filter { it != hero?.id }
+            .mapNotNull { targetId -> allAssets.firstOrNull { it.id == targetId } }
+            .take(2)
+
+        provideContent {
+            LockScreenWidgetContent(
+                hero = hero,
+                secondary = secondary,
+                updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
+                prefs = prefs
+            )
+        }
+    }
+}
+
+@Composable
+private fun LockScreenWidgetContent(
+    hero: MarketAsset?,
+    secondary: List<MarketAsset>,
+    updatedAtMillis: Long,
+    prefs: AppPreferences
+) {
+    val size = LocalSize.current
+    val isTall = size.height >= 84.dp
+    val isWide = size.width >= 215.dp
+    val isFa = prefs.language == AppLanguage.FA
+    val timeTag = NumberFormatters.formatTime(updatedAtMillis, prefs.usePersianDigits)
+        .ifBlank { if (isFa) "زنده" else "LIVE" }
+
+    // Root Box intentionally has NO background so the lock screen / home wallpaper shines through.
+    Box(
+        modifier = GlanceModifier
+            .fillMaxSize()
+            .padding(horizontal = 8.dp, vertical = if (isTall) 6.dp else 4.dp)
+            .clickable(actionStartActivity<MainActivity>()),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        if (hero == null) {
+            Row(
+                modifier = GlanceModifier
+                    .fillMaxWidth()
+                    .clickable(actionRunCallback<RefreshAllWidgetsAction>()),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "CHAND",
+                    style = TextStyle(
+                        color = LockWidgetColors.pureWhite,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Medium
+                    )
+                )
+                Spacer(modifier = GlanceModifier.width(6.dp))
+                Box(
+                    modifier = GlanceModifier
+                        .background(ImageProvider(R.drawable.widget_lock_pill_solid))
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isFa) "لمس برای نرخ" else "TAP TO SYNC",
+                        style = TextStyle(
+                            color = LockWidgetColors.pureBlack,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        maxLines = 1
+                    )
+                }
+                Spacer(modifier = GlanceModifier.defaultWeight())
+                Text(
+                    text = "✳",
+                    style = TextStyle(
+                        color = LockWidgetColors.pureWhite,
+                        fontSize = 15.sp
+                    )
+                )
+            }
+        } else {
+            val deltaText = NumberFormatters.formatDeltaWithArrow(
+                hero.change24hToman,
+                hero.change24hPercent,
+                prefs.usePersianDigits
+            )
+            val pctText = NumberFormatters.formatPercent(hero.change24hPercent, prefs.usePersianDigits)
+            val statusBadgeText = if (isWide && isTall) "$deltaText • $pctText" else deltaText
+
+            Column(
+                modifier = GlanceModifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Row 1: Monochrome pill header inspired by [20] (NOV) 21:45 ▮  ✳
+                Row(
+                    modifier = GlanceModifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "CHAND",
+                        style = TextStyle(
+                            color = LockWidgetColors.softWhite,
+                            fontSize = if (isTall) 11.sp else 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        maxLines = 1
+                    )
+                    Spacer(modifier = GlanceModifier.width(5.dp))
+                    Box(
+                        modifier = GlanceModifier
+                            .background(ImageProvider(R.drawable.widget_lock_pill_solid))
+                            .padding(horizontal = 7.dp, vertical = 1.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = hero.symbol,
+                            style = TextStyle(
+                                color = LockWidgetColors.pureBlack,
+                                fontSize = if (isTall) 10.sp else 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            maxLines = 1
+                        )
+                    }
+                    Spacer(modifier = GlanceModifier.width(4.dp))
+                    Box(
+                        modifier = GlanceModifier
+                            .background(ImageProvider(R.drawable.widget_lock_pill_outline))
+                            .padding(horizontal = 7.dp, vertical = 1.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = timeTag,
+                            style = TextStyle(
+                                color = LockWidgetColors.pureWhite,
+                                fontSize = if (isTall) 10.sp else 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            maxLines = 1
+                        )
+                    }
+                    if (isWide) {
+                        Spacer(modifier = GlanceModifier.width(5.dp))
+                        Box(
+                            modifier = GlanceModifier
+                                .width(4.dp)
+                                .height(10.dp)
+                                .background(LockWidgetColors.pureWhite)
+                        ) {}
+                    }
+                    Spacer(modifier = GlanceModifier.defaultWeight())
+                    Box(
+                        modifier = GlanceModifier
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                            .clickable(actionRunCallback<RefreshAllWidgetsAction>()),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "✳",
+                            style = TextStyle(
+                                color = LockWidgetColors.pureWhite,
+                                fontSize = if (isTall) 15.sp else 13.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                Spacer(modifier = GlanceModifier.height(if (isTall) 5.dp else 3.dp))
+
+                // Row 2: Hero rate + inverted solid white delta pill (like CLEAR NIGHT)
+                Row(
+                    modifier = GlanceModifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = NumberFormatters.formatCardPrice(hero.priceToman, prefs.usePersianDigits),
+                        style = TextStyle(
+                            color = LockWidgetColors.pureWhite,
+                            fontSize = if (isTall) 25.sp else 19.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        maxLines = 1
+                    )
+                    Spacer(modifier = GlanceModifier.width(5.dp))
+                    Text(
+                        text = "TMN",
+                        style = TextStyle(
+                            color = LockWidgetColors.mutedWhite,
+                            fontSize = if (isTall) 10.sp else 9.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        maxLines = 1
+                    )
+                    Spacer(modifier = GlanceModifier.defaultWeight())
+                    Box(
+                        modifier = GlanceModifier
+                            .background(ImageProvider(R.drawable.widget_lock_pill_solid))
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = statusBadgeText,
+                            style = TextStyle(
+                                color = LockWidgetColors.pureBlack,
+                                fontSize = if (isTall) 10.sp else 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                // Row 3 (Tall lock screen layout): Outlined EUR + 18K Gold sub-tickers without background
+                if (isTall && secondary.isNotEmpty()) {
+                    Spacer(modifier = GlanceModifier.height(6.dp))
+                    Row(
+                        modifier = GlanceModifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        secondary.forEachIndexed { idx, item ->
+                            val shortCode = when (item.id) {
+                                "GOLD_18K" -> "18K"
+                                else -> item.symbol
+                            }
+                            val arrow = when {
+                                item.change24hToman > 0.001 || item.change24hPercent > 0.005 -> "↑"
+                                item.change24hToman < -0.001 || item.change24hPercent < -0.005 -> "↓"
+                                else -> "•"
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = GlanceModifier
+                                        .background(ImageProvider(R.drawable.widget_lock_pill_outline))
+                                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = shortCode,
+                                        style = TextStyle(
+                                            color = LockWidgetColors.pureWhite,
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        maxLines = 1
+                                    )
+                                }
+                                Spacer(modifier = GlanceModifier.width(5.dp))
+                                Text(
+                                    text = NumberFormatters.formatCardPrice(
+                                        item.priceToman,
+                                        prefs.usePersianDigits
+                                    ),
+                                    style = TextStyle(
+                                        color = LockWidgetColors.pureWhite,
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    maxLines = 1
+                                )
+                                if (isWide) {
+                                    Spacer(modifier = GlanceModifier.width(3.dp))
+                                    Text(
+                                        text = arrow,
+                                        style = TextStyle(
+                                            color = LockWidgetColors.mutedWhite,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+
+                            if (idx < secondary.lastIndex) {
+                                Spacer(modifier = GlanceModifier.defaultWeight())
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

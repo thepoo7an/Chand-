@@ -1,8 +1,6 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,12 +12,12 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -28,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -47,7 +46,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.clickable
 import com.example.model.AppLanguage
 import com.example.model.AppPreferences
 import com.example.model.AssetHistoryPoint
@@ -63,11 +62,13 @@ fun AssetDetailSheet(
     asset: MarketAsset,
     isPinned: Boolean,
     historyPoints: List<AssetHistoryPoint>,
+    historySourceLabel: String,
     isHistoryLoading: Boolean,
     selectedRange: TimeRange,
     prefs: AppPreferences,
     strings: ChandStrings,
     onSelectRange: (TimeRange) -> Unit,
+    onRetryHistory: () -> Unit,
     onTogglePin: () -> Unit,
     onConvertClick: () -> Unit,
     onDismiss: () -> Unit
@@ -79,13 +80,34 @@ fun AssetDetailSheet(
     val activePoint = scrubbedIndex?.let { idx -> historyPoints.getOrNull(idx) }
     val displayPriceToman = activePoint?.priceToman ?: asset.priceToman
 
-    val rangeChangePct = remember(historyPoints, asset.change24hPercent, scrubbedIndex) {
+    val (rangeChangeToman, rangeChangePct) = remember(
+        historyPoints,
+        asset.change24hToman,
+        asset.change24hPercent,
+        scrubbedIndex
+    ) {
         if (historyPoints.size >= 2) {
             val first = historyPoints.first().priceToman
             val target = activePoint?.priceToman ?: historyPoints.last().priceToman
-            if (first > 0.0) ((target - first) / first) * 100.0 else asset.change24hPercent
+            val diff = target - first
+            val pct = if (first > 0.0) (diff / first) * 100.0 else asset.change24hPercent
+            diff to pct
         } else {
-            asset.change24hPercent
+            asset.change24hToman to asset.change24hPercent
+        }
+    }
+
+    val (rangeHigh, rangeLow) = remember(historyPoints, selectedRange, asset.high24hToman, asset.low24hToman) {
+        if (historyPoints.size >= 2) {
+            val maxHist = historyPoints.maxOf { it.priceToman }
+            val minHist = historyPoints.minOf { it.priceToman }
+            if (selectedRange == TimeRange.H24) {
+                maxOf(maxHist, asset.high24hToman) to minOf(minHist, asset.low24hToman)
+            } else {
+                maxHist to minHist
+            }
+        } else {
+            asset.high24hToman to asset.low24hToman
         }
     }
 
@@ -155,7 +177,7 @@ fun AssetDetailSheet(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.Bottom) {
                         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                             Text(
@@ -173,21 +195,25 @@ fun AssetDetailSheet(
                         )
                     }
                     val subtitleText = if (activePoint != null) {
-                        NumberFormatters.formatChartDate(
-                            activePoint.timestampSec,
-                            prefs.usePersianDigits,
-                            shortTimeOnly = selectedRange == TimeRange.H24
+                        NumberFormatters.formatChartJalaliDate(
+                            timestampSec = activePoint.timestampSec,
+                            usePersianDigits = prefs.usePersianDigits,
+                            includeTime = selectedRange == TimeRange.H24 || selectedRange == TimeRange.D7,
+                            includeYear = true
                         )
                     } else {
                         asset.priceUsd?.let {
                             NumberFormatters.formatUsd(it, prefs.usePersianDigits)
                         } ?: strings.chartInteractiveHint
                     }
-                    Text(
-                        text = subtitleText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Text(
+                            text = subtitleText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (activePoint != null) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
                 Surface(
@@ -195,8 +221,14 @@ fun AssetDetailSheet(
                     color = trendBg
                 ) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        val deltaStr = NumberFormatters.formatDeltaWithArrow(
+                            rangeChangeToman,
+                            rangeChangePct,
+                            prefs.usePersianDigits
+                        )
+                        val pctStr = NumberFormatters.formatPercent(rangeChangePct, prefs.usePersianDigits)
                         Text(
-                            text = NumberFormatters.formatPercent(rangeChangePct, prefs.usePersianDigits),
+                            text = "$deltaStr ($pctStr)",
                             style = MaterialTheme.typography.labelLarge,
                             color = trendColor,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
@@ -205,36 +237,114 @@ fun AssetDetailSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Interactive Chart Container
+            // Interactive Chart Container + Real Date Span Footer
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                 border = BorderStroke(1.dp, marketColors.hairline),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(190.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    if (isHistoryLoading && historyPoints.isEmpty()) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(28.dp),
-                            strokeWidth = 2.5.dp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    } else {
-                        InteractiveHistoryChart(
-                            points = historyPoints,
-                            lineColor = trendColor,
-                            gridColor = marketColors.hairline,
-                            selectedIndex = scrubbedIndex,
-                            onSelectIndex = { scrubbedIndex = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(190.dp)
-                                .padding(vertical = 8.dp)
-                        )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
+                            isHistoryLoading && historyPoints.isEmpty() -> {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(28.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            historyPoints.size < 2 -> {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.padding(16.dp)
+                                ) {
+                                    Text(
+                                        text = strings.historyUnavailable,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    OutlinedButton(onClick = onRetryHistory) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Refresh,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(text = strings.retryLabel)
+                                    }
+                                }
+                            }
+                            else -> {
+                                InteractiveHistoryChart(
+                                    points = historyPoints,
+                                    lineColor = trendColor,
+                                    gridColor = marketColors.hairline,
+                                    selectedIndex = scrubbedIndex,
+                                    onSelectIndex = { scrubbedIndex = it },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(180.dp)
+                                        .padding(top = 8.dp, bottom = 4.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (historyPoints.size >= 2) {
+                        val firstPt = historyPoints.first()
+                        val lastPt = historyPoints.last()
+                        val showYear = selectedRange == TimeRange.Y1 || selectedRange == TimeRange.M1
+                        val showTime = selectedRange == TimeRange.H24
+
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = NumberFormatters.formatChartJalaliDate(
+                                        firstPt.timestampSec,
+                                        prefs.usePersianDigits,
+                                        includeTime = showTime,
+                                        includeYear = showYear
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = NumberFormatters.formatChartJalaliDate(
+                                        historyPoints[historyPoints.size / 2].timestampSec,
+                                        prefs.usePersianDigits,
+                                        includeTime = showTime,
+                                        includeYear = showYear
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                                )
+                                Text(
+                                    text = NumberFormatters.formatChartJalaliDate(
+                                        lastPt.timestampSec,
+                                        prefs.usePersianDigits,
+                                        includeTime = showTime,
+                                        includeYear = showYear
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -276,31 +386,31 @@ fun AssetDetailSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // 24h High / Low / Source
+            // Dynamic Range High / Low / Real History Source
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 StatPillCard(
-                    label = strings.high24h,
-                    value = NumberFormatters.formatToman(asset.high24hToman, prefs.usePersianDigits),
+                    label = if (selectedRange == TimeRange.H24) strings.high24h else strings.rangeHighLabel,
+                    value = NumberFormatters.formatToman(rangeHigh, prefs.usePersianDigits),
                     modifier = Modifier.weight(1f)
                 )
                 StatPillCard(
-                    label = strings.low24h,
-                    value = NumberFormatters.formatToman(asset.low24hToman, prefs.usePersianDigits),
+                    label = if (selectedRange == TimeRange.H24) strings.low24h else strings.rangeLowLabel,
+                    value = NumberFormatters.formatToman(rangeLow, prefs.usePersianDigits),
                     modifier = Modifier.weight(1f)
                 )
                 StatPillCard(
                     label = strings.sourceLabel,
-                    value = asset.sourceLabel.ifEmpty { "Live" },
+                    value = historySourceLabel.ifEmpty { asset.sourceLabel.ifEmpty { "Live" } },
                     modifier = Modifier.weight(0.9f)
                 )
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Button(
                 onClick = onConvertClick,
