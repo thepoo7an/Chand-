@@ -17,8 +17,12 @@ android {
     applicationId = "com.aistudio.chandrates.krmxvp"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = System.getenv("VERSION_CODE")?.toIntOrNull()
+      ?: project.findProperty("versionCode")?.toString()?.toIntOrNull()
+      ?: 1
+    versionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() }
+      ?: project.findProperty("versionName")?.toString()?.takeIf { it.isNotBlank() }
+      ?: "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
