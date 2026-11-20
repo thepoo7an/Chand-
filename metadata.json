@@ -1,0 +1,6 @@
+{
+  "name": "چند؟ (Chand?)",
+  "description": "ردیاب لحظه‌ای نرخ ارزهای آزاد، طلا، سکه و رمزارز بر پایه تومان ایران با مبدل سریع، نمودار و ویجت",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
