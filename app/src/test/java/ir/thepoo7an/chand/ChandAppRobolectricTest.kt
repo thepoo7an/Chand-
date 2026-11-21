@@ -41,7 +41,8 @@ class ChandAppRobolectricTest {
     fun `app identity and BuildConfig GitHub repository are configured`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         assertEquals("Chand?!", context.getString(R.string.app_name))
-        assertEquals("ir.thepoo7an.chand", BuildConfig.APPLICATION_ID)
+        val expectedAppId = if (BuildConfig.DEBUG) "ir.thepoo7an.chand.debug" else "ir.thepoo7an.chand"
+        assertEquals(expectedAppId, BuildConfig.APPLICATION_ID)
         assertTrue(
             "BuildConfig.GITHUB_REPOSITORY should default to owner/repo",
             BuildConfig.GITHUB_REPOSITORY.contains("/")
@@ -94,13 +95,39 @@ class ChandAppRobolectricTest {
         assertFalse(AppUpdateService.isRemoteNewer("1.0.5", 5, "1.0.5", 5))
 
         val assets = listOf(
-            GitHubReleaseAssetDto("Chand-universal-release.apk", "https://u", 10L),
             GitHubReleaseAssetDto("Chand-arm64-v8a-release.apk", "https://arm64", 6L),
-            GitHubReleaseAssetDto("Chand-armeabi-v7a-release.apk", "https://arm32", 5L)
+            GitHubReleaseAssetDto("Chand-armeabi-v7a-release.apk", "https://arm32", 5L),
+            GitHubReleaseAssetDto("Chand-universal-release.apk", "https://u", 10L)
         )
+        // Respects supportedAbis priority order
         assertEquals("Chand-arm64-v8a-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("arm64-v8a", "armeabi-v7a"))?.name)
-        assertEquals("Chand-armeabi-v7a-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("armeabi-v7a"))?.name)
-        assertEquals("Chand-universal-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("x86_64"))?.name)
+        assertEquals("Chand-armeabi-v7a-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("armeabi-v7a", "arm64-v8a"))?.name)
+        assertEquals("Chand-arm64-v8a-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("x86_64", "arm64-v8a"))?.name)
+
+        // Unsupported ABI falls back to universal (even when universal is not first)
+        assertEquals("Chand-universal-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("x86_64", "riscv64"))?.name)
+        assertEquals("Chand-universal-release.apk", AppUpdateService.pickBestApkAsset(assets, emptyArray())?.name)
+
+        // No APK assets returns null
+        assertEquals(null, AppUpdateService.pickBestApkAsset(emptyList(), arrayOf("arm64-v8a")))
+        assertEquals(
+            null,
+            AppUpdateService.pickBestApkAsset(
+                listOf(
+                    GitHubReleaseAssetDto("mapping.txt", "https://map", 100L),
+                    GitHubReleaseAssetDto("checksums.sha256", "https://sha", 64L)
+                ),
+                arrayOf("arm64-v8a")
+            )
+        )
+
+        // Case-insensitive APK names, extensions, and ABI identifiers
+        val upperAssets = listOf(
+            GitHubReleaseAssetDto("CHAND-ARM64-V8A-RELEASE.APK", "https://u-arm64", 6L),
+            GitHubReleaseAssetDto("CHAND-UNIVERSAL-RELEASE.APK", "https://u-uni", 10L)
+        )
+        assertEquals("CHAND-ARM64-V8A-RELEASE.APK", AppUpdateService.pickBestApkAsset(upperAssets, arrayOf("ARM64-V8A"))?.name)
+        assertEquals("CHAND-UNIVERSAL-RELEASE.APK", AppUpdateService.pickBestApkAsset(upperAssets, arrayOf("X86_64"))?.name)
     }
 
     @Test

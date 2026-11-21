@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Test & Build Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Run version script self-tests
+        run: bash scripts/test-compute-version.sh
+
+      - name: Prepare debug keystore
+        run: |
+          if [ ! -s debug.keystore ] && [ -s debug.keystore.base64 ]; then
+            base64 -d debug.keystore.base64 > debug.keystore || rm -f debug.keystore
+          fi
+          if [ ! -s debug.keystore ]; then
+            keytool -genkeypair -noprompt \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+
+      - name: Run unit & Robolectric tests
+        run: |
+          if ! gradle :app:testDebugUnitTest --stacktrace; then
+            echo "::error::Unit & Robolectric tests failed (gradle :app:testDebugUnitTest)."
+            exit 1
+          fi
+
+      - name: Build Debug APK
+        run: |
+          if ! gradle :app:assembleDebug --stacktrace; then
+            echo "::error::Debug APK build failed (gradle :app:assembleDebug)."
+            exit 1
+          fi

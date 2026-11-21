@@ -192,6 +192,7 @@ class AppUpdateService(
             if (apkAssets.isEmpty()) return null
 
             for (abi in supportedAbis) {
+                if (abi.isBlank()) continue
                 val match = apkAssets.firstOrNull { it.name.contains(abi, ignoreCase = true) }
                 if (match != null) return match
             }

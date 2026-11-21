@@ -7,7 +7,18 @@ on:
       - master
     tags:
       - 'v*'
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'public/**'
+      - '.github/ISSUE_TEMPLATE/**'
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish APKs to a GitHub Release'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -64,8 +75,9 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           SECRET_STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           SECRET_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GITHUB_REF_INPUT: ${{ github.ref }}
         run: |
-          KEYSTORE_FILE="${{ github.workspace }}/my-upload-key.jks"
+          KEYSTORE_FILE="$GITHUB_WORKSPACE/my-upload-key.jks"
           EFFECTIVE_KEY_PASSWORD="${SECRET_KEY_PASSWORD:-$SECRET_STORE_PASSWORD}"
           MISSING_SECRETS=""
           [ -z "$KEYSTORE_BASE64" ] && MISSING_SECRETS="$MISSING_SECRETS KEYSTORE_BASE64"
@@ -126,7 +138,7 @@ jobs:
             echo "STORE_PASSWORD=$SECRET_STORE_PASSWORD" >> "$GITHUB_ENV"
             echo "KEY_PASSWORD=$EFFECTIVE_KEY_PASSWORD" >> "$GITHUB_ENV"
             echo "RELEASE_SIGNING_READY=true" >> "$GITHUB_ENV"
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          elif [[ "$GITHUB_REF_INPUT" == refs/tags/v* ]]; then
             echo "::error::Missing release signing secrets:$MISSING_SECRETS. Refusing to publish a tagged release with an ephemeral key."
             exit 1
           else
@@ -153,39 +165,220 @@ jobs:
           fi
 
       - name: Compute automatic app version
-        run: |
-          VERSION_CODE="${{ github.run_number }}"
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            RAW_TAG="${{ github.ref_name }}"
-            VERSION_NAME="${RAW_TAG#v}"
-          else
-            VERSION_NAME="1.0.${{ github.run_number }}"
-          fi
-          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
-          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
-          echo "Resolved version: $VERSION_NAME ($VERSION_CODE)"
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          VERSION_CODE_OFFSET: ${{ vars.VERSION_CODE_OFFSET || '0' }}
+        run: bash scripts/compute-version.sh
 
-      - name: Build Universal, arm64-v8a & armeabi-v7a Release APKs
+      - name: Build Universal, arm64-v8a, armeabi-v7a Release APKs & Debug APK
         run: |
+          if ! gradle :app:assembleDebug --stacktrace; then
+            echo "::error::Debug APK build failed (gradle :app:assembleDebug). Expand this step log for details."
+            exit 1
+          fi
           if ! gradle :app:assembleRelease -PenableAbiSplits=true --stacktrace; then
             echo "::error::Release APK build failed (gradle :app:assembleRelease -PenableAbiSplits=true). Expand this step log for details."
             exit 1
           fi
           mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Chand-debug.apk
           cp app/build/outputs/apk/release/app-universal-release.apk dist/Chand-universal-release.apk
           cp app/build/outputs/apk/release/app-arm64-v8a-release.apk dist/Chand-arm64-v8a-release.apk
           cp app/build/outputs/apk/release/app-armeabi-v7a-release.apk dist/Chand-armeabi-v7a-release.apk
+          if [ -f app/build/outputs/mapping/release/mapping.txt ]; then
+            cp app/build/outputs/mapping/release/mapping.txt dist/mapping.txt
+            echo "HAS_R8_MAPPING=true" >> "$GITHUB_ENV"
+          else
+            echo "HAS_R8_MAPPING=false" >> "$GITHUB_ENV"
+          fi
           ls -lh dist/
+
+      - name: Verify APK signatures and 4-byte alignment
+        env:
+          CERT_SHA256: ${{ vars.CERT_SHA256 }}
+        run: |
+          SDK_ROOT=""
+          for candidate in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"; do
+            if [ -n "$candidate" ] && [ -d "$candidate/build-tools" ]; then
+              SDK_ROOT="$candidate"
+              break
+            fi
+          done
+          if [ -z "$SDK_ROOT" ]; then
+            echo "::error::Android SDK build-tools directory not found."
+            exit 1
+          fi
+          BUILD_TOOLS_DIR="$(find "$SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          if [ -z "$BUILD_TOOLS_DIR" ] || [ ! -x "$BUILD_TOOLS_DIR/apksigner" ] || [ ! -x "$BUILD_TOOLS_DIR/zipalign" ]; then
+            echo "::error::apksigner or zipalign not found in '$BUILD_TOOLS_DIR'."
+            exit 1
+          fi
+          echo "Using build-tools: $BUILD_TOOLS_DIR"
+          echo "BUILD_TOOLS_DIR=$BUILD_TOOLS_DIR" >> "$GITHUB_ENV"
+
+          for apk in dist/*.apk; do
+            echo "Checking zipalign (4-byte): $apk"
+            if ! "$BUILD_TOOLS_DIR/zipalign" -c -v 4 "$apk" >/dev/null; then
+              echo "::error::APK is not 4-byte aligned: $apk"
+              exit 1
+            fi
+          done
+
+          echo "Verifying debug APK signature: dist/Chand-debug.apk"
+          "$BUILD_TOOLS_DIR/apksigner" verify --print-certs dist/Chand-debug.apk
+
+          EXPECTED_SHA="$(printf '%s' "${CERT_SHA256:-}" | tr '[:upper:]' '[:lower:]' | tr -d ':[:space:]')"
+          WARNED_EMPTY_CERT="false"
+
+          for apk in dist/Chand-*-release.apk; do
+            echo "Verifying release APK signature: $apk"
+            CERT_OUTPUT="$("$BUILD_TOOLS_DIR/apksigner" verify --print-certs "$apk")"
+            printf '%s\n' "$CERT_OUTPUT"
+            RAW_SHA="$(printf '%s\n' "$CERT_OUTPUT" | sed -n 's/^Signer #1 certificate SHA-256 digest:[[:space:]]*//p' | head -n 1)"
+            ACTUAL_SHA="$(printf '%s' "$RAW_SHA" | tr '[:upper:]' '[:lower:]' | tr -d ':[:space:]')"
+            if [ -z "$ACTUAL_SHA" ]; then
+              echo "::error::Failed to extract Signer #1 SHA-256 digest from $apk"
+              exit 1
+            fi
+            if [ "${RELEASE_SIGNING_READY:-false}" = "true" ]; then
+              if [ -z "$EXPECTED_SHA" ]; then
+                if [ "$WARNED_EMPTY_CERT" != "true" ]; then
+                  echo "::warning::Repository variable CERT_SHA256 is empty; skipping signer fingerprint check (actual: $ACTUAL_SHA)."
+                  WARNED_EMPTY_CERT="true"
+                fi
+              elif [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+                echo "::error::Signer SHA-256 mismatch for $apk: expected '$EXPECTED_SHA', got '$ACTUAL_SHA'."
+                exit 1
+              fi
+            fi
+          done
+
+      - name: Guard versionCode and signer continuity against latest release
+        if: env.RELEASE_SIGNING_READY == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          RELEASES_JSON="$TMP_DIR/releases.json"
+
+          if ! curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO_SLUG/releases?per_page=20" \
+            -o "$RELEASES_JSON"; then
+            echo "::warning::Could not query GitHub releases for $REPO_SLUG; skipping versionCode guard."
+            exit 0
+          fi
+
+          PREV_INFO="$(python3 - "$RELEASES_JSON" << 'PYEOF'
+          import json, sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as f:
+              releases = json.load(f)
+
+          for rel in releases:
+              if rel.get("draft") or rel.get("prerelease"):
+                  continue
+              apks = [a for a in rel.get("assets", []) if str(a.get("name", "")).lower().endswith(".apk")]
+              if not apks:
+                  continue
+              universal = next((a for a in apks if "universal" in str(a.get("name", "")).lower()), apks[0])
+              print(f"{rel.get('tag_name', '')}\t{universal.get('name', '')}\t{universal.get('browser_download_url', '')}")
+              break
+          PYEOF
+          )"
+
+          if [ -z "$PREV_INFO" ]; then
+            echo "No previous published release APK found; skipping versionCode continuity guard."
+            exit 0
+          fi
+
+          IFS=$'\t' read -r PREV_TAG PREV_ASSET_NAME PREV_ASSET_URL <<< "$PREV_INFO"
+          echo "Comparing against previous published release: $PREV_TAG ($PREV_ASSET_NAME)"
+
+          if ! gh release download "$PREV_TAG" -R "$REPO_SLUG" -p "$PREV_ASSET_NAME" --dir "$TMP_DIR" >/dev/null 2>&1; then
+            curl -fsSL -L "$PREV_ASSET_URL" -o "$TMP_DIR/$PREV_ASSET_NAME"
+          fi
+
+          PREV_APK="$TMP_DIR/$PREV_ASSET_NAME"
+          NEW_APK="dist/Chand-universal-release.apk"
+          AAPT2="$BUILD_TOOLS_DIR/aapt2"
+          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+
+          read_apk_meta() {
+            local apk_path="$1"
+            local badging cert_out pkg_vcode sha
+            badging="$("$AAPT2" dump badging "$apk_path")"
+            cert_out="$("$APKSIGNER" verify --print-certs "$apk_path")"
+            pkg_vcode="$(printf '%s\n' "$badging" | python3 -c '
+          import re, sys
+          txt = sys.stdin.read()
+          m = re.search(r"package:\s+name=\x27([^\x27]+)\x27.*?\bversionCode=\x27(\d+)\x27", txt)
+          if not m:
+              sys.exit(1)
+          print(f"{m.group(1)}\t{m.group(2)}")
+          ')"
+            sha="$(printf '%s\n' "$cert_out" | sed -n 's/^Signer #1 certificate SHA-256 digest:[[:space:]]*//p' | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':[:space:]')"
+            printf '%s\t%s\n' "$pkg_vcode" "$sha"
+          }
+
+          IFS=$'\t' read -r PREV_PKG PREV_VCODE PREV_SHA <<< "$(read_apk_meta "$PREV_APK")"
+          IFS=$'\t' read -r NEW_PKG NEW_VCODE NEW_SHA <<< "$(read_apk_meta "$NEW_APK")"
+
+          if [ -z "$PREV_PKG" ] || [ -z "$PREV_VCODE" ] || [ -z "$PREV_SHA" ]; then
+            echo "::error::Could not extract package, versionCode, or signer SHA-256 from previous release APK '$PREV_APK'."
+            exit 1
+          fi
+          if [ -z "$NEW_PKG" ] || [ -z "$NEW_VCODE" ] || [ -z "$NEW_SHA" ]; then
+            echo "::error::Could not extract package, versionCode, or signer SHA-256 from current release APK '$NEW_APK'."
+            exit 1
+          fi
+
+          echo "Previous: package=$PREV_PKG versionCode=$PREV_VCODE sha256=$PREV_SHA"
+          echo "Current:  package=$NEW_PKG versionCode=$NEW_VCODE sha256=$NEW_SHA"
+
+          if [ "$PREV_PKG" != "$NEW_PKG" ]; then
+            echo "::error::Package ID mismatch against $PREV_TAG: previous='$PREV_PKG', current='$NEW_PKG'."
+            exit 1
+          fi
+          if [ "$PREV_SHA" != "$NEW_SHA" ]; then
+            echo "::error::Signer SHA-256 mismatch against $PREV_TAG: previous='$PREV_SHA', current='$NEW_SHA'."
+            exit 1
+          fi
+          if ! (( 10#$NEW_VCODE > 10#$PREV_VCODE )); then
+            echo "::error::New versionCode ($NEW_VCODE) must be strictly greater than $PREV_TAG versionCode ($PREV_VCODE). Increase repository variable VERSION_CODE_OFFSET."
+            exit 1
+          fi
 
       - name: Upload Release APKs artifact
         uses: actions/upload-artifact@v7
         with:
           name: chand-release-apks
-          path: dist/*.apk
+          path: dist/Chand-*-release.apk
+          retention-days: 30
+
+      - name: Upload Debug APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Chand-debug.apk
+          path: dist/Chand-debug.apk
+          retention-days: 30
+
+      - name: Upload R8 mapping.txt (if generated)
+        if: env.HAS_R8_MAPPING == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: chand-release-mapping
+          path: dist/mapping.txt
+          if-no-files-found: ignore
           retention-days: 30
 
       - name: Publish all 3 APKs to GitHub Release (Signed)
-        if: env.RELEASE_SIGNING_READY == 'true'
+        if: (github.event_name != 'workflow_dispatch' || inputs.publish == true) && env.RELEASE_SIGNING_READY == 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('build-{0}', github.run_number) }}
@@ -204,7 +397,7 @@ jobs:
           generate_release_notes: true
 
       - name: Publish test pre-release APKs to GitHub Release (Ephemeral Signing)
-        if: env.RELEASE_SIGNING_READY != 'true'
+        if: (github.event_name != 'workflow_dispatch' || inputs.publish == true) && env.RELEASE_SIGNING_READY != 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: test-build-${{ github.run_number }}
