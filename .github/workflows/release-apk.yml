@@ -62,18 +62,23 @@ jobs:
           SECRET_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           KEYSTORE_FILE="${{ github.workspace }}/my-upload-key.jks"
-          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$SECRET_STORE_PASSWORD" ] && [ -n "$SECRET_KEY_PASSWORD" ]; then
+          EFFECTIVE_KEY_PASSWORD="${SECRET_KEY_PASSWORD:-$SECRET_STORE_PASSWORD}"
+          MISSING_SECRETS=""
+          [ -z "$KEYSTORE_BASE64" ] && MISSING_SECRETS="$MISSING_SECRETS KEYSTORE_BASE64"
+          [ -z "$SECRET_STORE_PASSWORD" ] && MISSING_SECRETS="$MISSING_SECRETS STORE_PASSWORD"
+
+          if [ -z "$MISSING_SECRETS" ]; then
             echo "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$KEYSTORE_FILE"
             keytool -list -keystore "$KEYSTORE_FILE" -storepass "$SECRET_STORE_PASSWORD" -alias upload >/dev/null
             echo "KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
             echo "STORE_PASSWORD=$SECRET_STORE_PASSWORD" >> "$GITHUB_ENV"
-            echo "KEY_PASSWORD=$SECRET_KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$EFFECTIVE_KEY_PASSWORD" >> "$GITHUB_ENV"
             echo "RELEASE_SIGNING_READY=true" >> "$GITHUB_ENV"
           elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "::error::Release signing secrets (KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD) are missing. Refusing to publish a tagged release with an ephemeral key."
+            echo "::error::Missing release signing secrets:$MISSING_SECRETS. Refusing to publish a tagged release with an ephemeral key."
             exit 1
           else
-            echo "::warning::Release signing secrets are not configured. Building and publishing a test pre-release with an ephemeral key."
+            echo "::warning::Missing release signing secrets:$MISSING_SECRETS. Building and publishing a test pre-release with an ephemeral key."
             EPHEMERAL_PASS="chand-ci-verify-only"
             keytool -genkeypair -noprompt \
               -keystore "$KEYSTORE_FILE" \
@@ -90,8 +95,8 @@ jobs:
             echo "RELEASE_SIGNING_READY=false" >> "$GITHUB_ENV"
             {
               echo "### Test Pre-Release (Ephemeral Signing)"
-              echo "Signing secrets (\`KEYSTORE_BASE64\`, \`STORE_PASSWORD\`, \`KEY_PASSWORD\`) are not configured yet, so this build was published as a **Pre-release** for testing."
-              echo "Uninstall any previous APK before installing this test build, or add the 3 Secrets under **Settings → Secrets and variables → Actions** for seamless updates."
+              echo "Missing Repository Secrets:$MISSING_SECRETS — so this build was published as a **Pre-release** for testing."
+              echo "Add them under **Settings → Secrets and variables → Actions → Repository secrets** (key alias: \`upload\`) for signed, updatable Releases."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
