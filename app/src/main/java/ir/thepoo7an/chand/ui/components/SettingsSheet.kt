@@ -39,6 +39,10 @@ import androidx.compose.ui.unit.LayoutDirection
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.SystemUpdate
@@ -52,12 +56,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ir.thepoo7an.chand.BuildConfig
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
+import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.ThemeMode
+import ir.thepoo7an.chand.network.AppUpdateService
 import ir.thepoo7an.chand.network.AppUpdateState
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
@@ -69,6 +76,7 @@ fun SettingsSheet(
     prefs: AppPreferences,
     strings: ChandStrings,
     updateState: AppUpdateState,
+    availableAssets: List<MarketAsset> = emptyList(),
     onSetThemeMode: (ThemeMode) -> Unit,
     onSetLanguage: (AppLanguage) -> Unit,
     onSetPersianDigits: (Boolean) -> Unit,
@@ -76,13 +84,15 @@ fun SettingsSheet(
     onSetRefreshInterval: (Int) -> Unit,
     onSetWidgetTranslucent: (Boolean) -> Unit,
     onSetWidgetOpacityPercent: (Int) -> Unit,
+    onSetWidgetHeroAsset: (String) -> Unit,
+    onSetGithubRepoSlug: (String) -> Unit,
     onCheckForUpdates: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val marketColors = LocalMarketColors.current
-    var repoInput by remember(prefs.githubRepoSlug) { mutableStateOf(prefs.githubRepoSlug) }
+    var repoInput by remember { mutableStateOf(prefs.githubRepoSlug) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -314,6 +324,74 @@ fun SettingsSheet(
                                         .weight(1f)
                                         .testTag("widget_opacity_$pct")
                                 )
+                            }
+                        }
+                    }
+                }
+
+                val heroCandidates = remember(availableAssets, prefs.pinnedIds) {
+                    val defaultOrder = listOf(
+                        "USD" to ("🇺🇸" to "USD"),
+                        "EUR" to ("🇪🇺" to "EUR"),
+                        "GOLD_18K" to ("✨" to "18K"),
+                        "GOLD_MESGHAL" to ("⚖️" to "MSQ"),
+                        "COIN_EMAMI" to ("🪙" to "SEKE"),
+                        "BTC" to ("₿" to "BTC"),
+                        "ETH" to ("Ξ" to "ETH"),
+                        "USDT" to ("₮" to "USDT")
+                    )
+                    val assetMap = availableAssets.associateBy { it.id }
+                    val baseIds = (defaultOrder.map { it.first } + prefs.pinnedIds).distinct()
+                    baseIds.mapNotNull { id ->
+                        val live = assetMap[id]
+                        val fallback = defaultOrder.firstOrNull { it.first == id }?.second
+                        when {
+                            live != null -> Triple(live.id, live.badgeText, live.symbol)
+                            fallback != null -> Triple(id, fallback.first, fallback.second)
+                            else -> null
+                        }
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = strings.widgetHeroAssetLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(heroCandidates, key = { it.first }) { (assetId, badge, symbol) ->
+                            val selected = prefs.widgetHeroAssetId == assetId
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selected) MaterialTheme.colorScheme.primary else marketColors.hairline
+                                ),
+                                modifier = Modifier
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable { onSetWidgetHeroAsset(assetId) }
+                                    .testTag("widget_hero_$assetId")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Text(text = badge, fontSize = 13.sp)
+                                    Text(
+                                        text = symbol,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                             }
                         }
                     }
@@ -659,8 +737,23 @@ fun SettingsSheet(
 
                         OutlinedTextField(
                             value = repoInput,
-                            onValueChange = { repoInput = it },
+                            onValueChange = { newVal ->
+                                repoInput = newVal
+                                if (AppUpdateService.parseRepoSlug(newVal) != null &&
+                                    newVal.trim() != prefs.githubRepoSlug
+                                ) {
+                                    onSetGithubRepoSlug(newVal.trim())
+                                }
+                            },
                             singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    if (repoInput.trim().isNotBlank()) {
+                                        onSetGithubRepoSlug(repoInput.trim())
+                                    }
+                                }
+                            ),
                             label = { Text(strings.githubRepoLabel, fontSize = 12.sp) },
                             placeholder = { Text(strings.githubRepoPlaceholder, fontSize = 12.sp) },
                             shape = RoundedCornerShape(12.dp),

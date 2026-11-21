@@ -97,7 +97,7 @@ private fun GoldCoinBadge(
             style = Stroke(width = 1.5.dp.toPx())
         )
 
-        if (assetId == "GOLD_18K" || assetId == "XAU_OZ") {
+        if (assetId == "GOLD_18K" || assetId == "GOLD_24K" || assetId == "GOLD_MESGHAL" || assetId == "XAU_OZ") {
             // Geometric gold ingot / diamond motif
             val path = Path().apply {
                 moveTo(center.x - r * 0.34f, center.y + r * 0.22f)

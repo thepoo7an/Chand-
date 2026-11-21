@@ -205,6 +205,49 @@ class FinancialApiService(
             .map { AssetHistoryPoint(it.first, it.second) }
     }
 
+    /**
+     * Fetches a single batch multi-currency FX history series from Frankfurter ECB
+     * for supported symbols, returning map of SYMBOL -> chronological list of (timestampSec, unitsPerUsd).
+     */
+    suspend fun fetchMultiCurrencyRange(
+        symbols: List<String>,
+        fromSec: Long,
+        toSec: Long
+    ): Map<String, List<Pair<Long, Double>>> = withContext(Dispatchers.IO) {
+        val ecbTargets = symbols
+            .map { it.uppercase(Locale.US) }
+            .filter { it in ECB_SUPPORTED_CURRENCIES && it != "USD" }
+            .distinct()
+        if (ecbTargets.isEmpty()) return@withContext emptyMap()
+
+        val toParam = ecbTargets.joinToString(",")
+        val sdf = utcDateFormat()
+        val startStr = sdf.format(Date(fromSec * 1000L))
+        val endStr = sdf.format(Date(toSec * 1000L))
+
+        val resp = runCatching {
+            api.getFrankfurterSeries("https://api.frankfurter.dev/v1/$startStr..$endStr", "USD", toParam)
+        }.getOrElse {
+            runCatching {
+                api.getFrankfurterSeries("https://api.frankfurter.app/$startStr..$endStr", "USD", toParam)
+            }.getOrNull()
+        } ?: return@withContext emptyMap()
+
+        val result = LinkedHashMap<String, MutableList<Pair<Long, Double>>>()
+        resp.rates.entries
+            .sortedBy { it.key }
+            .forEach { (dateKey, rateMap) ->
+                val ts = (runCatching { sdf.parse(dateKey)?.time }.getOrNull() ?: return@forEach) / 1000L
+                rateMap.forEach { (sym, valRate) ->
+                    if (valRate > 0.0) {
+                        result.getOrPut(sym.uppercase(Locale.US)) { mutableListOf() }
+                            .add(ts to valRate)
+                    }
+                }
+            }
+        result
+    }
+
     private suspend fun fetchFrankfurterRange(
         targetSymbol: String,
         fromSec: Long,

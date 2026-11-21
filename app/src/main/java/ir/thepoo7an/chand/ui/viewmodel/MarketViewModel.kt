@@ -14,6 +14,7 @@ import ir.thepoo7an.chand.model.MarketUiState
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.network.AppUpdateState
+import ir.thepoo7an.chand.network.TomanRateBasis
 import ir.thepoo7an.chand.widget.WidgetSyncCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -212,7 +213,11 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                     lastUpdatedMillis = sync.updatedAtMillis,
                     isRefreshing = false,
                     sourceSummary = sync.sourceSummary,
-                    errorBanner = if (sync.isLive) null else "offline"
+                    errorBanner = when {
+                        sync.isLive -> null
+                        sync.sourceSummary.contains(TomanRateBasis.OFFLINE_REFERENCE.labelEn) -> "offline_reference"
+                        else -> "offline"
+                    }
                 )
                 // Also refresh currently open detail asset if visible
                 _selectedAssetForDetail.value?.let { openAsset ->
@@ -281,6 +286,12 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     fun setWidgetOpacityPercent(percent: Int) {
         viewModelScope.launch {
             repository.setWidgetOpacityPercent(percent)
+        }
+    }
+
+    fun setWidgetHeroAssetId(assetId: String) {
+        viewModelScope.launch {
+            repository.setWidgetHeroAssetId(assetId)
         }
     }
 

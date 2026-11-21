@@ -47,6 +47,7 @@ class PreferencesSerializationTest {
         assertEquals(ThemeMode.AMOLED, initial.themeMode)
         assertEquals(AppLanguage.EN, initial.language)
         assertTrue(initial.widgetTranslucent)
+        assertEquals("USD", initial.widgetHeroAssetId)
         assertEquals(BuildConfig.GITHUB_REPOSITORY, initial.githubRepoSlug)
 
         repo.setThemeMode(ThemeMode.DARK)
@@ -55,6 +56,7 @@ class PreferencesSerializationTest {
         repo.setRefreshInterval(60)
         repo.setWidgetTranslucent(false)
         repo.setWidgetOpacityPercent(45)
+        repo.setWidgetHeroAssetId("COIN_EMAMI")
         repo.setGithubRepoSlug("  thepoo7an/Chand  ")
         repo.togglePin("USD")
         repo.togglePin("SOL")
@@ -67,6 +69,7 @@ class PreferencesSerializationTest {
         assertEquals(60, updated.refreshIntervalSeconds)
         assertFalse(updated.widgetTranslucent)
         assertEquals(45, updated.widgetOpacityPercent)
+        assertEquals("COIN_EMAMI", updated.widgetHeroAssetId)
         assertEquals("thepoo7an/Chand", updated.githubRepoSlug)
         assertFalse("USD" in updated.pinnedIds)
         assertTrue("SOL" in updated.pinnedIds)

@@ -1,73 +1,113 @@
-# Chand?! (`ir.thepoo7an.chand`)
+<div align="center">
 
-**AMOLED live currency, gold & crypto tracker in Iranian Toman** — built natively for Android with **Kotlin**, **Jetpack Compose**, **Material 3**, and **Jetpack Glance**.
+<img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png" width="96" height="96" alt="Chand?! App Icon" />
 
-[![Android CI / Release APKs](../../actions/workflows/release-apk.yml/badge.svg)](../../actions/workflows/release-apk.yml)
+# Chand?! (چند؟!) — Iran Currency, Gold & Crypto Tracker
+
+**AMOLED live currency, gold, coin & crypto rate tracker in Iranian Toman (TMN)** — zero ads, zero trackers, native Kotlin & Jetpack Compose with Home & Lock Screen Widgets.
+
+**اپلیکیشن متن‌باز و بدون تبلیغات ردیابی لحظه‌ای قیمت دلار، ارز، طلا، سکه و رمزارز به تومان — همراه با نمودار واقعی تاریخچه شمسی، مبدل سریع و ویجت‌های صفحه اصلی و لاک‌اسکرین.**
+
+[🇬🇧 English Overview](#-overview) • [🇮🇷 معرفی و راهنمای فارسی](#-معرفی-فارسی-برنامه-چند) • [⬇️ Download APK](#-download-latest-apk) • [📸 Screenshots](#-screenshots)
+
+<p>
+  <a href="https://github.com/thepoo7an/chand-iran-currency-gold-crypto/releases/latest">
+    <img src="https://img.shields.io/github/v/release/thepoo7an/chand-iran-currency-gold-crypto?style=for-the-badge&color=10B981&label=Latest%20APK" alt="Latest Release" />
+  </a>
+  <a href="https://github.com/thepoo7an/chand-iran-currency-gold-crypto/releases">
+    <img src="https://img.shields.io/github/downloads/thepoo7an/chand-iran-currency-gold-crypto/total?style=for-the-badge&color=3B82F6&label=Downloads" alt="Total Downloads" />
+  </a>
+  <a href="https://github.com/thepoo7an/chand-iran-currency-gold-crypto/stargazers">
+    <img src="https://img.shields.io/github/stars/thepoo7an/chand-iran-currency-gold-crypto?style=for-the-badge&color=F59E0B" alt="GitHub Stars" />
+  </a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/Android-7.0%2B%20(API%2024--36)-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Android API 24+" />
+  <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose%20%2B%20Glance-7F52FF?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin & Jetpack Compose" />
+  <img src="https://img.shields.io/badge/Ads%20%26%20Trackers-Zero%20(100%25%20Clean)-10B981?style=flat-square" alt="Zero Ads" />
+  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT License" />
+  <a href="../../actions/workflows/release-apk.yml">
+    <img src="../../actions/workflows/release-apk.yml/badge.svg" alt="Android CI / Release APKs" />
+  </a>
+</p>
+
+</div>
 
 ---
 
-## Overview
+## ⬇️ Download Latest APK
 
-**Chand?!** brings clean, real-time Iranian market rates to your home screen and lock screen with a pure `#000000` AMOLED-first interface, multi-provider live pricing, real historical trend charts (with Jalali dates), a fast built-in converter, and ultra-lightweight (~1.8 MB) release APKs.
+Grab the latest signed release directly from **[GitHub Releases](https://github.com/thepoo7an/chand-iran-currency-gold-crypto/releases/latest)**:
 
-- **Package / Application ID:** `ir.thepoo7an.chand`
-- **Minimum Android:** Android 7.0 (API 24) • **Target SDK:** Android 16+ (API 36)
-
----
-
-## Screenshots & Design Reference
-
-| Live App (AMOLED & Interactive 1Y Chart) | Market Bento Grid Concept | Home Widgets Concept | Lock Screen Monochrome Inspiration |
-| :---: | :---: | :---: | :---: |
-| <img src="public/assets/aistudio/Screenshot_20261120-210120_fe55c11b.png" width="220" alt="Chand?! Android AMOLED Live Chart" /> | <img src="public/assets/aistudio/Screenshot_20261120-193949_9e4139ba.png" width="220" alt="Bento Market Grid Reference" /> | <img src="public/assets/aistudio/Screenshot_20261120-194010_0b57bed1.png" width="220" alt="Home Screen Widgets Reference" /> | <img src="public/assets/aistudio/Screenshot_20261120-214514_abb7dc2e.png" width="220" alt="Lock Screen Transparent Widget Inspiration" /> |
-
----
-
-## Download Latest APK
-
-Grab the latest automated release builds from **[GitHub Releases](https://github.com/thepoo7an/chand/releases/latest)** *(update the URL if your repository slug differs)*:
-
-| Build Variant | Recommended For | Direct Filename |
+| Build Variant | Recommended For | Filename |
 | :--- | :--- | :--- |
-| **`arm64-v8a`** *(Recommended)* | Modern 64-bit Android phones (Android 10–17) | `Chand-arm64-v8a-release.apk` |
-| **`armeabi-v7a`** | Older 32-bit Android devices | `Chand-armeabi-v7a-release.apk` |
-| **`universal`** | Works on all CPU architectures | `Chand-universal-release.apk` |
+| **`arm64-v8a`** *(Recommended)* | 99% of modern 64-bit Android phones (Android 10–17) | `Chand-arm64-v8a-release.apk` |
+| **`armeabi-v7a`** | Older 32-bit Android phones | `Chand-armeabi-v7a-release.apk` |
+| **`universal`** | Compatible with every Android CPU architecture | `Chand-universal-release.apk` |
 
-> **Updating cleanly:** Make sure you install the same ABI variant signed with the repository's configured upload keystore so Android updates in-place without requiring uninstalling first.
-
----
-
-## Key Features
-
-- **Multi-Source Live Market Feeds**
-  - Aggregates real-time quotes across **TGJU**, **Wallex**, **Bitpin**, **Nobitex**, **Binance**, **Frankfurter (ECB)**, **Currency-API**, and **Gold-API** for fiat currencies (USD, EUR, AED, GBP, TRY, KWD, SAR, IQD...), 18K/24K Gold & Iranian Coins (Emami, Bahar Azadi, Half, Quarter, Gerami), and cryptocurrencies (BTC, ETH, USDT, TON, SOL, BNB, XRP, DOGE).
-- **Real Historical Charts (`24H` / `7D` / `1M` / `1Y`)**
-  - Interactive touch scrubbing with exact Jalali timestamps, range high/low stats, and source attribution powered by real exchange & central-bank time series.
-- **Home & Lock Screen Widgets (Jetpack Glance)**
-  - **1×1 Hero Rate Widget** (US Dollar)
-  - **2×1 Compact Glass Widget** (USD, EUR & 18K Gold with **Translucent Glass** & opacity presets: `50%`, `70%`, `85%`)
-  - **4×2 Live Watchlist Widget** (EUR, GBP, AED)
-  - **2×2 Crypto Widget** (BTC, ETH, USDT)
-  - **Transparent Lock Screen Widget** (`keyguard|home_screen`, monochrome background-free style)
-- **Instant Connectivity Widget Sync**
-  - Automatically detects offline-to-online network transitions via `ConnectivityManager.NetworkCallback` and a system `JobScheduler` fallback (`WidgetConnectivityJobService`) so widgets refresh the moment your device connects to the internet.
-- **In-App GitHub Release Update Checker**
-  - Checks your configured GitHub Releases (`BuildConfig.GITHUB_REPOSITORY` or custom `owner/repo` in Settings), matches your device's CPU ABI, and opens the direct release APK in the browser with zero extra install permissions.
-- **AMOLED Dark, Slate Dark & Light Themes + Bilingual UI**
-  - Pure `#000000` AMOLED default theme alongside Dark & Light modes, 2-column Bento grid or list view, custom currency converter keypad, Jalali header clock, and full **English (LTR)** / **Persian (RTL)** + optional Persian digits (`۱۲۳`).
-- **Compact APK Size (~1.8 MB)**
-  - R8 full-mode shrinking & resource shrinking, PNG crunching, Moshi KSP codegen (`kotlin-reflect`-free), and `en`/`fa` locale filtering.
+> **Tip for clean updates:** Install the same ABI variant (`arm64-v8a` recommended) for subsequent updates. The app also checks GitHub Releases natively inside **Settings → App Updates** and opens your matching ABI APK in the browser with zero extra permissions.
 
 ---
 
-## Building from Source
+## 📸 Screenshots
+
+| Live App (AMOLED & Interactive 1Y Chart) | Market Bento Grid | Home Screen Widgets | Lock Screen Monochrome Widget |
+| :---: | :---: | :---: | :---: |
+| <img src="public/assets/aistudio/Screenshot_20261120-210120_fe55c11b.png" width="210" alt="Chand?! Android AMOLED Live Chart" /> | <img src="public/assets/aistudio/Screenshot_20261120-193949_9e4139ba.png" width="210" alt="Bento Market Grid" /> | <img src="public/assets/aistudio/Screenshot_20261120-194010_0b57bed1.png" width="210" alt="Home Screen Widgets" /> | <img src="public/assets/aistudio/Screenshot_20261120-214514_abb7dc2e.png" width="210" alt="Lock Screen Transparent Widget" /> |
+
+---
+
+## ✨ Overview
+
+**Chand?!** (`ir.thepoo7an.chand`) is a lightweight, privacy-respecting open-source Android tracker built for checking live **Iranian Toman (TMN)** prices across Tehran's free currency market, Iranian gold & coins, and global cryptocurrencies.
+
+### Why Chand?!
+- **100% Free, Open Source & Zero Ads:** No banner ads, no forced interstitials, no analytics trackers, and **zero dangerous Android permissions** (only `INTERNET` and `ACCESS_NETWORK_STATE`).
+- **True Multi-Provider Live Aggregation:** Combines **TGJU** (Tehran Free Market), **Wallex**, **Bitpin**, **Nobitex**, **Binance**, **Frankfurter (ECB)**, **Currency-API**, and **Gold-API** — with transparent rate-basis badges so you always know the exact pricing source.
+- **Complete Market Coverage:**
+  - **Fiat Currencies:** US Dollar (`USD`), Euro (`EUR`), UAE Dirham (`AED`), British Pound (`GBP`), Turkish Lira (`TRY`), Kuwaiti Dinar (`KWD`), Canadian Dollar (`CAD`), Swiss Franc (`CHF`), Chinese Yuan (`CNY`), Australian Dollar (`AUD`), Japanese Yen (`JPY`), Saudi Riyal (`SAR`), Iraqi Dinar (`IQD`).
+  - **Gold & Iranian Coins:** 18K Gold (`GRAM`), 24K Gold (`GRAM24`), Gold Mesghal (`MESGHAL`), Emami Coin (`SEKE`), Bahar Azadi (`BAHAR`), Half Coin (`HALF`), Quarter Coin (`QUARTER`), Gerami Coin (`GERAMI`), Global Gold Ounce (`XAU`).
+  - **Cryptocurrencies:** Tether (`USDT`), Bitcoin (`BTC`), Ethereum (`ETH`), Toncoin (`TON`), Solana (`SOL`), BNB (`BNB`), XRP (`XRP`), Dogecoin (`DOGE`).
+- **Real Historical Charts (`24H` / `7D` / `1M` / `1Y`) & Per-Currency Sparklines:** Interactive touch scrubbing with exact **Jalali** dates/times, range high/low metrics, and currency-specific 7-day ECB/TGJU card sparklines.
+- **5 Native Jetpack Glance Widgets (Home & Lock Screen):**
+  - **1×1 Hero Widget** *(customizable asset in Settings — USD by default)*
+  - **2×1 Compact Glass Widget** (`USD • EUR • 18K Gold` with **Translucent Glass** opacity presets: `50%`, `70%`, `85%`)
+  - **4×2 Live Watchlist Widget** (pinned favorites)
+  - **2×2 Crypto Watch Widget** (`BTC • ETH • USDT`)
+  - **Transparent Lock Screen Widget** (`keyguard|home_screen`, monochrome background-free typography inspired by Nothing OS)
+- **Instant Connectivity & 30-Minute Periodic Widget Sync:** Automatically refreshes widgets when moving from offline to online (`ConnectivityManager.NetworkCallback`) and schedules periodic `JobScheduler` updates while widgets are placed.
+- **AMOLED Pure Black, Dark & Light Themes + Bilingual UI:** Built natively in **Persian (RTL)** and **English (LTR)** with optional Persian digits (`۱۲۳`), 2-column Bento Grid or List view, and a built-in quick currency converter keypad.
+
+---
+
+## 🇮🇷 معرفی فارسی برنامه چند؟!
+
+**چند؟! (Chand?!)** یک اپلیکیشن **رایگان، متن‌باز و بدون تبلیغات** برای پیگیری لحظه‌ای **قیمت دلار آزاد، ارزهای رایج، طلای ۱۸ و ۲۴ عیار، مثقال طلا، انواع سکه (امامی، بهار آزادی، نیم، ربع و گرمی) و رمزارزها (تتر، بیت‌کوین، اتریوم، تون‌کوین و...)** به **تومان** است.
+
+### امکانات کلیدی چند؟!
+- **بدون تبلیغات و کاملاً امن:** بدون هیچ دسترسی حساس یا ردیاب تبلیغاتی؛ فقط دسترسی اینترنت برای دریافت نرخ‌های لحظه‌ای.
+- **منابع معتبر و شفاف بازار آزاد:** تجمیع خودکار نرخ‌ها از **TGJU، والکس، بیت‌پین، نوبیتکس، بایننس، بانک مرکزی اروپا (Frankfurter) و Gold-API** با نمایش دقیق منبع نرخ‌گذاری در بالای صفحه.
+- **۵ ویجت حرفه‌ای صفحه اصلی و لاک‌اسکرین:**
+  - **ویجت ۱×۱ تک‌نرخی:** امکان انتخاب دارایی دلخواه از تنظیمات (دلار، یورو، طلا، مثقال، سکه امامی، بیت‌کوین و...).
+  - **ویجت ۲×۱ شیشه‌ای (Translucent):** نمایش هم‌زمان دلار، یورو و طلای ۱۸ عیار با تنظیم شفافیت (`۵۰٪`، `۷۰٪`، `۸۵٪`).
+  - **ویجت ۴×۲ برگزیده‌ها** و **ویجت ۲×۲ رمزارزها** همراه با نمایش ساعت آخرین بروزرسانی.
+  - **ویجت شفاف لاک‌اسکرین (Nothing Style):** بدون پس‌زمینه و با خوانایی بالا روی والپیپر صفحه قفل.
+- **همگام‌سازی خودکار ویجت‌ها:** به‌محض اتصال گوشی به اینترنت یا هر ۳۰ دقیقه در پس‌زمینه (فقط در صورت وجود ویجت فعال) نرخ‌ها بروزرسانی می‌شوند.
+- **نمودار واقعی بازه‌های `۲۴ ساعت`، `۷ روز`، `۱ ماه` و `۱ سال`:** لمس روی نمودار برای مشاهده قیمت دقیق با **تاریخ شمسی** و نمایش روند اختصاصی هر ارز روی کارت‌ها.
+- **مبدل سریع ارز و طلا:** تبدیل فوری هر ارز، طلا، سکه یا رمزارز به تومان و سایر دارایی‌ها با صفحه‌کلید اختصاصی.
+- **تم مشکی مطلق AMOLED + فارسی (راست‌چین) و انگلیسی:** همراه با پشتیبانی از ارقام فارسی (`۱۲۳`) و قابلیت بررسی و دانلود نسخه جدید مستقیم از داخل تنظیمات.
+
+---
+
+## 🛠 Building from Source
 
 ### Prerequisites
 - **JDK 21** (Temurin / OpenJDK)
-- **Android SDK** with **Compile SDK 36** (`compileSdk 36`, `minSdk 24`, `targetSdk 36`)
+- **Android SDK** (`compileSdk 36`, `minSdk 24`, `targetSdk 36`)
 - **Gradle 9.3.1** (installed on `PATH`)
 
-### Local Commands
+### Commands
 
 1. **Run Unit & Robolectric Tests**
    ```bash
@@ -79,29 +119,35 @@ Grab the latest automated release builds from **[GitHub Releases](https://github
    gradle :app:assembleDebug
    ```
 
-3. **Build Shrunk Release APKs (Universal + `arm64-v8a` + `armeabi-v7a`)**
+3. **Build ABI-Split Release APKs (Universal + `arm64-v8a` + `armeabi-v7a`)**
    ```bash
    KEYSTORE_PATH=/path/to/your-upload-key.jks \
    STORE_PASSWORD=your_store_password \
    KEY_PASSWORD=your_key_password \
    gradle :app:assembleRelease -PenableAbiSplits=true
    ```
-   Output APKs are generated in `app/build/outputs/apk/release/`.
+   Output APKs are written to `app/build/outputs/apk/release/`.
 
 ### Automated GitHub Actions Releases
-The workflow in `.github/workflows/release-apk.yml` automatically runs unit/Robolectric tests, increments `versionCode` from `github.run_number` (and `versionName` from git `v*` tags or `1.0.<run_number>`), builds all three ABI APKs (`universal`, `arm64-v8a`, `armeabi-v7a`), and publishes a GitHub Release on every push to `main`/`master` or `v*` tag.
+The workflow in `.github/workflows/release-apk.yml` automatically runs unit & Robolectric tests, increments `versionCode` from `github.run_number` (and `versionName` from `v*` tags or `1.0.<run_number>`), builds all three ABI APKs (`arm64-v8a`, `armeabi-v7a`, `universal`), and publishes a GitHub Release on every push to `main`/`master` or `v*` tag.
 
-To ensure updates install smoothly over previous releases, add these three secrets in **GitHub Repository → Settings → Secrets and variables → Actions** (key alias must be `upload`):
+Add these Repository Secrets under **Settings → Secrets and variables → Actions** (alias `upload`):
 - `KEYSTORE_BASE64`
 - `STORE_PASSWORD`
 - `KEY_PASSWORD`
 
 ---
 
-## Tech Stack
+## ⭐ Support & Feedback
+If **Chand?!** helps you track daily rates faster without ads, please **give this repository a Star ⭐** so more people can discover it!
+Found a bug or want another currency/coin added? **[Open an Issue](https://github.com/thepoo7an/chand-iran-currency-gold-crypto/issues/new/choose)**.
 
+---
+
+## 🧰 Tech Stack
 - **Language:** Kotlin + Coroutines & Flow
 - **UI:** Jetpack Compose, Material 3, Navigation Compose (Type-Safe Routes), Jetpack Glance AppWidgets
-- **Networking & Serialization:** Retrofit 2, OkHttp, Moshi KSP Codegen, Kotlinx Serialization
+- **Networking & Serialization:** Retrofit 2, OkHttp, Moshi KSP Codegen (`kotlin-reflect`-free), Kotlinx Serialization
 - **Persistence:** Jetpack DataStore Preferences
 - **Testing:** JUnit 4, Robolectric, Compose UI Test
+- **License:** [MIT License](LICENSE)

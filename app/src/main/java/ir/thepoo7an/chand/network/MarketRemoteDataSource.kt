@@ -40,9 +40,13 @@ class MarketRemoteDataSource(
         "SAR" to "price_sar",
         "IQD" to "price_iqd",
         "GOLD_18K" to "geram18",
+        "GOLD_24K" to "geram24",
+        "GOLD_MESGHAL" to "mesghal",
+        "COIN_BAHAR" to "sekeb",
         "COIN_EMAMI" to "sekee",
         "COIN_HALF" to "nim",
         "COIN_QUARTER" to "rob",
+        "COIN_GERAMI" to "gerami",
         "XAU_OZ" to "ons"
     )
 
@@ -84,8 +88,16 @@ class MarketRemoteDataSource(
                     fetchWallexUdfHistory("ETHTMN", TimeRange.H24, from24hSec, nowSec)
                         .ifEmpty { fetchBinanceKlines("ETHUSDT", TimeRange.H24) }
                 }
+                val from7dSec = nowSec - 7L * 24L * 3600L
+                val multiFxHistoryDeferred = async {
+                    financialApi.fetchMultiCurrencyRange(
+                        symbols = MarketPriceMapper.SUPPORTED_FIATS.map { it.fxCode },
+                        fromSec = from7dSec,
+                        toSec = nowSec
+                    )
+                }
                 val goldSparkDeferred = async { fetchBinanceKlines("PAXGUSDT", TimeRange.H24) }
-                val tgjuUsdRecentDeferred = async { fetchTgjuTablePoints("price_dollar_rl", 3, null) }
+                val tgjuUsdRecentDeferred = async { fetchTgjuTablePoints("price_dollar_rl", 7, null) }
                 val tgjuGoldRecentDeferred = async { fetchTgjuTablePoints("geram18", 3, null) }
 
                 val tgjuAjax = tgjuDeferred.await()
@@ -95,6 +107,7 @@ class MarketRemoteDataSource(
                 val binance = binanceDeferred.await()
                 val fxUsdRates = fxRatesDeferred.await()
                 val liveGoldSpotUsd = goldSpotDeferred.await()
+                val multiFxHistory = multiFxHistoryDeferred.await()
 
                 val usdtSpark = usdtSparkDeferred.await().map { it.priceToman }
                 val btcSpark = btcSparkDeferred.await().map { it.priceToman }
@@ -197,6 +210,19 @@ class MarketRemoteDataSource(
                 )
 
                 MarketPriceMapper.SUPPORTED_FIATS.forEach { spec ->
+                    val fxSeries = multiFxHistory[spec.fxCode].orEmpty()
+                    val currencySpark = if (fxSeries.size >= 3) {
+                        fxSeries.map { (ts, fx) ->
+                            val usdAnchor = if (tgjuUsdRecent.size >= 2) {
+                                nearestValue(ts, tgjuUsdRecent)
+                            } else {
+                                usdToman
+                            }
+                            usdAnchor / fx.coerceAtLeast(0.0001)
+                        }
+                    } else {
+                        emptyList()
+                    }
                     MarketPriceMapper.mapFiatAsset(
                         spec = spec,
                         usdToman = usdToman,
@@ -204,7 +230,8 @@ class MarketRemoteDataSource(
                         tgjuQuote = tgju[spec.tgjuKey],
                         fxPerUsd = fxUsdRates[spec.fxCode],
                         usdtSpark = usdtSpark,
-                        nowMillis = now
+                        nowMillis = now,
+                        currencySpark = currencySpark
                     )?.let { assets.add(it) }
                 }
 
@@ -275,10 +302,14 @@ class MarketRemoteDataSource(
                     )
                 }
 
-                addGoldAsset("GOLD_18K", "GRAM", "طلای ۱۸ عیار", "Gram", "✨", "geram18", gram18Theoretical)
-                addGoldAsset("COIN_QUARTER", "QUARTER", "ربع سکه", "1/4 Azadi", "🏅", "rob", gram18Theoretical * 3.55)
-                addGoldAsset("COIN_HALF", "HALF", "نیم سکه", "1/2 Azadi", "🥇", "nim", gram18Theoretical * 5.95)
+                addGoldAsset("GOLD_18K", "GRAM", "طلای ۱۸ عیار", "18K Gold", "✨", "geram18", gram18Theoretical)
+                addGoldAsset("GOLD_24K", "GRAM24", "طلای ۲۴ عیار", "24K Gold", "✨", "geram24", gram24Theoretical)
+                addGoldAsset("GOLD_MESGHAL", "MESGHAL", "مثقال طلا", "Gold Mesghal", "⚖️", "mesghal", gram18Theoretical * 4.3318)
                 addGoldAsset("COIN_EMAMI", "SEKE", "سکه امامی", "Emami Coin", "🪙", "sekee", gram18Theoretical * 11.15)
+                addGoldAsset("COIN_BAHAR", "BAHAR", "سکه بهار آزادی", "Bahar Azadi", "🪙", "sekeb", gram18Theoretical * 10.65)
+                addGoldAsset("COIN_HALF", "HALF", "نیم سکه", "1/2 Azadi", "🥇", "nim", gram18Theoretical * 5.95)
+                addGoldAsset("COIN_QUARTER", "QUARTER", "ربع سکه", "1/4 Azadi", "🏅", "rob", gram18Theoretical * 3.55)
+                addGoldAsset("COIN_GERAMI", "GERAMI", "سکه گرمی", "Gerami Coin", "🟡", "gerami", gram18Theoretical * 1.85)
                 addGoldAsset(
                     id = "XAU_OZ",
                     symbol = "XAU",

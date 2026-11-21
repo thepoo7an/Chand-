@@ -80,12 +80,17 @@ class ChandSingleAssetWidget : GlanceAppWidget() {
         val prefs = prefsRepo.getPreferences()
         val snapshot = prefsRepo.loadCachedSnapshot()
         val assets = snapshot?.assets.orEmpty()
-        val hero = assets.firstOrNull { it.id == "USD" }
+        val hero = assets.firstOrNull { it.id == prefs.widgetHeroAssetId }
+            ?: assets.firstOrNull { it.id == "USD" }
             ?: assets.firstOrNull { it.id in prefs.pinnedIds }
             ?: assets.firstOrNull()
 
         provideContent {
-            SingleHeroWidgetContent(asset = hero, prefs = prefs)
+            SingleHeroWidgetContent(
+                asset = hero,
+                updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
+                prefs = prefs
+            )
         }
     }
 }
@@ -93,10 +98,12 @@ class ChandSingleAssetWidget : GlanceAppWidget() {
 @Composable
 private fun SingleHeroWidgetContent(
     asset: MarketAsset?,
+    updatedAtMillis: Long,
     prefs: AppPreferences
 ) {
     val isFa = prefs.language == AppLanguage.FA
     val badgeBg = if (prefs.widgetTranslucent) WidgetColors.glassBadgeBg else WidgetColors.solidBadgeBg
+    val timeTag = NumberFormatters.formatTime(updatedAtMillis, prefs.usePersianDigits)
 
     Box(
         modifier = GlanceModifier
@@ -106,18 +113,35 @@ private fun SingleHeroWidgetContent(
             .clickable(actionStartActivity<MainActivity>())
     ) {
         if (asset == null) {
-            Box(modifier = GlanceModifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "Chand?!",
-                    style = TextStyle(
-                        color = WidgetColors.title,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
+            Box(
+                modifier = GlanceModifier
+                    .fillMaxSize()
+                    .clickable(actionRunCallback<RefreshAllWidgetsAction>()),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "Chand?!",
+                        style = TextStyle(
+                            color = WidgetColors.title,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     )
-                )
+                    Spacer(modifier = GlanceModifier.height(4.dp))
+                    Text(
+                        text = if (isFa) "لمس برای نرخ" else "Tap to sync",
+                        style = TextStyle(
+                            color = WidgetColors.sub,
+                            fontSize = 11.sp
+                        ),
+                        maxLines = 1
+                    )
+                }
             }
         } else {
             val isGain = asset.change24hPercent >= 0.0
+            val subLine = if (timeTag.isNotBlank()) "${asset.symbol} • $timeTag" else asset.symbol
             Column(
                 modifier = GlanceModifier.fillMaxSize(),
                 verticalAlignment = Alignment.Top
@@ -152,10 +176,10 @@ private fun SingleHeroWidgetContent(
                             maxLines = 1
                         )
                         Text(
-                            text = asset.symbol,
+                            text = subLine,
                             style = TextStyle(
                                 color = WidgetColors.sub,
-                                fontSize = 11.sp,
+                                fontSize = 10.sp,
                                 textAlign = TextAlign.End
                             ),
                             maxLines = 1
@@ -215,6 +239,7 @@ class ChandWideListWidget : GlanceAppWidget() {
         provideContent {
             MultiRowWidgetContent(
                 rows = rows,
+                updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
                 prefs = prefs,
                 compactMode = false
             )
@@ -240,6 +265,7 @@ class ChandCompactCryptoWidget : GlanceAppWidget() {
         provideContent {
             MultiRowWidgetContent(
                 rows = rows,
+                updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
                 prefs = prefs,
                 compactMode = true
             )
@@ -267,6 +293,7 @@ class ChandCompact2x1Widget : GlanceAppWidget() {
         provideContent {
             Compact2x1WidgetContent(
                 rows = rows,
+                updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
                 prefs = prefs
             )
         }
@@ -276,12 +303,14 @@ class ChandCompact2x1Widget : GlanceAppWidget() {
 @Composable
 private fun Compact2x1WidgetContent(
     rows: List<MarketAsset>,
+    updatedAtMillis: Long,
     prefs: AppPreferences
 ) {
     val size = LocalSize.current
     val isFa = prefs.language == AppLanguage.FA
     val isTall = size.height >= 92.dp
     val showFullDelta = size.width >= 165.dp || isTall
+    val timeTag = NumberFormatters.formatTime(updatedAtMillis, prefs.usePersianDigits)
     val dividerColor = if (prefs.widgetTranslucent) WidgetColors.glassDivider else WidgetColors.solidDivider
 
     Box(
@@ -410,6 +439,22 @@ private fun Compact2x1WidgetContent(
                         ) {}
                     }
                 }
+                if (isTall && timeTag.isNotBlank()) {
+                    Row(
+                        modifier = GlanceModifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Spacer(modifier = GlanceModifier.defaultWeight())
+                        Text(
+                            text = timeTag,
+                            style = TextStyle(
+                                color = WidgetColors.sub,
+                                fontSize = 8.sp
+                            ),
+                            maxLines = 1
+                        )
+                    }
+                }
             }
         }
     }
@@ -418,10 +463,12 @@ private fun Compact2x1WidgetContent(
 @Composable
 private fun MultiRowWidgetContent(
     rows: List<MarketAsset>,
+    updatedAtMillis: Long,
     prefs: AppPreferences,
     compactMode: Boolean
 ) {
     val isFa = prefs.language == AppLanguage.FA
+    val timeTag = NumberFormatters.formatTime(updatedAtMillis, prefs.usePersianDigits)
     val dividerColor = if (prefs.widgetTranslucent) WidgetColors.glassDivider else WidgetColors.solidDivider
     val badgeBg = if (prefs.widgetTranslucent) WidgetColors.glassBadgeBg else WidgetColors.solidBadgeBg
 
@@ -429,11 +476,16 @@ private fun MultiRowWidgetContent(
         modifier = GlanceModifier
             .fillMaxSize()
             .background(ImageProvider(widgetBackgroundDrawableRes(prefs)))
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(horizontal = 14.dp, vertical = 9.dp)
             .clickable(actionStartActivity<MainActivity>())
     ) {
         if (rows.isEmpty()) {
-            Box(modifier = GlanceModifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = GlanceModifier
+                    .fillMaxSize()
+                    .clickable(actionRunCallback<RefreshAllWidgetsAction>()),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(
                     text = if (isFa) "برای دریافت نرخ لمس کنید" else "Tap to load rates",
                     style = TextStyle(color = WidgetColors.sub, fontSize = 12.sp)
@@ -511,6 +563,24 @@ private fun MultiRowWidgetContent(
                                 .height(1.dp)
                                 .background(dividerColor)
                         ) {}
+                    }
+                }
+                if (timeTag.isNotBlank()) {
+                    Row(
+                        modifier = GlanceModifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Spacer(modifier = GlanceModifier.defaultWeight())
+                        Text(
+                            text = timeTag,
+                            style = TextStyle(
+                                color = WidgetColors.sub,
+                                fontSize = 9.sp
+                            ),
+                            maxLines = 1
+                        )
                     }
                 }
             }

@@ -32,7 +32,9 @@ import java.util.concurrent.atomic.AtomicLong
  */
 object WidgetSyncCoordinator {
 
-    private const val CONNECTIVITY_JOB_ID = 7401
+    const val CONNECTIVITY_JOB_ID = 7401
+    private const val CONNECTIVITY_PERIODIC_JOB_ID = 7402
+    private const val PERIODIC_SYNC_INTERVAL_MS = 30L * 60L * 1000L
     private const val MIN_SYNC_GAP_MS = 8_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -194,6 +196,41 @@ object WidgetSyncCoordinator {
         val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler
             ?: return
         runCatching { scheduler.cancel(CONNECTIVITY_JOB_ID) }
+    }
+
+    fun schedulePeriodicWidgetSync(context: Context) {
+        val appContext = context.applicationContext
+        val scheduler = appContext.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler
+            ?: return
+        if (scheduler.getPendingJob(CONNECTIVITY_PERIODIC_JOB_ID) != null) return
+
+        val jobInfo = JobInfo.Builder(
+            CONNECTIVITY_PERIODIC_JOB_ID,
+            ComponentName(appContext, WidgetConnectivityJobService::class.java)
+        )
+            .setPeriodic(PERIODIC_SYNC_INTERVAL_MS)
+            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+            .setPersisted(false)
+            .build()
+
+        runCatching { scheduler.schedule(jobInfo) }
+    }
+
+    fun cancelPeriodicWidgetSync(context: Context) {
+        val scheduler = context.applicationContext.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler
+            ?: return
+        runCatching { scheduler.cancel(CONNECTIVITY_PERIODIC_JOB_ID) }
+    }
+
+    fun ensurePeriodicSyncIfWidgetsExist(context: Context) {
+        val appContext = context.applicationContext
+        scope.launch {
+            if (hasAnyActiveWidgets(appContext)) {
+                schedulePeriodicWidgetSync(appContext)
+            } else {
+                cancelPeriodicWidgetSync(appContext)
+            }
+        }
     }
 
     suspend fun updateAllWidgets(context: Context) {

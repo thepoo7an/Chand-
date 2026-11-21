@@ -183,4 +183,28 @@ class PriceMappingTest {
         assertTrue(fa.contains("TGJU"))
         assertEquals(en, TomanRateBasis.localizeSummary(en, isFa = false))
     }
+
+    @Test
+    fun `mapFiatAsset uses currency-specific sparkline when available instead of cloning USDT curve`() {
+        val gbpSpec = MarketPriceMapper.SUPPORTED_FIATS.first { it.id == "GBP" }
+        val usdtRising = listOf(69_000.0, 70_000.0, 71_000.0, 72_000.0)
+        val gbpFalling = listOf(92_000.0, 91_000.0, 90_000.0, 88_000.0)
+
+        val asset = MarketPriceMapper.mapFiatAsset(
+            spec = gbpSpec,
+            usdToman = 72_000.0,
+            usdChangePct = 1.0,
+            tgjuQuote = null,
+            fxPerUsd = 0.80,
+            usdtSpark = usdtRising,
+            nowMillis = 123_456L,
+            currencySpark = gbpFalling
+        )
+        assertNotNull(asset)
+        assertTrue(
+            "Expected GBP sparkline to reflect its own downward trajectory rather than USDT rising curve",
+            asset!!.sparkline.first() > asset.sparkline.last()
+        )
+        assertEquals(asset.priceToman, asset.sparkline.last(), 0.5)
+    }
 }

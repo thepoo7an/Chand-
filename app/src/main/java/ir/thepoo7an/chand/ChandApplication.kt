@@ -7,5 +7,6 @@ class ChandApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         WidgetSyncCoordinator.registerConnectivityMonitor(this)
+        WidgetSyncCoordinator.ensurePeriodicSyncIfWidgetsExist(this)
     }
 }

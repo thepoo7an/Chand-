@@ -23,7 +23,7 @@ android {
 
     val githubRepo = System.getenv("GITHUB_REPOSITORY")?.takeIf { it.isNotBlank() }
       ?: project.findProperty("githubRepo")?.toString()?.takeIf { it.isNotBlank() }
-      ?: "thepoo7an/chand"
+      ?: "thepoo7an/chand-iran-currency-gold-crypto"
     buildConfigField("String", "GITHUB_REPOSITORY", "\"$githubRepo\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

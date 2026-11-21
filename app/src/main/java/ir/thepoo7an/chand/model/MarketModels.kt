@@ -86,6 +86,7 @@ data class AppPreferences(
     val refreshIntervalSeconds: Int = 30,
     val widgetTranslucent: Boolean = true,
     val widgetOpacityPercent: Int = 70,
+    val widgetHeroAssetId: String = "USD",
     val githubRepoSlug: String = ir.thepoo7an.chand.BuildConfig.GITHUB_REPOSITORY
 ) {
     companion object {

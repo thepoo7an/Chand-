@@ -153,6 +153,11 @@ class MarketRepository(
         updateAllWidgets()
     }
 
+    suspend fun setWidgetHeroAssetId(assetId: String) {
+        prefsRepo.setWidgetHeroAssetId(assetId)
+        updateAllWidgets()
+    }
+
     suspend fun setGithubRepoSlug(slug: String) {
         prefsRepo.setGithubRepoSlug(slug)
     }

@@ -173,7 +173,8 @@ object MarketPriceMapper {
         tgjuQuote: TgjuQuote?,
         fxPerUsd: Double?,
         usdtSpark: List<Double>,
-        nowMillis: Long
+        nowMillis: Long,
+        currencySpark: List<Double> = emptyList()
     ): MarketAsset? {
         val crossPriceToman = if (fxPerUsd != null && fxPerUsd > 0.0) usdToman / fxPerUsd else null
         var priceToman = tgjuQuote?.priceToman ?: crossPriceToman ?: return null
@@ -206,8 +207,13 @@ object MarketPriceMapper {
                 0.0
             }
 
-        val spark = if (usdtSpark.size >= 4) {
-            scaleSeriesToCurrent(usdtSpark, priceToman)
+        val rawSpark = when {
+            currencySpark.size >= 3 -> currencySpark
+            usdtSpark.size >= 4 -> usdtSpark
+            else -> emptyList()
+        }
+        val spark = if (rawSpark.isNotEmpty()) {
+            scaleSeriesToCurrent(rawSpark, priceToman)
         } else {
             flatSparkline(priceToman, changePct)
         }

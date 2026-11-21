@@ -8,8 +8,10 @@ import androidx.glance.appwidget.GlanceAppWidgetReceiver
 abstract class BaseChandWidgetReceiver : GlanceAppWidgetReceiver() {
     override fun onEnabled(context: Context) {
         super.onEnabled(context)
-        WidgetSyncCoordinator.registerConnectivityMonitor(context.applicationContext)
-        WidgetSyncCoordinator.triggerAsyncWidgetSync(context.applicationContext, force = true)
+        val appContext = context.applicationContext
+        WidgetSyncCoordinator.registerConnectivityMonitor(appContext)
+        WidgetSyncCoordinator.schedulePeriodicWidgetSync(appContext)
+        WidgetSyncCoordinator.triggerAsyncWidgetSync(appContext, force = true)
     }
 
     override fun onUpdate(
@@ -18,8 +20,15 @@ abstract class BaseChandWidgetReceiver : GlanceAppWidgetReceiver() {
         appWidgetIds: IntArray
     ) {
         super.onUpdate(context, appWidgetManager, appWidgetIds)
-        WidgetSyncCoordinator.registerConnectivityMonitor(context.applicationContext)
-        WidgetSyncCoordinator.triggerAsyncWidgetSync(context.applicationContext, force = false)
+        val appContext = context.applicationContext
+        WidgetSyncCoordinator.registerConnectivityMonitor(appContext)
+        WidgetSyncCoordinator.schedulePeriodicWidgetSync(appContext)
+        WidgetSyncCoordinator.triggerAsyncWidgetSync(appContext, force = false)
+    }
+
+    override fun onDisabled(context: Context) {
+        super.onDisabled(context)
+        WidgetSyncCoordinator.ensurePeriodicSyncIfWidgetsExist(context.applicationContext)
     }
 }
 

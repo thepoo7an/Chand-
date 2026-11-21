@@ -103,20 +103,34 @@ class AppUpdateService(
         val parsed = parseRepoSlug(repoSlugInput) ?: return@withContext AppUpdateState.RepoNotConfigured
         val (owner, repo) = parsed
 
+        var releaseListSucceeded = false
         val release = try {
-            api.getLatestRelease(owner, repo)
+            api.getLatestRelease(owner, repo).takeUnless { it.draft || it.prerelease }
         } catch (ce: kotlinx.coroutines.CancellationException) {
             throw ce
         } catch (_: Throwable) {
             try {
-                api.listReleases(owner, repo, perPage = 5)
-                    .firstOrNull { !it.draft }
+                val list = api.listReleases(owner, repo, perPage = 10)
+                releaseListSucceeded = true
+                selectLatestStableRelease(list)
             } catch (ce: kotlinx.coroutines.CancellationException) {
                 throw ce
             } catch (_: Throwable) {
                 null
             }
-        } ?: return@withContext AppUpdateState.Error("release_fetch_failed")
+        }
+
+        if (release == null) {
+            return@withContext if (releaseListSucceeded) {
+                AppUpdateState.UpToDate(
+                    currentVersionName = currentVersionName,
+                    currentVersionCode = currentVersionCode,
+                    checkedAtMillis = System.currentTimeMillis()
+                )
+            } else {
+                AppUpdateState.Error("release_fetch_failed")
+            }
+        }
 
         val remoteBuild = extractBuildNumber(release)
         val remoteSemver = extractCleanVersionName(release)
@@ -157,6 +171,9 @@ class AppUpdateService(
     }
 
     companion object {
+        fun selectLatestStableRelease(releases: List<GitHubReleaseDto>): GitHubReleaseDto? =
+            releases.firstOrNull { !it.draft && !it.prerelease }
+
         fun parseRepoSlug(raw: String): Pair<String, String>? {
             val cleaned = raw.trim()
                 .removePrefix("https://github.com/")

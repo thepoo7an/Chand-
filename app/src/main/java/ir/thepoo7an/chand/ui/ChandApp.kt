@@ -330,10 +330,12 @@ fun ChandApp(
         }
 
         if (showSettingsSheet) {
+            val allAssets = (uiState as? MarketUiState.Ready)?.assets.orEmpty()
             SettingsSheet(
                 prefs = prefs,
                 strings = strings,
                 updateState = updateState,
+                availableAssets = allAssets,
                 onSetThemeMode = viewModel::setThemeMode,
                 onSetLanguage = viewModel::setLanguage,
                 onSetPersianDigits = viewModel::setUsePersianDigits,
@@ -341,6 +343,8 @@ fun ChandApp(
                 onSetRefreshInterval = viewModel::setRefreshInterval,
                 onSetWidgetTranslucent = viewModel::setWidgetTranslucent,
                 onSetWidgetOpacityPercent = viewModel::setWidgetOpacityPercent,
+                onSetWidgetHeroAsset = viewModel::setWidgetHeroAssetId,
+                onSetGithubRepoSlug = viewModel::setGithubRepoSlug,
                 onCheckForUpdates = viewModel::checkForUpdates,
                 onDismiss = { showSettingsSheet = false }
             )

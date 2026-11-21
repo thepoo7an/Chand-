@@ -20,10 +20,12 @@ class WidgetConnectivityJobService : JobService() {
     override fun onStartJob(params: JobParameters?): Boolean {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         serviceScope = scope
+        val isOneShot = params?.jobId == WidgetSyncCoordinator.CONNECTIVITY_JOB_ID
         scope.launch {
             val ok = try {
                 val hasWidgets = WidgetSyncCoordinator.hasAnyActiveWidgets(applicationContext)
                 if (!hasWidgets) {
+                    WidgetSyncCoordinator.cancelPeriodicWidgetSync(applicationContext)
                     true
                 } else {
                     WidgetSyncCoordinator.syncWidgetsNow(applicationContext, force = true)
@@ -31,7 +33,7 @@ class WidgetConnectivityJobService : JobService() {
             } catch (_: Throwable) {
                 false
             }
-            jobFinished(params, !ok)
+            jobFinished(params, !ok && isOneShot)
         }
         return true
     }

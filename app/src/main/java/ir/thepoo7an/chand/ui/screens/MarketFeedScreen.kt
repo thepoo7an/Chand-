@@ -299,7 +299,11 @@ fun MarketFeedScreen(
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = strings.offlineCachedBanner,
+                            text = if (readyState?.errorBanner == "offline_reference") {
+                                strings.offlineReferenceBanner
+                            } else {
+                                strings.offlineCachedBanner
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             color = marketColors.loss
                         )

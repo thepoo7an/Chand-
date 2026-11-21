@@ -11,6 +11,8 @@ import ir.thepoo7an.chand.network.FrankfurterTimeSeriesResponse
 import ir.thepoo7an.chand.network.GitHubReleaseAssetDto
 import ir.thepoo7an.chand.network.GitHubReleaseDto
 import ir.thepoo7an.chand.network.GoldSpotResponse
+import ir.thepoo7an.chand.ui.strings.EnStrings
+import ir.thepoo7an.chand.ui.strings.FaStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -99,5 +101,30 @@ class ChandAppRobolectricTest {
         assertEquals("Chand-arm64-v8a-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("arm64-v8a", "armeabi-v7a"))?.name)
         assertEquals("Chand-armeabi-v7a-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("armeabi-v7a"))?.name)
         assertEquals("Chand-universal-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("x86_64"))?.name)
+    }
+
+    @Test
+    fun `AppUpdateService skips drafts and prereleases when selecting latest stable release`() {
+        val releases = listOf(
+            GitHubReleaseDto(tagName = "v1.0.9-draft", draft = true, prerelease = false),
+            GitHubReleaseDto(tagName = "test-build-8", draft = false, prerelease = true),
+            GitHubReleaseDto(tagName = "v1.0.5", draft = false, prerelease = false)
+        )
+        val picked = AppUpdateService.selectLatestStableRelease(releases)
+        assertNotNull(picked)
+        assertEquals("v1.0.5", picked!!.tagName)
+
+        val onlyPrereleases = listOf(
+            GitHubReleaseDto(tagName = "test-build-8", draft = false, prerelease = true)
+        )
+        assertEquals(null, AppUpdateService.selectLatestStableRelease(onlyPrereleases))
+    }
+
+    @Test
+    fun `offline reference banner differs from cached offline banner in both languages`() {
+        assertFalse(EnStrings.offlineReferenceBanner == EnStrings.offlineCachedBanner)
+        assertFalse(FaStrings.offlineReferenceBanner == FaStrings.offlineCachedBanner)
+        assertEquals("thepoo7an/chand-iran-currency-gold-crypto", EnStrings.githubRepoPlaceholder)
+        assertEquals("thepoo7an/chand-iran-currency-gold-crypto", FaStrings.githubRepoPlaceholder)
     }
 }

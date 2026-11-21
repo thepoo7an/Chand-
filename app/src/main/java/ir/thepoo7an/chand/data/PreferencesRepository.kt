@@ -38,6 +38,7 @@ class PreferencesRepository(
         val REFRESH_INTERVAL = intPreferencesKey("refresh_interval_seconds")
         val WIDGET_TRANSLUCENT = booleanPreferencesKey("widget_translucent")
         val WIDGET_OPACITY_PERCENT = intPreferencesKey("widget_opacity_percent")
+        val WIDGET_HERO_ASSET_ID = stringPreferencesKey("widget_hero_asset_id")
         val GITHUB_REPO_SLUG = stringPreferencesKey("github_repo_slug")
         val CACHED_SNAPSHOT = stringPreferencesKey("cached_snapshot_json")
         val CACHED_UPDATED_AT = longPreferencesKey("cached_updated_at")
@@ -58,6 +59,7 @@ class PreferencesRepository(
         val refreshInterval = prefs[Keys.REFRESH_INTERVAL] ?: 30
         val widgetTranslucent = prefs[Keys.WIDGET_TRANSLUCENT] ?: true
         val widgetOpacityPercent = prefs[Keys.WIDGET_OPACITY_PERCENT] ?: 70
+        val widgetHeroAssetId = prefs[Keys.WIDGET_HERO_ASSET_ID]?.takeIf { it.isNotBlank() } ?: "USD"
         val githubRepoSlug = prefs[Keys.GITHUB_REPO_SLUG]?.takeIf { it.isNotBlank() }
             ?: ir.thepoo7an.chand.BuildConfig.GITHUB_REPOSITORY
 
@@ -70,6 +72,7 @@ class PreferencesRepository(
             refreshIntervalSeconds = refreshInterval,
             widgetTranslucent = widgetTranslucent,
             widgetOpacityPercent = widgetOpacityPercent,
+            widgetHeroAssetId = widgetHeroAssetId,
             githubRepoSlug = githubRepoSlug
         )
     }
@@ -105,6 +108,10 @@ class PreferencesRepository(
 
     suspend fun setWidgetOpacityPercent(percent: Int) {
         dataStore.edit { it[Keys.WIDGET_OPACITY_PERCENT] = percent }
+    }
+
+    suspend fun setWidgetHeroAssetId(assetId: String) {
+        dataStore.edit { it[Keys.WIDGET_HERO_ASSET_ID] = assetId }
     }
 
     suspend fun setGithubRepoSlug(slug: String) {
