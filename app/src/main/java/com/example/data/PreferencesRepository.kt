@@ -35,6 +35,7 @@ class PreferencesRepository(private val context: Context) {
         val REFRESH_INTERVAL = intPreferencesKey("refresh_interval_seconds")
         val WIDGET_TRANSLUCENT = booleanPreferencesKey("widget_translucent")
         val WIDGET_OPACITY_PERCENT = intPreferencesKey("widget_opacity_percent")
+        val GITHUB_REPO_SLUG = stringPreferencesKey("github_repo_slug")
         val CACHED_SNAPSHOT = stringPreferencesKey("cached_snapshot_json")
         val CACHED_UPDATED_AT = longPreferencesKey("cached_updated_at")
     }
@@ -54,6 +55,8 @@ class PreferencesRepository(private val context: Context) {
         val refreshInterval = prefs[Keys.REFRESH_INTERVAL] ?: 30
         val widgetTranslucent = prefs[Keys.WIDGET_TRANSLUCENT] ?: true
         val widgetOpacityPercent = prefs[Keys.WIDGET_OPACITY_PERCENT] ?: 70
+        val githubRepoSlug = prefs[Keys.GITHUB_REPO_SLUG]?.takeIf { it.isNotBlank() }
+            ?: com.example.BuildConfig.GITHUB_REPOSITORY
 
         AppPreferences(
             themeMode = theme,
@@ -63,7 +66,8 @@ class PreferencesRepository(private val context: Context) {
             pinnedIds = pinnedIds,
             refreshIntervalSeconds = refreshInterval,
             widgetTranslucent = widgetTranslucent,
-            widgetOpacityPercent = widgetOpacityPercent
+            widgetOpacityPercent = widgetOpacityPercent,
+            githubRepoSlug = githubRepoSlug
         )
     }
 
@@ -98,6 +102,10 @@ class PreferencesRepository(private val context: Context) {
 
     suspend fun setWidgetOpacityPercent(percent: Int) {
         context.chandDataStore.edit { it[Keys.WIDGET_OPACITY_PERCENT] = percent }
+    }
+
+    suspend fun setGithubRepoSlug(slug: String) {
+        context.chandDataStore.edit { it[Keys.GITHUB_REPO_SLUG] = slug.trim() }
     }
 
     suspend fun togglePin(assetId: String): Set<String> {

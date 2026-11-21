@@ -9,12 +9,10 @@ import com.example.model.CachedMarketSnapshot
 import com.example.model.MarketAsset
 import com.example.model.ThemeMode
 import com.example.model.TimeRange
+import com.example.network.AppUpdateService
+import com.example.network.AppUpdateState
 import com.example.network.MarketRemoteDataSource
-import com.example.widget.ChandCompact2x1Widget
-import com.example.widget.ChandCompactCryptoWidget
-import com.example.widget.ChandLockScreenWidget
-import com.example.widget.ChandSingleAssetWidget
-import com.example.widget.ChandWideListWidget
+import com.example.widget.WidgetSyncCoordinator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -32,7 +30,8 @@ data class MarketSyncResult(
 class MarketRepository(
     private val context: Context,
     private val prefsRepo: PreferencesRepository,
-    private val remote: MarketRemoteDataSource = MarketRemoteDataSource()
+    private val remote: MarketRemoteDataSource = MarketRemoteDataSource(),
+    private val updateService: AppUpdateService = AppUpdateService()
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val historyCacheDir by lazy { File(context.filesDir, "history_cache").apply { mkdirs() } }
@@ -141,11 +140,14 @@ class MarketRepository(
         updateAllWidgets()
     }
 
+    suspend fun setGithubRepoSlug(slug: String) {
+        prefsRepo.setGithubRepoSlug(slug)
+    }
+
+    suspend fun checkForUpdate(repoSlug: String): AppUpdateState =
+        updateService.checkForUpdate(repoSlug)
+
     private suspend fun updateAllWidgets() {
-        runCatching { ChandSingleAssetWidget().updateAll(context) }
-        runCatching { ChandWideListWidget().updateAll(context) }
-        runCatching { ChandCompactCryptoWidget().updateAll(context) }
-        runCatching { ChandCompact2x1Widget().updateAll(context) }
-        runCatching { ChandLockScreenWidget().updateAll(context) }
+        WidgetSyncCoordinator.updateAllWidgets(context)
     }
 }

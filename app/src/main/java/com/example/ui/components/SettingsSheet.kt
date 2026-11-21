@@ -36,11 +36,29 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.model.AppLanguage
 import com.example.model.AppPreferences
 import com.example.model.ThemeMode
+import com.example.network.AppUpdateState
 import com.example.ui.strings.ChandStrings
 import com.example.ui.strings.NumberFormatters
 import com.example.ui.theme.LocalMarketColors
@@ -50,6 +68,7 @@ import com.example.ui.theme.LocalMarketColors
 fun SettingsSheet(
     prefs: AppPreferences,
     strings: ChandStrings,
+    updateState: AppUpdateState,
     onSetThemeMode: (ThemeMode) -> Unit,
     onSetLanguage: (AppLanguage) -> Unit,
     onSetPersianDigits: (Boolean) -> Unit,
@@ -57,10 +76,13 @@ fun SettingsSheet(
     onSetRefreshInterval: (Int) -> Unit,
     onSetWidgetTranslucent: (Boolean) -> Unit,
     onSetWidgetOpacityPercent: (Int) -> Unit,
+    onCheckForUpdates: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val marketColors = LocalMarketColors.current
+    var repoInput by remember(prefs.githubRepoSlug) { mutableStateOf(prefs.githubRepoSlug) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -561,6 +583,190 @@ fun SettingsSheet(
                                 color = Color.White.copy(alpha = 0.72f),
                                 modifier = Modifier.align(Alignment.CenterHorizontally)
                             )
+                        }
+                    }
+                }
+            }
+
+            // App Updates Section (Zero-permission GitHub Releases check + Browser download)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = strings.updateSection,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    border = BorderStroke(1.dp, marketColors.hairline),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.SystemUpdate,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Column {
+                                    Text(
+                                        text = strings.currentVersionLabel,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                            Button(
+                                onClick = { onCheckForUpdates(repoInput) },
+                                enabled = updateState !is AppUpdateState.Checking,
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.testTag("check_updates_button")
+                            ) {
+                                if (updateState is AppUpdateState.Checking) {
+                                    CircularProgressIndicator(
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier
+                                            .width(16.dp)
+                                            .height(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(text = strings.checkingUpdatesLabel, fontSize = 12.sp)
+                                } else {
+                                    Text(text = strings.checkUpdatesButton, fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = repoInput,
+                            onValueChange = { repoInput = it },
+                            singleLine = true,
+                            label = { Text(strings.githubRepoLabel, fontSize = 12.sp) },
+                            placeholder = { Text(strings.githubRepoPlaceholder, fontSize = 12.sp) },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("github_repo_input")
+                        )
+
+                        when (updateState) {
+                            is AppUpdateState.UpdateAvailable -> {
+                                val info = updateState.info
+                                val sizeMb = if (info.matchedApkSizeBytes > 0L) {
+                                    String.format(
+                                        java.util.Locale.US,
+                                        " • %.1f MB",
+                                        info.matchedApkSizeBytes / (1024.0 * 1024.0)
+                                    )
+                                } else {
+                                    ""
+                                }
+                                Text(
+                                    text = "${strings.updateAvailableTitle}: v${info.latestVersionName}" +
+                                        (info.latestVersionCode?.let { " (Build $it)" } ?: ""),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = marketColors.gain
+                                )
+                                Text(
+                                    text = "${info.matchedApkName}$sizeMb",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (info.releaseNotes.isNotBlank()) {
+                                    Text(
+                                        text = info.releaseNotes.take(260),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            runCatching {
+                                                context.startActivity(
+                                                    Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+                                                )
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("download_update_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Download,
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .width(16.dp)
+                                                .height(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(strings.downloadUpdateButton, fontSize = 12.sp, maxLines = 1)
+                                    }
+                                    if (info.releasePageUrl.isNotBlank()) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                runCatching {
+                                                    context.startActivity(
+                                                        Intent(Intent.ACTION_VIEW, Uri.parse(info.releasePageUrl))
+                                                    )
+                                                }
+                                            }
+                                        ) {
+                                            Text(strings.viewReleaseButton, fontSize = 12.sp, maxLines = 1)
+                                        }
+                                    }
+                                }
+                            }
+
+                            is AppUpdateState.UpToDate -> {
+                                Text(
+                                    text = strings.upToDateLabel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = marketColors.gain
+                                )
+                            }
+
+                            is AppUpdateState.RepoNotConfigured -> {
+                                Text(
+                                    text = strings.updateRepoMissingHint,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            is AppUpdateState.Error -> {
+                                Text(
+                                    text = strings.updateCheckErrorLabel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = marketColors.loss
+                                )
+                            }
+
+                            AppUpdateState.Idle, AppUpdateState.Checking -> Unit
                         }
                     }
                 }

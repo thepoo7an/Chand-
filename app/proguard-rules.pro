@@ -1,21 +1,48 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# ProGuard / R8 Keep Rules for Chand?! Release Builds
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Kotlinx Serialization (Models & Navigation Routes)
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.AnnotationsKt
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+-keepclassmembers class kotlinx.serialization.json.** {
+    *** Companion;
+}
+-keepclasseswithmembers class kotlinx.serialization.json.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+-keep,includedescriptorclasses class com.example.model.**$$serializer { *; }
+-keepclassmembers class com.example.model.** {
+    *** Companion;
+}
+-keep,includedescriptorclasses class com.example.ui.navigation.**$$serializer { *; }
+-keepclassmembers class com.example.ui.navigation.** {
+    *** Companion;
+}
+
+# Moshi Codegen Adapters & Retrofit Interfaces
+-keep class * extends com.squareup.moshi.JsonAdapter {
+    public <init>(com.squareup.moshi.Moshi);
+}
+-keep @com.squareup.moshi.JsonClass class com.example.network.** { *; }
+-keepclassmembers class com.example.network.*JsonAdapter { *; }
+-keep interface com.example.network.FinancialRetrofitApi { *; }
+-keep interface com.example.network.GitHubReleaseApi { *; }
+
+# Retrofit & OkHttp
+-dontwarn retrofit2.**
+-keepattributes Signature, Exceptions
+-keepclassmembers,allowshrinking,allowobfuscation interface * {
+    @retrofit2.http.* <methods>;
+}
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn org.conscrypt.**
+
+# Glance AppWidgets, Receivers, Actions & JobService
+-keep class * extends androidx.glance.appwidget.GlanceAppWidget
+-keep class * extends androidx.glance.appwidget.GlanceAppWidgetReceiver
+-keep class * implements androidx.glance.appwidget.action.ActionCallback {
+    public <init>();
+}
+-keep class com.example.widget.WidgetConnectivityJobService { *; }

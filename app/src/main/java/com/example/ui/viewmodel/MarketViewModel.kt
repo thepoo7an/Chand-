@@ -13,6 +13,8 @@ import com.example.model.MarketAsset
 import com.example.model.MarketUiState
 import com.example.model.ThemeMode
 import com.example.model.TimeRange
+import com.example.network.AppUpdateState
+import com.example.widget.WidgetSyncCoordinator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +22,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -62,6 +65,12 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _isHistoryLoading = MutableStateFlow(false)
     val isHistoryLoading: StateFlow<Boolean> = _isHistoryLoading.asStateFlow()
+
+    private val _updateState = MutableStateFlow<AppUpdateState>(AppUpdateState.Idle)
+    val updateState: StateFlow<AppUpdateState> = _updateState.asStateFlow()
+
+    private val _updateBannerDismissed = MutableStateFlow(false)
+    val updateBannerDismissed: StateFlow<Boolean> = _updateBannerDismissed.asStateFlow()
 
     // Converter State
     private val _fromAssetId = MutableStateFlow("USD")
@@ -107,6 +116,29 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         loadInitialData()
+        observeNetworkRestoration()
+        checkForUpdatesSilently()
+    }
+
+    private fun observeNetworkRestoration() {
+        viewModelScope.launch {
+            WidgetSyncCoordinator.networkRestoredEvents.collect {
+                refreshNow(silent = true)
+            }
+        }
+    }
+
+    private fun checkForUpdatesSilently() {
+        viewModelScope.launch {
+            val slug = prefsRepo.preferencesFlow.first().githubRepoSlug
+            if (slug.isNotBlank()) {
+                val res = repository.checkForUpdate(slug)
+                if (res is AppUpdateState.UpdateAvailable) {
+                    _updateState.value = res
+                    _updateBannerDismissed.value = false
+                }
+            }
+        }
     }
 
     private fun loadInitialData() {
@@ -230,6 +262,28 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             repository.setWidgetOpacityPercent(percent)
         }
+    }
+
+    fun setGithubRepoSlug(slug: String) {
+        viewModelScope.launch {
+            repository.setGithubRepoSlug(slug)
+        }
+    }
+
+    fun checkForUpdates(repoOverride: String? = null) {
+        viewModelScope.launch {
+            val targetRepo = (repoOverride ?: preferences.value.githubRepoSlug).trim()
+            if (repoOverride != null && repoOverride.trim() != preferences.value.githubRepoSlug) {
+                repository.setGithubRepoSlug(targetRepo)
+            }
+            _updateState.value = AppUpdateState.Checking
+            _updateBannerDismissed.value = false
+            _updateState.value = repository.checkForUpdate(targetRepo)
+        }
+    }
+
+    fun dismissUpdateBanner() {
+        _updateBannerDismissed.value = true
     }
 
     fun openAssetDetail(asset: MarketAsset) {

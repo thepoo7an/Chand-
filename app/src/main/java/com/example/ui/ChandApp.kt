@@ -1,5 +1,7 @@
 package com.example.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -32,6 +34,8 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -41,6 +45,7 @@ import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -52,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -66,6 +72,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.model.MarketUiState
+import com.example.network.AppUpdateState
 import com.example.ui.components.AssetDetailSheet
 import com.example.ui.components.SettingsSheet
 import com.example.ui.components.WatchlistSheet
@@ -92,11 +99,14 @@ fun ChandApp(
     val historyPoints by viewModel.historyPoints.collectAsStateWithLifecycle()
     val historySourceLabel by viewModel.historySourceLabel.collectAsStateWithLifecycle()
     val isHistoryLoading by viewModel.isHistoryLoading.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    val updateBannerDismissed by viewModel.updateBannerDismissed.collectAsStateWithLifecycle()
 
     val fromAssetId by viewModel.fromAssetId.collectAsStateWithLifecycle()
     val toAssetId by viewModel.toAssetId.collectAsStateWithLifecycle()
     val converterInput by viewModel.converterInput.collectAsStateWithLifecycle()
 
+    val context = LocalContext.current
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showWatchlistSheet by remember { mutableStateOf(false) }
 
@@ -323,6 +333,7 @@ fun ChandApp(
             SettingsSheet(
                 prefs = prefs,
                 strings = strings,
+                updateState = updateState,
                 onSetThemeMode = viewModel::setThemeMode,
                 onSetLanguage = viewModel::setLanguage,
                 onSetPersianDigits = viewModel::setUsePersianDigits,
@@ -330,7 +341,62 @@ fun ChandApp(
                 onSetRefreshInterval = viewModel::setRefreshInterval,
                 onSetWidgetTranslucent = viewModel::setWidgetTranslucent,
                 onSetWidgetOpacityPercent = viewModel::setWidgetOpacityPercent,
+                onCheckForUpdates = viewModel::checkForUpdates,
                 onDismiss = { showSettingsSheet = false }
+            )
+        }
+
+        if (updateState is AppUpdateState.UpdateAvailable && !updateBannerDismissed && !showSettingsSheet) {
+            val info = (updateState as AppUpdateState.UpdateAvailable).info
+            AlertDialog(
+                onDismissRequest = viewModel::dismissUpdateBanner,
+                title = {
+                    Text(
+                        text = "${strings.updateAvailableTitle} (v${info.latestVersionName})",
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    androidx.compose.foundation.layout.Column(
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "${strings.currentVersionLabel}: v${info.currentVersionName}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = info.matchedApkName,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (info.releaseNotes.isNotBlank()) {
+                            Text(
+                                text = info.releaseNotes.take(300),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+                                )
+                            }
+                            viewModel.dismissUpdateBanner()
+                        }
+                    ) {
+                        Text(strings.downloadUpdateButton)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = viewModel::dismissUpdateBanner) {
+                        Text(strings.laterButton)
+                    }
+                }
             )
         }
     }

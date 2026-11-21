@@ -524,23 +524,11 @@ class RefreshAllWidgetsAction : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters
     ) {
-        val remote = MarketRemoteDataSource()
-        val prefsRepo = PreferencesRepository(context)
-        val res = remote.fetchLiveMarket()
-        if (res.isLive && res.assets.isNotEmpty()) {
-            prefsRepo.saveCachedSnapshot(
-                CachedMarketSnapshot(
-                    assets = res.assets,
-                    updatedAtMillis = res.fetchedAtMillis,
-                    sourceSummary = res.sourceSummary
-                )
-            )
+        WidgetSyncCoordinator.registerConnectivityMonitor(context.applicationContext)
+        val ok = WidgetSyncCoordinator.syncWidgetsNow(context.applicationContext, force = true)
+        if (!ok) {
+            WidgetSyncCoordinator.updateAllWidgets(context.applicationContext)
         }
-        ChandSingleAssetWidget().updateAll(context)
-        ChandWideListWidget().updateAll(context)
-        ChandCompactCryptoWidget().updateAll(context)
-        ChandCompact2x1Widget().updateAll(context)
-        ChandLockScreenWidget().updateAll(context)
     }
 }
 

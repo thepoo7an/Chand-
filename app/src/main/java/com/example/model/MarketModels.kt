@@ -85,7 +85,8 @@ data class AppPreferences(
     val pinnedIds: Set<String> = DEFAULT_PINNED_IDS,
     val refreshIntervalSeconds: Int = 30,
     val widgetTranslucent: Boolean = true,
-    val widgetOpacityPercent: Int = 70
+    val widgetOpacityPercent: Int = 70,
+    val githubRepoSlug: String = com.example.BuildConfig.GITHUB_REPOSITORY
 ) {
     companion object {
         val DEFAULT_PINNED_IDS = setOf("USD", "EUR", "AED", "GBP", "GOLD_18K", "COIN_QUARTER", "COIN_HALF", "USDT", "BTC", "ETH")

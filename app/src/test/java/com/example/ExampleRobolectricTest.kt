@@ -2,13 +2,16 @@ package com.example
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.example.network.AppUpdateService
 import com.example.network.CurrencyCdnResponse
 import com.example.network.FrankfurterTimeSeriesResponse
+import com.example.network.GitHubReleaseAssetDto
+import com.example.network.GitHubReleaseDto
 import com.example.network.GoldSpotResponse
 import com.example.ui.strings.NumberFormatters
 import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -46,8 +49,8 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `moshi parses Frankfurter, GoldSpot, and CurrencyCDN responses`() {
-    val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
+  fun `moshi codegen parses Frankfurter, GoldSpot, CurrencyCDN, and GitHubRelease without reflection`() {
+    val moshi = Moshi.Builder().build()
 
     val frankfurterJson = """{"amount":1.0,"base":"USD","start_date":"2026-11-01","end_date":"2026-11-02","rates":{"2026-11-01":{"EUR":0.92},"2026-11-02":{"EUR":0.93}}}"""
     val fResp = moshi.adapter(FrankfurterTimeSeriesResponse::class.java).fromJson(frankfurterJson)
@@ -63,5 +66,26 @@ class ExampleRobolectricTest {
     val cResp = moshi.adapter(CurrencyCdnResponse::class.java).fromJson(cdnJson)
     assertNotNull(cResp)
     assertEquals(3.6725, cResp!!.usd["aed"] ?: 0.0, 0.0001)
+
+    val ghJson = """{"tag_name":"build-12","name":"Chand?! v1.0.12 (Build 12)","body":"Smaller APK","html_url":"https://github.com/o/r/releases/tag/build-12","assets":[{"name":"Chand-arm64-v8a-release.apk","browser_download_url":"https://example.com/a.apk","size":5242880}]}"""
+    val ghResp = moshi.adapter(GitHubReleaseDto::class.java).fromJson(ghJson)
+    assertNotNull(ghResp)
+    assertEquals(12, AppUpdateService.extractBuildNumber(ghResp!!))
+  }
+
+  @Test
+  fun `AppUpdateService compares versions and matches device ABI APK`() {
+    assertTrue(AppUpdateService.isRemoteNewer("1.0.4", 4, "1.0.5", 5))
+    assertTrue(AppUpdateService.isRemoteNewer("1.0", 1, "1.1", null))
+    assertFalse(AppUpdateService.isRemoteNewer("1.0.5", 5, "1.0.5", 5))
+
+    val assets = listOf(
+      GitHubReleaseAssetDto("Chand-universal-release.apk", "https://u", 10L),
+      GitHubReleaseAssetDto("Chand-arm64-v8a-release.apk", "https://arm64", 6L),
+      GitHubReleaseAssetDto("Chand-armeabi-v7a-release.apk", "https://arm32", 5L)
+    )
+    assertEquals("Chand-arm64-v8a-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("arm64-v8a", "armeabi-v7a"))?.name)
+    assertEquals("Chand-armeabi-v7a-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("armeabi-v7a"))?.name)
+    assertEquals("Chand-universal-release.apk", AppUpdateService.pickBestApkAsset(assets, arrayOf("x86_64"))?.name)
   }
 }

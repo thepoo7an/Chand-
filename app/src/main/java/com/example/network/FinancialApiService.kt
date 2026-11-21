@@ -5,7 +5,6 @@ import com.example.model.TimeRange
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -101,9 +100,7 @@ interface FinancialRetrofitApi {
 class FinancialApiService(
     client: OkHttpClient = defaultFinancialClient()
 ) {
-    private val moshi: Moshi = Moshi.Builder()
-        .addLast(KotlinJsonAdapterFactory())
-        .build()
+    private val moshi: Moshi = Moshi.Builder().build()
 
     private val api: FinancialRetrofitApi = Retrofit.Builder()
         .baseUrl("https://api.frankfurter.app/")

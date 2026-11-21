@@ -72,7 +72,20 @@ data class ChandStrings(
     val widgetLockPreviewTitle: String,
     val rangeHighLabel: String,
     val rangeLowLabel: String,
-    val historyUnavailable: String
+    val historyUnavailable: String,
+    val updateSection: String,
+    val currentVersionLabel: String,
+    val checkUpdatesButton: String,
+    val checkingUpdatesLabel: String,
+    val upToDateLabel: String,
+    val updateAvailableTitle: String,
+    val downloadUpdateButton: String,
+    val viewReleaseButton: String,
+    val githubRepoLabel: String,
+    val githubRepoPlaceholder: String,
+    val updateRepoMissingHint: String,
+    val updateCheckErrorLabel: String,
+    val laterButton: String
 ) {
     fun categoryLabel(category: AssetCategory): String = when (category) {
         AssetCategory.ALL -> categoryAll
@@ -145,7 +158,20 @@ val FaStrings = ChandStrings(
     widgetLockPreviewTitle = "پیش‌نمایش ویجت لاک‌اسکرین (بدون پس‌زمینه)",
     rangeHighLabel = "سقف بازه",
     rangeLowLabel = "کف بازه",
-    historyUnavailable = "تاریخچه واقعی در دسترس نیست"
+    historyUnavailable = "تاریخچه واقعی در دسترس نیست",
+    updateSection = "بروزرسانی برنامه",
+    currentVersionLabel = "نسخه فعلی",
+    checkUpdatesButton = "بررسی نسخه جدید",
+    checkingUpdatesLabel = "در حال بررسی...",
+    upToDateLabel = "برنامه به آخرین نسخه بروز است",
+    updateAvailableTitle = "نسخه جدید آماده دانلود است",
+    downloadUpdateButton = "دانلود نسخه جدید (مرورگر)",
+    viewReleaseButton = "صفحه انتشار گیت‌هاب",
+    githubRepoLabel = "مخزن گیت‌هاب (owner/repo)",
+    githubRepoPlaceholder = "username/Chand-",
+    updateRepoMissingHint = "نام مخزن گیت‌هاب را برای بررسی نسخه جدید وارد کنید.",
+    updateCheckErrorLabel = "خطا در بررسی نسخه جدید",
+    laterButton = "بعداً"
 )
 
 val EnStrings = ChandStrings(
@@ -210,7 +236,20 @@ val EnStrings = ChandStrings(
     widgetLockPreviewTitle = "Lock Screen Widget Preview (No Background)",
     rangeHighLabel = "Range High",
     rangeLowLabel = "Range Low",
-    historyUnavailable = "Real history unavailable offline"
+    historyUnavailable = "Real history unavailable offline",
+    updateSection = "App Updates",
+    currentVersionLabel = "Current Version",
+    checkUpdatesButton = "Check for Updates",
+    checkingUpdatesLabel = "Checking...",
+    upToDateLabel = "You are on the latest version",
+    updateAvailableTitle = "New Update Available",
+    downloadUpdateButton = "Download Update (Browser)",
+    viewReleaseButton = "Release Page",
+    githubRepoLabel = "GitHub Repository (owner/repo)",
+    githubRepoPlaceholder = "username/Chand-",
+    updateRepoMissingHint = "Enter your GitHub repository (owner/repo) to check releases.",
+    updateCheckErrorLabel = "Could not check GitHub Releases",
+    laterButton = "Later"
 )
 
 fun stringsFor(language: AppLanguage): ChandStrings =
