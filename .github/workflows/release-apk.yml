@@ -53,7 +53,11 @@ jobs:
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
 
       - name: Run unit & Robolectric tests
-        run: gradle :app:testDebugUnitTest
+        run: |
+          if ! gradle :app:testDebugUnitTest --stacktrace; then
+            echo "::error::Unit & Robolectric tests failed (gradle :app:testDebugUnitTest). Expand this step log for details."
+            exit 1
+          fi
 
       - name: Prepare release signing configuration
         env:
@@ -94,10 +98,30 @@ jobs:
           with open(out_path, "wb") as f:
               f.write(decoded)
           PYEOF
-            if ! keytool -list -keystore "$KEYSTORE_FILE" -storepass "$SECRET_STORE_PASSWORD" -alias upload >/dev/null 2>&1; then
-              echo "::error::Decoded keystore failed verification. Check that STORE_PASSWORD is correct and the key alias is 'upload'."
+            if ! keytool -list -keystore "$KEYSTORE_FILE" -storepass "$SECRET_STORE_PASSWORD" >/dev/null 2>&1; then
+              echo "::error::Cannot open decoded keystore. Check that STORE_PASSWORD is correct and KEYSTORE_BASE64 is a valid .jks file."
               exit 1
             fi
+            if ! keytool -list -keystore "$KEYSTORE_FILE" -storepass "$SECRET_STORE_PASSWORD" -alias upload >/dev/null 2>&1; then
+              echo "::error::Key alias 'upload' was not found in the keystore. Re-create or rename your key alias to 'upload'."
+              exit 1
+            fi
+            VERIFY_P12="/tmp/verify-key-$$.p12"
+            rm -f "$VERIFY_P12"
+            if ! keytool -importkeystore \
+              -srckeystore "$KEYSTORE_FILE" \
+              -srcstorepass "$SECRET_STORE_PASSWORD" \
+              -srcalias upload \
+              -srckeypass "$EFFECTIVE_KEY_PASSWORD" \
+              -destkeystore "$VERIFY_P12" \
+              -deststoretype PKCS12 \
+              -deststorepass "verify-only-pass" \
+              -noprompt >/dev/null 2>&1; then
+              rm -f "$VERIFY_P12"
+              echo "::error::STORE_PASSWORD is valid, but KEY_PASSWORD is incorrect for alias 'upload'. Check your KEY_PASSWORD secret."
+              exit 1
+            fi
+            rm -f "$VERIFY_P12"
             echo "KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
             echo "STORE_PASSWORD=$SECRET_STORE_PASSWORD" >> "$GITHUB_ENV"
             echo "KEY_PASSWORD=$EFFECTIVE_KEY_PASSWORD" >> "$GITHUB_ENV"
@@ -143,7 +167,10 @@ jobs:
 
       - name: Build Universal, arm64-v8a & armeabi-v7a Release APKs
         run: |
-          gradle :app:assembleRelease -PenableAbiSplits=true
+          if ! gradle :app:assembleRelease -PenableAbiSplits=true --stacktrace; then
+            echo "::error::Release APK build failed (gradle :app:assembleRelease -PenableAbiSplits=true). Expand this step log for details."
+            exit 1
+          fi
           mkdir -p dist
           cp app/build/outputs/apk/release/app-universal-release.apk dist/Chand-universal-release.apk
           cp app/build/outputs/apk/release/app-arm64-v8a-release.apk dist/Chand-arm64-v8a-release.apk
