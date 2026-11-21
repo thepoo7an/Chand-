@@ -61,12 +61,17 @@ jobs:
           KEYSTORE_FILE="${{ github.workspace }}/my-upload-key.jks"
           if [ -n "$KEYSTORE_BASE64" ] && [ -n "$SECRET_STORE_PASSWORD" ] && [ -n "$SECRET_KEY_PASSWORD" ]; then
             echo "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$KEYSTORE_FILE"
+            keytool -list -keystore "$KEYSTORE_FILE" -storepass "$SECRET_STORE_PASSWORD" -alias upload >/dev/null
             echo "KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
             echo "STORE_PASSWORD=$SECRET_STORE_PASSWORD" >> "$GITHUB_ENV"
             echo "KEY_PASSWORD=$SECRET_KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "RELEASE_SIGNING_READY=true" >> "$GITHUB_ENV"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "::error::Release signing secrets (KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD) are missing. Refusing to publish a tagged release with an ephemeral key."
+            exit 1
           else
-            echo "::warning::Release signing secrets (KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD) are not set. Generating an ephemeral CI upload keystore for this release build."
-            EPHEMERAL_PASS="chand-ci-release-key"
+            echo "::warning::Release signing secrets are not configured. Building with a verification-only ephemeral key and skipping GitHub Release publishing so existing users are not locked out of updates."
+            EPHEMERAL_PASS="chand-ci-verify-only"
             keytool -genkeypair -noprompt \
               -keystore "$KEYSTORE_FILE" \
               -storepass "$EPHEMERAL_PASS" \
@@ -74,11 +79,17 @@ jobs:
               -keypass "$EPHEMERAL_PASS" \
               -keyalg RSA \
               -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Chand CI,O=Chand,C=US"
+              -validity 30 \
+              -dname "CN=Chand CI Verify,O=Chand,C=US"
             echo "KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
             echo "STORE_PASSWORD=$EPHEMERAL_PASS" >> "$GITHUB_ENV"
             echo "KEY_PASSWORD=$EPHEMERAL_PASS" >> "$GITHUB_ENV"
+            echo "RELEASE_SIGNING_READY=false" >> "$GITHUB_ENV"
+            {
+              echo "### Signing Secrets Not Configured"
+              echo "APKs were compiled for CI verification only and **not** published to GitHub Releases."
+              echo "Add \`KEYSTORE_BASE64\`, \`STORE_PASSWORD\`, and \`KEY_PASSWORD\` (key alias: \`upload\`) under **Settings → Secrets and variables → Actions** to publish updatable Releases."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Compute automatic app version
@@ -111,6 +122,7 @@ jobs:
           retention-days: 30
 
       - name: Publish all 3 APKs to GitHub Release
+        if: env.RELEASE_SIGNING_READY == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('build-{0}', github.run_number) }}

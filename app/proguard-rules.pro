@@ -1,8 +1,19 @@
 # ProGuard / R8 Keep Rules for Chand?! Release Builds
 
-# Kotlinx Serialization (Models & Navigation Routes)
--keepattributes *Annotation*, InnerClasses
+-keepattributes RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations, AnnotationDefault, Signature, InnerClasses, EnclosingMethod
+
+# ViewModel Reflection Safety
+-keepclassmembers class * extends androidx.lifecycle.AndroidViewModel {
+    public <init>(android.app.Application);
+}
+-keepclassmembers class * extends androidx.lifecycle.ViewModel {
+    public <init>(...);
+}
+
+# Kotlinx Serialization (Models & Type-Safe Navigation Routes)
 -dontnote kotlinx.serialization.AnnotationsKt
+-keep class ir.thepoo7an.chand.model.** { *; }
+-keep class ir.thepoo7an.chand.ui.navigation.** { *; }
 
 -keepclassmembers class kotlinx.serialization.json.** {
     *** Companion;
@@ -11,27 +22,17 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 
--keep,includedescriptorclasses class com.example.model.**$$serializer { *; }
--keepclassmembers class com.example.model.** {
-    *** Companion;
-}
--keep,includedescriptorclasses class com.example.ui.navigation.**$$serializer { *; }
--keepclassmembers class com.example.ui.navigation.** {
-    *** Companion;
-}
-
 # Moshi Codegen Adapters & Retrofit Interfaces
 -keep class * extends com.squareup.moshi.JsonAdapter {
     public <init>(com.squareup.moshi.Moshi);
 }
--keep @com.squareup.moshi.JsonClass class com.example.network.** { *; }
--keepclassmembers class com.example.network.*JsonAdapter { *; }
--keep interface com.example.network.FinancialRetrofitApi { *; }
--keep interface com.example.network.GitHubReleaseApi { *; }
+-keep @com.squareup.moshi.JsonClass class ir.thepoo7an.chand.network.** { *; }
+-keep class ir.thepoo7an.chand.network.*JsonAdapter { *; }
+-keep interface ir.thepoo7an.chand.network.FinancialRetrofitApi { *; }
+-keep interface ir.thepoo7an.chand.network.GitHubReleaseApi { *; }
 
 # Retrofit & OkHttp
 -dontwarn retrofit2.**
--keepattributes Signature, Exceptions
 -keepclassmembers,allowshrinking,allowobfuscation interface * {
     @retrofit2.http.* <methods>;
 }
@@ -40,9 +41,10 @@
 -dontwarn org.conscrypt.**
 
 # Glance AppWidgets, Receivers, Actions & JobService
+-keep class ir.thepoo7an.chand.ChandApplication { *; }
 -keep class * extends androidx.glance.appwidget.GlanceAppWidget
 -keep class * extends androidx.glance.appwidget.GlanceAppWidgetReceiver
 -keep class * implements androidx.glance.appwidget.action.ActionCallback {
     public <init>();
 }
--keep class com.example.widget.WidgetConnectivityJobService { *; }
+-keep class ir.thepoo7an.chand.widget.WidgetConnectivityJobService { *; }

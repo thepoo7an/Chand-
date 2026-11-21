@@ -1,6 +1,6 @@
 {
   "name": "Chand?!",
-  "description": "AMOLED live currency, gold & crypto tracker in Iranian Toman with quick converter, interactive charts, and 3 home widgets",
+  "description": "AMOLED live currency, gold & crypto tracker in Iranian Toman",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
