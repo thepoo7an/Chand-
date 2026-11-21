@@ -1,6 +1,7 @@
 # ProGuard / R8 Keep Rules for Chand?! Release Builds
 
--keepattributes RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations, AnnotationDefault, Signature, InnerClasses, EnclosingMethod
+-keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod, RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations, AnnotationDefault
+-keep class kotlin.Metadata { *; }
 
 # ViewModel Reflection Safety
 -keepclassmembers class * extends androidx.lifecycle.AndroidViewModel {
@@ -14,6 +15,18 @@
 -dontnote kotlinx.serialization.AnnotationsKt
 -keep class ir.thepoo7an.chand.model.** { *; }
 -keep class ir.thepoo7an.chand.ui.navigation.** { *; }
+-keepclassmembers class ir.thepoo7an.chand.model.** {
+    *** Companion;
+}
+-keepclasseswithmembers class ir.thepoo7an.chand.model.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+-keepclassmembers class ir.thepoo7an.chand.ui.navigation.** {
+    *** Companion;
+}
+-keepclasseswithmembers class ir.thepoo7an.chand.ui.navigation.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
 
 -keepclassmembers class kotlinx.serialization.json.** {
     *** Companion;
