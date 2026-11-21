@@ -69,31 +69,31 @@ jobs:
 
           if [ -z "$MISSING_SECRETS" ]; then
             python3 - "$KEYSTORE_FILE" << 'PYEOF'
-import base64, os, re, sys
+          import base64, os, re, sys
 
-out_path = sys.argv[1]
-raw = os.environ.get("KEYSTORE_BASE64", "")
-# Strip PEM/certutil headers/footers if user encoded with certutil -encode
-lines = [ln for ln in raw.splitlines() if not ln.strip().startswith("-----")]
-cleaned = "".join(lines).lstrip("\ufeff").strip().strip("\"'")
-cleaned = re.sub(r"\s+", "", cleaned)
-cleaned = cleaned.replace("-", "+").replace("_", "/")
-if len(cleaned) % 4 != 0:
-    cleaned += "=" * (4 - len(cleaned) % 4)
+          out_path = sys.argv[1]
+          raw = os.environ.get("KEYSTORE_BASE64", "")
+          # Strip PEM/certutil headers/footers if user encoded with certutil -encode
+          lines = [ln for ln in raw.splitlines() if not ln.strip().startswith("-----")]
+          cleaned = "".join(lines).lstrip("\ufeff").strip().strip("\"'")
+          cleaned = re.sub(r"\s+", "", cleaned)
+          cleaned = cleaned.replace("-", "+").replace("_", "/")
+          if len(cleaned) % 4 != 0:
+              cleaned += "=" * (4 - len(cleaned) % 4)
 
-if len(cleaned) < 200 or not re.fullmatch(r"[A-Za-z0-9+/=]+", cleaned):
-    print(f"::error::KEYSTORE_BASE64 is not valid Base64 of a .jks keystore (cleaned length={len(cleaned)}). Re-encode my-upload-key.jks without quotes or extra text.", file=sys.stderr)
-    sys.exit(1)
+          if len(cleaned) < 200 or not re.fullmatch(r"[A-Za-z0-9+/=]+", cleaned):
+              print(f"::error::KEYSTORE_BASE64 is not valid Base64 of a .jks keystore (cleaned length={len(cleaned)}). Re-encode my-upload-key.jks without quotes or extra text.", file=sys.stderr)
+              sys.exit(1)
 
-try:
-    decoded = base64.b64decode(cleaned, validate=True)
-except Exception as exc:
-    print(f"::error::Failed to decode KEYSTORE_BASE64 ({type(exc).__name__}, length={len(cleaned)}).", file=sys.stderr)
-    sys.exit(1)
+          try:
+              decoded = base64.b64decode(cleaned, validate=True)
+          except Exception as exc:
+              print(f"::error::Failed to decode KEYSTORE_BASE64 ({type(exc).__name__}, length={len(cleaned)}).", file=sys.stderr)
+              sys.exit(1)
 
-with open(out_path, "wb") as f:
-    f.write(decoded)
-PYEOF
+          with open(out_path, "wb") as f:
+              f.write(decoded)
+          PYEOF
             if ! keytool -list -keystore "$KEYSTORE_FILE" -storepass "$SECRET_STORE_PASSWORD" -alias upload >/dev/null 2>&1; then
               echo "::error::Decoded keystore failed verification. Check that STORE_PASSWORD is correct and the key alias is 'upload'."
               exit 1
