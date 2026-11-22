@@ -120,7 +120,13 @@ class MarketRepository(
         val cached = readHistoryCache(cacheFile)
 
         if (!forceRefresh && cached != null && cached.isRealData) {
-            val normalizedCached = cached.copy(points = HistoryNormalizer.normalize(cached.points))
+            val normalizedCached = cached.copy(
+                points = HistoryNormalizer.normalize(
+                    points = cached.points,
+                    category = asset.category,
+                    range = range
+                )
+            )
             if (normalizedCached.points.size >= 2) {
                 val age = clockMillis() - normalizedCached.cachedAtMillis
                 if (age in 0..ttlMillis) {
@@ -133,7 +139,13 @@ class MarketRepository(
         historyDeduplicator.execute(dedupeKey) {
             val freshRaw = remote.fetchAssetHistory(asset, range)
             val fresh = if (freshRaw.isRealData) {
-                freshRaw.copy(points = HistoryNormalizer.normalize(freshRaw.points))
+                freshRaw.copy(
+                    points = HistoryNormalizer.normalize(
+                        points = freshRaw.points,
+                        category = asset.category,
+                        range = range
+                    )
+                )
             } else {
                 freshRaw
             }
@@ -144,7 +156,13 @@ class MarketRepository(
             }
 
             if (cached != null && cached.isRealData) {
-                val normalizedCached = cached.copy(points = HistoryNormalizer.normalize(cached.points))
+                val normalizedCached = cached.copy(
+                    points = HistoryNormalizer.normalize(
+                        points = cached.points,
+                        category = asset.category,
+                        range = range
+                    )
+                )
                 if (normalizedCached.points.size >= 2) {
                     return@execute normalizedCached
                 }

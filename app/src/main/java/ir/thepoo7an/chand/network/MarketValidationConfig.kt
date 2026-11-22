@@ -1,10 +1,13 @@
 package ir.thepoo7an.chand.network
 
+import ir.thepoo7an.chand.model.AssetCategory
+import ir.thepoo7an.chand.model.TimeRange
+
 /**
  * Single centralized configuration for market data validation, cross-source consensus,
- * freshness thresholds, and physical gold coin specifications.
+ * freshness thresholds, adaptive history spike thresholds, and physical gold coin specifications.
  *
- * Defaults follow Stage 2 Decisions and Central Bank of Iran (CBI) official coin mint standards.
+ * Defaults follow Stage 2 Decisions and commonly cited market conventions (see [COIN_SPECS] caveats).
  */
 object MarketValidationConfig {
 
@@ -15,10 +18,56 @@ object MarketValidationConfig {
     const val FIAT_DISAGREEMENT_THRESHOLD_PCT: Double = 3.0
 
     /**
-     * Minimum jump (%) followed by reversion considered a single-tick history spike (Stage 3).
-     * Kept here alongside all market validation thresholds.
+     * Default minimum jump (%) followed by reversion considered a single-tick history spike
+     * when asset category / time range are unspecified (preserves legacy 24H / default behavior).
      */
     const val HISTORY_SPIKE_THRESHOLD_PCT: Double = 15.0
+
+    /** Adaptive history spike threshold (%) for 24H range across all asset categories. */
+    const val HISTORY_SPIKE_THRESHOLD_24H_PCT: Double = 15.0
+
+    /** Adaptive history spike threshold (%) for daily-or-coarser crypto series (7D / 1M / 1Y). */
+    const val HISTORY_SPIKE_THRESHOLD_CRYPTO_MULTI_DAY_PCT: Double = 40.0
+
+    /** Adaptive history spike threshold (%) for daily-or-coarser fiat series (7D / 1M / 1Y). */
+    const val HISTORY_SPIKE_THRESHOLD_FIAT_MULTI_DAY_PCT: Double = 15.0
+
+    /** Adaptive history spike threshold (%) for daily-or-coarser gold/coin series (7D / 1M / 1Y). */
+    const val HISTORY_SPIKE_THRESHOLD_GOLD_MULTI_DAY_PCT: Double = 15.0
+
+    /** Default corroboration timestamp tolerance (1 hour) when range is unspecified. */
+    const val HISTORY_CORROBORATION_DEFAULT_TOLERANCE_SEC: Long = 3_600L
+
+    /** Corroboration timestamp tolerance for 7D 4-hour candle buckets (2 hours). */
+    const val HISTORY_CORROBORATION_D7_TOLERANCE_SEC: Long = 2L * 3_600L
+
+    /** Corroboration timestamp tolerance for daily 1M / 1Y candle buckets (12 hours). */
+    const val HISTORY_CORROBORATION_DAILY_TOLERANCE_SEC: Long = 12L * 3_600L
+
+    /**
+     * Returns the single-tick reverting spike threshold (%) calibrated by asset [category] and [range].
+     * - 24H: 15% for every category.
+     * - 7D / 1M / 1Y (daily or coarser buckets): 40% for crypto, 15% for fiat and gold.
+     */
+    fun spikeThresholdPct(category: AssetCategory, range: TimeRange): Double = when (range) {
+        TimeRange.H24 -> HISTORY_SPIKE_THRESHOLD_24H_PCT
+        TimeRange.D7, TimeRange.M1, TimeRange.Y1 -> when (category) {
+            AssetCategory.CRYPTO -> HISTORY_SPIKE_THRESHOLD_CRYPTO_MULTI_DAY_PCT
+            AssetCategory.FIAT -> HISTORY_SPIKE_THRESHOLD_FIAT_MULTI_DAY_PCT
+            AssetCategory.GOLD -> HISTORY_SPIKE_THRESHOLD_GOLD_MULTI_DAY_PCT
+            AssetCategory.ALL, AssetCategory.PINNED -> HISTORY_SPIKE_THRESHOLD_PCT
+        }
+    }
+
+    /**
+     * Returns bucket-sized timestamp tolerance (seconds) for cross-provider spike corroboration.
+     */
+    fun corroborationToleranceSec(range: TimeRange?): Long = when (range) {
+        TimeRange.H24 -> HISTORY_CORROBORATION_DEFAULT_TOLERANCE_SEC
+        TimeRange.D7 -> HISTORY_CORROBORATION_D7_TOLERANCE_SEC
+        TimeRange.M1, TimeRange.Y1 -> HISTORY_CORROBORATION_DAILY_TOLERANCE_SEC
+        null -> HISTORY_CORROBORATION_DEFAULT_TOLERANCE_SEC
+    }
 
     /** Maximum source timestamp age (5 minutes) for a fetched crypto asset to be marked LIVE. */
     const val CRYPTO_LIVE_MAX_AGE_MILLIS: Long = 5L * 60L * 1000L
@@ -60,11 +109,11 @@ object MarketValidationConfig {
     }
 
     /**
-     * Official Central Bank of Iran (CBI) gold coin specifications:
+     * Commonly cited gold coin specifications, NOT verified against an official primary mint source:
      * - Full Bahar Azadi (Emami / Old Design): 8.133 g at 900‰ fineness (21.6K)
      * - Half Bahar Azadi: 4.066 g at 900‰ fineness
      * - Quarter Bahar Azadi: 2.033 g at 900‰ fineness
-     * - Gerami (One-Gram Coin): 1.01 g at 900‰ fineness
+     * - Gerami (One-Gram Coin): 1.01 g at 900‰ fineness — UNVERIFIED against an official CBI/mint source.
      */
     val COIN_SPECS: Map<String, CoinSpec> = mapOf(
         "COIN_EMAMI" to CoinSpec("COIN_EMAMI", weightGrams = 8.133, finenessPerMille = 900),

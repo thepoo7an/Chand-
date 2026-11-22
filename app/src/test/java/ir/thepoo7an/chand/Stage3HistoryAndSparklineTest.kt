@@ -3,10 +3,19 @@ package ir.thepoo7an.chand
 import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.AssetHistoryPoint
 import ir.thepoo7an.chand.model.DataFreshness
+import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.network.HistoryNormalizer
 import ir.thepoo7an.chand.network.MarketPriceMapper
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
 import ir.thepoo7an.chand.network.MarketValidationConfig
+import kotlinx.coroutines.test.runTest
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -14,6 +23,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import kotlin.random.Random
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -216,5 +226,230 @@ class Stage3HistoryAndSparklineTest {
         assertTrue(cgPts.size in 100..125)
         assertTrue("Expected spike 180.0 stripped before downsampling", cgPts.none { it.priceToman > 130.0 })
         assertEquals(250L, cgPts.last().timestampSec)
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Adaptive Category / Range Spike Thresholds & Corroboration (PR-A)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `crypto 1M and 1Y preserve 18 pct reverting move while removing 60 pct outlier`() {
+        val t0 = 1_700_000_000L
+        val move18 = listOf(
+            AssetHistoryPoint(t0, 100.0),
+            AssetHistoryPoint(t0 + 86_400L, 118.0),
+            AssetHistoryPoint(t0 + 2L * 86_400L, 100.0)
+        )
+        val spike60 = listOf(
+            AssetHistoryPoint(t0, 100.0),
+            AssetHistoryPoint(t0 + 86_400L, 160.0),
+            AssetHistoryPoint(t0 + 2L * 86_400L, 100.0)
+        )
+
+        for (range in listOf(TimeRange.M1, TimeRange.Y1, TimeRange.D7)) {
+            assertEquals(40.0, MarketValidationConfig.spikeThresholdPct(AssetCategory.CRYPTO, range), 0.001)
+
+            val keptStats = HistoryNormalizer.normalizeWithStats(move18, AssetCategory.CRYPTO, range)
+            assertEquals(listOf(100.0, 118.0, 100.0), keptStats.points.map { it.priceToman })
+            assertEquals(0, keptStats.removedSpikeCount)
+
+            val strippedStats = HistoryNormalizer.normalizeWithStats(spike60, AssetCategory.CRYPTO, range)
+            assertEquals(listOf(100.0, 100.0), strippedStats.points.map { it.priceToman })
+            assertEquals(1, strippedStats.removedSpikeCount)
+        }
+    }
+
+    @Test
+    fun `crypto 24H removes 18 pct reverting spike using 15 pct threshold`() {
+        assertEquals(15.0, MarketValidationConfig.spikeThresholdPct(AssetCategory.CRYPTO, TimeRange.H24), 0.001)
+        val t0 = 1_700_000_000L
+        val pattern = listOf(
+            AssetHistoryPoint(t0, 100.0),
+            AssetHistoryPoint(t0 + 3_600L, 118.0),
+            AssetHistoryPoint(t0 + 7_200L, 100.0)
+        )
+
+        val cleaned = HistoryNormalizer.normalize(pattern, AssetCategory.CRYPTO, TimeRange.H24)
+        assertEquals(listOf(100.0, 100.0), cleaned.map { it.priceToman })
+        assertEquals(1, HistoryNormalizer.lastRemovedSpikeCount)
+    }
+
+    @Test
+    fun `fiat and gold 1M remove isolated 18 pct reverting spike`() {
+        val t0 = 1_700_000_000L
+        val spike18 = listOf(
+            AssetHistoryPoint(t0, 100.0),
+            AssetHistoryPoint(t0 + 86_400L, 118.0),
+            AssetHistoryPoint(t0 + 2L * 86_400L, 100.0)
+        )
+
+        for (category in listOf(AssetCategory.FIAT, AssetCategory.GOLD)) {
+            assertEquals(15.0, MarketValidationConfig.spikeThresholdPct(category, TimeRange.M1), 0.001)
+            val stats = HistoryNormalizer.normalizeWithStats(spike18, category, TimeRange.M1)
+            assertEquals(listOf(100.0, 100.0), stats.points.map { it.priceToman })
+            assertEquals(1, stats.removedSpikeCount)
+        }
+    }
+
+    @Test
+    fun `corroborated spike is kept when second provider matches within tolerance and half threshold`() {
+        val t0 = 1_700_000_000L
+        val primary = listOf(
+            AssetHistoryPoint(t0, 100.0),
+            AssetHistoryPoint(t0 + 86_400L, 125.0),
+            AssetHistoryPoint(t0 + 2L * 86_400L, 100.0)
+        )
+        // Threshold = 15%, half = 7.5%; 120.0 vs 125.0 -> 4.0% <= 7.5%, and offset 1800s <= 12h (M1 tolerance)
+        val matchingProvider = listOf(
+            AssetHistoryPoint(t0, 100.0),
+            AssetHistoryPoint(t0 + 86_400L + 1_800L, 120.0),
+            AssetHistoryPoint(t0 + 2L * 86_400L, 100.0)
+        )
+        // Exact same primary spike WITHOUT corroboration -> removed
+        val uncorroborated = HistoryNormalizer.normalizeWithStats(
+            points = primary,
+            category = AssetCategory.GOLD,
+            range = TimeRange.M1
+        )
+        assertEquals(listOf(100.0, 100.0), uncorroborated.points.map { it.priceToman })
+        assertEquals(1, uncorroborated.removedSpikeCount)
+
+        // WITH matching second provider -> kept
+        val corroborated = HistoryNormalizer.normalizeWithStats(
+            points = primary,
+            category = AssetCategory.GOLD,
+            range = TimeRange.M1,
+            corroborating = matchingProvider
+        )
+        assertEquals(listOf(100.0, 125.0, 100.0), corroborated.points.map { it.priceToman })
+        assertEquals(0, corroborated.removedSpikeCount)
+
+        // Second provider too far in time OR price deviation > half threshold (100 vs 125 = 20% > 7.5%) -> removed
+        val disagreeingProvider = listOf(
+            AssetHistoryPoint(t0, 100.0),
+            AssetHistoryPoint(t0 + 86_400L, 100.0),
+            AssetHistoryPoint(t0 + 2L * 86_400L, 100.0)
+        )
+        val notCorroborated = HistoryNormalizer.normalizeWithStats(
+            points = primary,
+            category = AssetCategory.GOLD,
+            range = TimeRange.M1,
+            corroborating = disagreeingProvider
+        )
+        assertEquals(listOf(100.0, 100.0), notCorroborated.points.map { it.priceToman })
+        assertEquals(1, notCorroborated.removedSpikeCount)
+    }
+
+    @Test
+    fun `HistoryNormalizer property checks preserve sorting, uniqueness, endpoints, finite positive values, and under-3 series`() {
+        val t0 = 1_700_000_000L
+
+        // Fewer than 3 valid points (after filtering invalid entries) must never strip anything
+        val twoValid = listOf(
+            AssetHistoryPoint(t0, 100.0),
+            AssetHistoryPoint(t0 + 50L, -10.0),
+            AssetHistoryPoint(t0 + 60L, Double.NaN),
+            AssetHistoryPoint(t0 + 100L, 500.0)
+        )
+        val twoStats = HistoryNormalizer.normalizeWithStats(twoValid, spikeThresholdPct = 15.0)
+        assertEquals(2, twoStats.points.size)
+        assertEquals(0, twoStats.removedSpikeCount)
+
+        // First and last points are ALWAYS preserved even on extreme edge jumps
+        val edgeJumps = listOf(
+            AssetHistoryPoint(t0, 10.0),
+            AssetHistoryPoint(t0 + 100L, 100.0),
+            AssetHistoryPoint(t0 + 200L, 100.0),
+            AssetHistoryPoint(t0 + 300L, 1_000.0)
+        )
+        val edgeResult = HistoryNormalizer.normalize(edgeJumps, spikeThresholdPct = 15.0)
+        assertEquals(10.0, edgeResult.first().priceToman, 0.001)
+        assertEquals(1_000.0, edgeResult.last().priceToman, 0.001)
+
+        // Randomized property check across multiple random series
+        val rng = Random(42)
+        repeat(25) {
+            val raw = (1..40).map { idx ->
+                val ts = if (idx % 7 == 0) t0 + (idx - 1) * 100L else t0 + rng.nextLong(1, 5000)
+                val price = when {
+                    idx % 13 == 0 -> -5.0
+                    idx % 17 == 0 -> Double.POSITIVE_INFINITY
+                    else -> rng.nextDouble(50.0, 500.0)
+                }
+                AssetHistoryPoint(ts, price)
+            }
+            val expectedValid = raw
+                .filter { it.timestampSec > 0L && it.priceToman.isFinite() && it.priceToman > 0.0 }
+                .associateBy { it.timestampSec }
+                .values
+                .sortedBy { it.timestampSec }
+
+            val out = HistoryNormalizer.normalizeWithStats(raw, AssetCategory.CRYPTO, TimeRange.M1)
+            val pts = out.points
+
+            assertTrue(pts.all { it.timestampSec > 0L && it.priceToman.isFinite() && it.priceToman > 0.0 })
+            assertEquals(pts.map { it.timestampSec }.distinct().size, pts.size)
+            assertEquals(pts.sortedBy { it.timestampSec }, pts)
+            if (expectedValid.isNotEmpty()) {
+                assertEquals(expectedValid.first(), pts.first())
+                assertEquals(expectedValid.last(), pts.last())
+                assertEquals(expectedValid.size - pts.size, out.removedSpikeCount)
+            }
+        }
+    }
+
+    @Test
+    fun `MarketRemoteDataSource fetchAssetHistory threads category and range to HistoryNormalizer`() = runTest {
+        val nowSec = System.currentTimeMillis() / 1000L
+        val t0 = nowSec - 4 * 86_400L
+        val t1 = nowSec - 3 * 86_400L
+        val t2 = nowSec - 2 * 86_400L
+        val t3 = nowSec - 1 * 86_400L
+        val t4 = nowSec - 60L
+
+        val wallexPayload = """
+            {"s":"ok","t":[$t0,$t1,$t2,$t3,$t4],"c":["1000","1180","1000","1005","1010"]}
+        """.trimIndent()
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val req = chain.request()
+                val body = when {
+                    req.url.host.contains("wallex.ir") -> wallexPayload
+                    else -> """{"s":"no_data"}"""
+                }
+                Response.Builder()
+                    .request(req)
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(body.toResponseBody("application/json".toMediaType()))
+                    .build()
+            })
+            .build()
+
+        val ds = MarketRemoteDataSource(client = client)
+        val btc = MarketAsset(
+            id = "BTC",
+            symbol = "BTC",
+            nameFa = "بیت‌کوین",
+            nameEn = "Bitcoin",
+            category = AssetCategory.CRYPTO,
+            badgeText = "₿",
+            accentHex = 0xFFF59E0B,
+            priceToman = 1010.0,
+            freshness = DataFreshness.LIVE
+        )
+
+        // Crypto 1M keeps the 18% move (threshold 40%)
+        val m1 = ds.fetchAssetHistory(btc, TimeRange.M1)
+        assertTrue(m1.isRealData)
+        assertEquals(5, m1.points.size)
+        assertEquals(1180.0, m1.points[1].priceToman, 0.01)
+
+        // Crypto 24H strips the 18% reverting spike (threshold 15%), leaving 4 points
+        val h24 = ds.fetchAssetHistory(btc, TimeRange.H24)
+        assertTrue(h24.isRealData)
+        assertEquals(listOf(1000.0, 1000.0, 1005.0, 1010.0), h24.points.map { it.priceToman })
     }
 }

@@ -1,5 +1,6 @@
 package ir.thepoo7an.chand.network
 
+import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.AssetHistoryPoint
 import ir.thepoo7an.chand.model.TimeRange
 import com.squareup.moshi.Json
@@ -313,7 +314,7 @@ class FinancialApiService(
         val dedupeKey = "$upper|${range.name}|${fromSec / 60L}|${toSec / 60L}"
         currencyHistoryDeduplicator.execute(dedupeKey) {
             if (upper in ECB_SUPPORTED_CURRENCIES) {
-                val frankfurterPoints = fetchFrankfurterRange(upper, fromSec, toSec)
+                val frankfurterPoints = fetchFrankfurterRange(upper, fromSec, toSec, range)
                 if (frankfurterPoints.size >= 3) {
                     return@execute frankfurterPoints to "Frankfurter ECB"
                 }
@@ -324,7 +325,8 @@ class FinancialApiService(
                 fromSec = fromSec,
                 toSec = toSec,
                 range = range,
-                invertRate = false
+                invertRate = false,
+                category = AssetCategory.FIAT
             )
             if (cdnPoints.size >= 3) {
                 return@execute cdnPoints to "CurrencyAPI"
@@ -341,20 +343,28 @@ class FinancialApiService(
     suspend fun fetchGoldUsdHistory(
         fromSec: Long,
         toSec: Long,
-        range: TimeRange
+        range: TimeRange,
+        spikeThresholdPct: Double = MarketValidationConfig.spikeThresholdPct(AssetCategory.GOLD, range)
     ): List<AssetHistoryPoint> = withContext(Dispatchers.IO) {
-        val dedupeKey = "${range.name}|${fromSec / 60L}|${toSec / 60L}"
+        val dedupeKey = "${range.name}|${fromSec / 60L}|${toSec / 60L}|$spikeThresholdPct"
         goldHistoryDeduplicator.execute(dedupeKey) {
             val raw = fetchCdnHistoricalSeries(
                 currencyKey = "xau",
                 fromSec = fromSec,
                 toSec = toSec,
                 range = range,
-                invertRate = true
+                invertRate = true,
+                category = AssetCategory.GOLD,
+                spikeThresholdPct = spikeThresholdPct
             )
             val pts = raw.filter { it.second in 1000.0..10_000.0 }
                 .map { AssetHistoryPoint(it.first, it.second) }
-            HistoryNormalizer.normalize(pts)
+            HistoryNormalizer.normalize(
+                points = pts,
+                category = AssetCategory.GOLD,
+                range = range,
+                spikeThresholdPct = spikeThresholdPct
+            )
         }
     }
 
@@ -365,7 +375,8 @@ class FinancialApiService(
     suspend fun fetchMultiCurrencyRange(
         symbols: List<String>,
         fromSec: Long,
-        toSec: Long
+        toSec: Long,
+        range: TimeRange = TimeRange.D7
     ): Map<String, List<Pair<Long, Double>>> = withContext(Dispatchers.IO) {
         val ecbTargets = symbols
             .map { it.uppercase(Locale.US) }
@@ -398,14 +409,17 @@ class FinancialApiService(
                         }
                     }
                 }
-            result.mapValues { (_, list) -> HistoryNormalizer.normalizePairs(list) }
+            result.mapValues { (_, list) ->
+                HistoryNormalizer.normalizePairs(list, category = AssetCategory.FIAT, range = range)
+            }
         }
     }
 
     private suspend fun fetchFrankfurterRange(
         targetSymbol: String,
         fromSec: Long,
-        toSec: Long
+        toSec: Long,
+        range: TimeRange = TimeRange.M1
     ): List<Pair<Long, Double>> {
         val sdf = utcDateFormat()
         val startStr = sdf.format(Date(fromSec * 1000L))
@@ -425,7 +439,7 @@ class FinancialApiService(
                 val ts = (runCatching { sdf.parse(dateKey)?.time }.getOrNull() ?: return@mapNotNull null) / 1000L
                 ts to valRate
             }
-        return HistoryNormalizer.normalizePairs(rawPairs)
+        return HistoryNormalizer.normalizePairs(rawPairs, category = AssetCategory.FIAT, range = range)
     }
 
     private suspend fun fetchCdnHistoricalSeries(
@@ -433,7 +447,9 @@ class FinancialApiService(
         fromSec: Long,
         toSec: Long,
         range: TimeRange,
-        invertRate: Boolean
+        invertRate: Boolean,
+        category: AssetCategory = AssetCategory.FIAT,
+        spikeThresholdPct: Double = MarketValidationConfig.spikeThresholdPct(category, range)
     ): List<Pair<Long, Double>> = coroutineScope {
         val sampleSeconds = buildSampleTimestamps(fromSec, toSec, range)
         val sdf = utcDateFormat()
@@ -450,7 +466,12 @@ class FinancialApiService(
                 }
             }
         }
-        HistoryNormalizer.normalizePairs(tasks.awaitAll().filterNotNull())
+        HistoryNormalizer.normalizePairs(
+            pairs = tasks.awaitAll().filterNotNull(),
+            category = category,
+            range = range,
+            spikeThresholdPct = spikeThresholdPct
+        )
     }
 
     private suspend fun fetchCdnResponse(dateTag: String): CurrencyCdnResponse? =

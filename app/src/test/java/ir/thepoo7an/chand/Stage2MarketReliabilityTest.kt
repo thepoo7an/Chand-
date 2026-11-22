@@ -152,11 +152,11 @@ class Stage2MarketReliabilityTest {
     }
 
     // -------------------------------------------------------------------------
-    // B. MarketValidationConfig Defaults & Verified CBI Coin Specs
+    // B. MarketValidationConfig Defaults & Commonly Cited Coin Specs
     // -------------------------------------------------------------------------
 
     @Test
-    fun `MarketValidationConfig holds single-source documented defaults and official CBI coin specs`() {
+    fun `MarketValidationConfig holds single-source documented defaults and commonly cited coin specs`() {
         assertEquals(3.0, MarketValidationConfig.CRYPTO_DISAGREEMENT_THRESHOLD_PCT, 0.001)
         assertEquals(3.0, MarketValidationConfig.FIAT_DISAGREEMENT_THRESHOLD_PCT, 0.001)
         assertEquals(15.0, MarketValidationConfig.HISTORY_SPIKE_THRESHOLD_PCT, 0.001)
