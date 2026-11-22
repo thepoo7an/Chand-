@@ -236,10 +236,10 @@ jobs:
             echo "Verifying release APK signature: $apk"
             CERT_OUTPUT="$("$BUILD_TOOLS_DIR/apksigner" verify --print-certs "$apk")"
             printf '%s\n' "$CERT_OUTPUT"
-            RAW_SHA="$(printf '%s\n' "$CERT_OUTPUT" | sed -n 's/^Signer #1 certificate SHA-256 digest:[[:space:]]*//p' | head -n 1)"
+            RAW_SHA="$(printf '%s\n' "$CERT_OUTPUT" | sed -nE 's/^[[:space:]]*(V[0-9]+[[:space:]]+)?Signer([[:space:]]+#?[0-9]+|[[:space:]]*\([^)]*\))?:?[[:space:]]+certificate SHA-256 digest:[[:space:]]*//Ip' | head -n 1)"
             ACTUAL_SHA="$(printf '%s' "$RAW_SHA" | tr '[:upper:]' '[:lower:]' | tr -d ':[:space:]')"
             if [ -z "$ACTUAL_SHA" ]; then
-              echo "::error::Failed to extract Signer #1 SHA-256 digest from $apk"
+              echo "::error::Failed to extract signer SHA-256 digest from $apk"
               exit 1
             fi
             if [ "${RELEASE_SIGNING_READY:-false}" = "true" ]; then
@@ -322,7 +322,7 @@ jobs:
               sys.exit(1)
           print(f"{m.group(1)}\t{m.group(2)}")
           ')"
-            sha="$(printf '%s\n' "$cert_out" | sed -n 's/^Signer #1 certificate SHA-256 digest:[[:space:]]*//p' | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':[:space:]')"
+            sha="$(printf '%s\n' "$cert_out" | sed -nE 's/^[[:space:]]*(V[0-9]+[[:space:]]+)?Signer([[:space:]]+#?[0-9]+|[[:space:]]*\([^)]*\))?:?[[:space:]]+certificate SHA-256 digest:[[:space:]]*//Ip' | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':[:space:]')"
             printf '%s\t%s\n' "$pkg_vcode" "$sha"
           }
 
