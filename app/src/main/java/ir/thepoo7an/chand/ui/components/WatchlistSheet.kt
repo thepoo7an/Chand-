@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
+import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
@@ -171,7 +172,11 @@ fun WatchlistSheet(
                             }
                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                 Text(
-                                    text = NumberFormatters.formatCardPrice(asset.priceToman, prefs.usePersianDigits),
+                                    text = if (asset.freshness == DataFreshness.UNAVAILABLE || asset.priceToman <= 0.0) {
+                                        "—"
+                                    } else {
+                                        NumberFormatters.formatCardPrice(asset.priceToman, prefs.usePersianDigits)
+                                    },
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )

@@ -13,7 +13,9 @@ import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.updateAll
 import ir.thepoo7an.chand.data.PreferencesRepository
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
+import ir.thepoo7an.chand.network.InFlightRequestDeduplicator
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,7 +40,7 @@ object WidgetSyncCoordinator {
     private const val MIN_SYNC_GAP_MS = 8_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val isSyncing = AtomicBoolean(false)
+    private val syncDeduplicator = InFlightRequestDeduplicator<String, Boolean>()
     private val lastSyncElapsedMs = AtomicLong(0L)
     private val monitorRegistered = AtomicBoolean(false)
     private val wasOffline = AtomicBoolean(false)
@@ -132,35 +134,41 @@ object WidgetSyncCoordinator {
         if (!force && (nowElapsed - lastSyncElapsedMs.get()) < MIN_SYNC_GAP_MS) {
             return true
         }
-        if (!isSyncing.compareAndSet(false, true)) {
-            return false
-        }
 
-        return try {
-            val remote = MarketRemoteDataSource()
-            val prefsRepo = PreferencesRepository(appContext)
-            val result = remote.fetchLiveMarket()
-            if (result.isLive && result.assets.isNotEmpty()) {
-                prefsRepo.saveCachedSnapshot(
-                    CachedMarketSnapshot(
-                        assets = result.assets,
-                        updatedAtMillis = result.fetchedAtMillis,
-                        sourceSummary = result.sourceSummary
-                    )
+        return syncDeduplicator.execute("widget_sync") {
+            try {
+                val remote = MarketRemoteDataSource()
+                val prefsRepo = PreferencesRepository(appContext)
+                val cached = prefsRepo.loadCachedSnapshot()
+                val cachedById = cached?.assets?.associateBy { it.id }.orEmpty()
+                val lastUsd = cachedById["USD"]?.priceToman?.takeIf { it > 1_000.0 }
+                val result = remote.fetchLiveMarket(
+                    lastKnownUsdToman = lastUsd,
+                    cachedAssetsById = cachedById
                 )
-                lastSyncElapsedMs.set(SystemClock.elapsedRealtime())
-                cancelPendingConnectivitySync(appContext)
-                updateAllWidgets(appContext)
-                true
-            } else {
+                if (result.isLive && result.assets.isNotEmpty()) {
+                    prefsRepo.saveCachedSnapshot(
+                        CachedMarketSnapshot(
+                            assets = result.assets,
+                            updatedAtMillis = result.fetchedAtMillis,
+                            sourceSummary = result.sourceSummary,
+                            freshness = result.freshness
+                        )
+                    )
+                    lastSyncElapsedMs.set(SystemClock.elapsedRealtime())
+                    cancelPendingConnectivitySync(appContext)
+                    updateAllWidgets(appContext)
+                    true
+                } else {
+                    schedulePendingConnectivitySync(appContext)
+                    false
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
                 schedulePendingConnectivitySync(appContext)
                 false
             }
-        } catch (_: Throwable) {
-            schedulePendingConnectivitySync(appContext)
-            false
-        } finally {
-            isSyncing.set(false)
         }
     }
 

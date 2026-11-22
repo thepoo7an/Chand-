@@ -556,7 +556,7 @@ fun SettingsSheet(
                                         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.9f))
                                     ) {
                                         Text(
-                                            text = NumberFormatters.applyDigits("21:45", prefs.usePersianDigits),
+                                            text = "${strings.liveBadge} • ${NumberFormatters.applyDigits("21:45", prefs.usePersianDigits)}",
                                             fontSize = 9.sp,
                                             fontFamily = FontFamily.Monospace,
                                             color = Color.White,

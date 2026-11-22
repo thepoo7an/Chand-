@@ -30,7 +30,9 @@ fun MiniSparkline(
         if (points.size < 2) return@Canvas
         val minVal = points.minOrNull() ?: return@Canvas
         val maxVal = points.maxOrNull() ?: return@Canvas
-        val range = (maxVal - minVal).takeIf { it > 0.0 } ?: (maxVal * 0.01).coerceAtLeast(1.0)
+        val rawSpan = maxVal - minVal
+        val isFlat = rawSpan <= 0.0
+        val range = if (isFlat) 1.0 else rawSpan
 
         val w = size.width
         val h = size.height
@@ -43,7 +45,7 @@ fun MiniSparkline(
 
         points.forEachIndexed { idx, value ->
             val x = idx * stepX
-            val norm = ((value - minVal) / range).toFloat().coerceIn(0f, 1f)
+            val norm = if (isFlat) 0.5f else ((value - minVal) / range).toFloat().coerceIn(0f, 1f)
             val y = padY + usableH * (1f - norm)
             if (idx == 0) {
                 linePath.moveTo(x, y)
@@ -126,7 +128,9 @@ fun InteractiveHistoryChart(
             val prices = points.map { it.priceToman }
             val minVal = prices.minOrNull() ?: return@Canvas
             val maxVal = prices.maxOrNull() ?: return@Canvas
-            val range = (maxVal - minVal).takeIf { it > 0.0 } ?: (maxVal * 0.01).coerceAtLeast(1.0)
+            val rawSpan = maxVal - minVal
+            val isFlat = rawSpan <= 0.0
+            val range = if (isFlat) 1.0 else rawSpan
 
             val w = size.width
             val h = size.height
@@ -149,7 +153,7 @@ fun InteractiveHistoryChart(
             }
 
             // Baseline at opening price
-            val openNorm = ((prices.first() - minVal) / range).toFloat().coerceIn(0f, 1f)
+            val openNorm = if (isFlat) 0.5f else ((prices.first() - minVal) / range).toFloat().coerceIn(0f, 1f)
             val openY = padTop + usableH * (1f - openNorm)
             drawLine(
                 color = lineColor.copy(alpha = 0.35f),
@@ -165,7 +169,7 @@ fun InteractiveHistoryChart(
 
             prices.forEachIndexed { idx, value ->
                 val x = idx * stepX
-                val norm = ((value - minVal) / range).toFloat().coerceIn(0f, 1f)
+                val norm = if (isFlat) 0.5f else ((value - minVal) / range).toFloat().coerceIn(0f, 1f)
                 val y = padTop + usableH * (1f - norm)
                 coords.add(Offset(x, y))
                 if (idx == 0) {

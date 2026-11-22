@@ -129,4 +129,62 @@ class PreferencesSerializationTest {
         assertEquals(1, decoded.points.size)
         assertEquals(71_000.0, decoded.points.first().priceToman, 0.01)
     }
+
+    @Test
+    fun `old-format CachedMarketSnapshot JSON without Stage 2 fields decodes safely with defaults`() {
+        val json = Json { ignoreUnknownKeys = true }
+        val legacyPayload = """
+            {
+              "assets": [
+                {
+                  "id": "USD",
+                  "symbol": "USD",
+                  "nameFa": "دلار آمریکا",
+                  "nameEn": "US Dollar",
+                  "category": "FIAT",
+                  "badgeText": "🇺🇸",
+                  "accentHex": 4279286145,
+                  "priceToman": 71250.0,
+                  "priceUsd": 1.0,
+                  "change24hPercent": 0.45,
+                  "change24hToman": 320.0,
+                  "high24hToman": 71500.0,
+                  "low24hToman": 70900.0,
+                  "sparkline": [70900.0, 71100.0, 71250.0],
+                  "sourceLabel": "TGJU (Free)",
+                  "updatedAtMillis": 1740000000000
+                },
+                {
+                  "id": "COIN_EMAMI",
+                  "symbol": "SEKE",
+                  "nameFa": "سکه امامی",
+                  "nameEn": "Emami Coin",
+                  "category": "GOLD",
+                  "badgeText": "🪙",
+                  "accentHex": 4294286859,
+                  "priceToman": 74500000.0
+                }
+              ],
+              "updatedAtMillis": 1740000000000,
+              "sourceSummary": "Free Market (Tehran) • TGJU"
+            }
+        """.trimIndent()
+
+        val decoded = json.decodeFromString<CachedMarketSnapshot>(legacyPayload)
+        assertEquals(2, decoded.assets.size)
+        assertEquals(ir.thepoo7an.chand.model.DataFreshness.CACHED, decoded.freshness)
+
+        val usd = decoded.assets[0]
+        assertEquals(71_250.0, usd.priceToman, 0.01)
+        assertEquals(71_500.0, usd.high24hToman ?: 0.0, 0.01)
+        assertEquals(ir.thepoo7an.chand.model.DataFreshness.CACHED, usd.freshness)
+        assertFalse(usd.disputed)
+        assertFalse(usd.singleSource)
+        assertEquals(null, usd.intrinsicValueToman)
+
+        val emami = decoded.assets[1]
+        assertEquals(null, emami.high24hToman)
+        assertEquals(null, emami.low24hToman)
+        assertEquals(ir.thepoo7an.chand.model.DataFreshness.CACHED, emami.freshness)
+    }
 }

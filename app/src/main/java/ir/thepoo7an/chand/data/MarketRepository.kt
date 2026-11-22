@@ -6,11 +6,14 @@ import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.AssetHistoryResult
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
+import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.network.AppUpdateService
 import ir.thepoo7an.chand.network.AppUpdateState
+import ir.thepoo7an.chand.network.HistoryNormalizer
+import ir.thepoo7an.chand.network.InFlightRequestDeduplicator
 import ir.thepoo7an.chand.network.MarketDataSource
 import ir.thepoo7an.chand.network.MarketPriceMapper
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
@@ -26,57 +29,84 @@ data class MarketSyncResult(
     val assets: List<MarketAsset>,
     val updatedAtMillis: Long,
     val sourceSummary: String,
+    val freshness: DataFreshness = DataFreshness.CACHED
+) {
     val isLive: Boolean
-)
+        get() = freshness == DataFreshness.LIVE || freshness == DataFreshness.DELAYED
+}
 
 class MarketRepository(
     private val context: Context,
     private val prefsRepo: PreferencesRepository,
     private val remote: MarketDataSource = MarketRemoteDataSource(),
-    private val updateService: AppUpdateService = AppUpdateService()
+    private val updateService: AppUpdateService = AppUpdateService(),
+    private val clockMillis: () -> Long = { System.currentTimeMillis() }
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val historyCacheDir by lazy { File(context.filesDir, "history_cache").apply { mkdirs() } }
+    private val refreshDeduplicator = InFlightRequestDeduplicator<String, MarketSyncResult>()
+    private val historyDeduplicator = InFlightRequestDeduplicator<String, AssetHistoryResult>()
 
     val preferencesFlow: Flow<AppPreferences> = prefsRepo.preferencesFlow
 
     suspend fun loadCached(): CachedMarketSnapshot? = prefsRepo.loadCachedSnapshot()
 
-    suspend fun refreshMarket(): MarketSyncResult {
+    suspend fun refreshMarket(): MarketSyncResult = refreshDeduplicator.execute("refresh") {
         val cached = prefsRepo.loadCachedSnapshot()
-        val lastKnownUsd = cached?.assets?.firstOrNull { it.id == "USD" }?.priceToman?.takeIf { it > 1_000.0 }
-        val result = remote.fetchLiveMarket(lastKnownUsdToman = lastKnownUsd)
+        val cachedAssetsById = cached?.assets?.associateBy { it.id }.orEmpty()
+        val lastKnownUsd = cachedAssetsById["USD"]?.priceToman?.takeIf { it > 1_000.0 }
+        val result = remote.fetchLiveMarket(
+            lastKnownUsdToman = lastKnownUsd,
+            cachedAssetsById = cachedAssetsById
+        )
         if (result.isLive && result.assets.isNotEmpty()) {
             val snapshot = CachedMarketSnapshot(
                 assets = result.assets,
                 updatedAtMillis = result.fetchedAtMillis,
-                sourceSummary = result.sourceSummary
+                sourceSummary = result.sourceSummary,
+                freshness = result.freshness
             )
             prefsRepo.saveCachedSnapshot(snapshot)
             updateAllWidgets()
-            return MarketSyncResult(
+            return@execute MarketSyncResult(
                 assets = result.assets,
                 updatedAtMillis = result.fetchedAtMillis,
                 sourceSummary = result.sourceSummary,
-                isLive = true
+                freshness = result.freshness
+            )
+        }
+
+        if (result.freshness == DataFreshness.CACHED && result.assets.isNotEmpty()) {
+            return@execute MarketSyncResult(
+                assets = result.assets,
+                updatedAtMillis = result.fetchedAtMillis,
+                sourceSummary = result.sourceSummary,
+                freshness = DataFreshness.CACHED
             )
         }
 
         if (cached != null && cached.assets.isNotEmpty()) {
-            return MarketSyncResult(
-                assets = cached.assets,
+            val cachedMarked = cached.assets.map { asset ->
+                if (asset.priceToman <= 0.0 || asset.freshness == DataFreshness.UNAVAILABLE) {
+                    asset.copy(freshness = DataFreshness.UNAVAILABLE)
+                } else {
+                    asset.copy(freshness = DataFreshness.CACHED)
+                }
+            }
+            return@execute MarketSyncResult(
+                assets = cachedMarked,
                 updatedAtMillis = cached.updatedAtMillis,
                 sourceSummary = cached.sourceSummary,
-                isLive = false
+                freshness = DataFreshness.CACHED
             )
         }
 
         val fallback = MarketPriceMapper.offlineReferenceCatalog()
-        return MarketSyncResult(
+        MarketSyncResult(
             assets = fallback.assets,
             updatedAtMillis = fallback.updatedAtMillis,
             sourceSummary = fallback.sourceSummary,
-            isLive = false
+            freshness = DataFreshness.UNAVAILABLE
         )
     }
 
@@ -86,28 +116,42 @@ class MarketRepository(
         forceRefresh: Boolean = false
     ): AssetHistoryResult = withContext(Dispatchers.IO) {
         val cacheFile = File(historyCacheDir, "${asset.id}_${range.name}.json")
-        val ttlMillis = if (range == TimeRange.H24) 3 * 60 * 1000L else 20 * 60 * 1000L
+        val ttlMillis = if (range == TimeRange.H24) HISTORY_H24_CACHE_TTL_MS else HISTORY_MULTI_DAY_CACHE_TTL_MS
         val cached = readHistoryCache(cacheFile)
 
-        if (!forceRefresh && cached != null && cached.isRealData && cached.points.size >= 2) {
-            val age = System.currentTimeMillis() - cached.cachedAtMillis
-            if (age in 0..ttlMillis) {
-                return@withContext cached
+        if (!forceRefresh && cached != null && cached.isRealData) {
+            val normalizedCached = cached.copy(points = HistoryNormalizer.normalize(cached.points))
+            if (normalizedCached.points.size >= 2) {
+                val age = clockMillis() - normalizedCached.cachedAtMillis
+                if (age in 0..ttlMillis) {
+                    return@withContext normalizedCached
+                }
             }
         }
 
-        val fresh = remote.fetchAssetHistory(asset, range)
-        if (fresh.isRealData && fresh.points.size >= 2) {
-            val toSave = fresh.copy(cachedAtMillis = System.currentTimeMillis())
-            writeHistoryCache(cacheFile, toSave)
-            return@withContext toSave
-        }
+        val dedupeKey = "${asset.id}|${range.name}"
+        historyDeduplicator.execute(dedupeKey) {
+            val freshRaw = remote.fetchAssetHistory(asset, range)
+            val fresh = if (freshRaw.isRealData) {
+                freshRaw.copy(points = HistoryNormalizer.normalize(freshRaw.points))
+            } else {
+                freshRaw
+            }
+            if (fresh.isRealData && fresh.points.size >= 2) {
+                val toSave = fresh.copy(cachedAtMillis = clockMillis())
+                writeHistoryCache(cacheFile, toSave)
+                return@execute toSave
+            }
 
-        if (cached != null && cached.isRealData && cached.points.size >= 2) {
-            return@withContext cached
-        }
+            if (cached != null && cached.isRealData) {
+                val normalizedCached = cached.copy(points = HistoryNormalizer.normalize(cached.points))
+                if (normalizedCached.points.size >= 2) {
+                    return@execute normalizedCached
+                }
+            }
 
-        fresh
+            fresh
+        }
     }
 
     private fun readHistoryCache(file: File): AssetHistoryResult? = runCatching {
@@ -167,5 +211,10 @@ class MarketRepository(
 
     private suspend fun updateAllWidgets() {
         WidgetSyncCoordinator.updateAllWidgets(context)
+    }
+
+    companion object {
+        const val HISTORY_H24_CACHE_TTL_MS = 3L * 60L * 1000L
+        const val HISTORY_MULTI_DAY_CACHE_TTL_MS = 20L * 60L * 1000L
     }
 }

@@ -88,11 +88,13 @@ class AppUpdateService(
     private val api: GitHubReleaseApi by lazy {
         Retrofit.Builder()
             .baseUrl("https://api.github.com/")
-            .client(client)
+            .client(NetworkConfig.clientFor(NetworkConfig.RequestProfile.UPDATE_CHECK, client))
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
             .create(GitHubReleaseApi::class.java)
     }
+
+    private val checkDeduplicator = InFlightRequestDeduplicator<String, AppUpdateState>()
 
     suspend fun checkForUpdate(
         repoSlugInput: String,
@@ -102,72 +104,88 @@ class AppUpdateService(
     ): AppUpdateState = withContext(Dispatchers.IO) {
         val parsed = parseRepoSlug(repoSlugInput) ?: return@withContext AppUpdateState.RepoNotConfigured
         val (owner, repo) = parsed
+        val dedupeKey = "${owner.lowercase()}/${repo.lowercase()}|$currentVersionCode|$currentVersionName|${supportedAbis.joinToString(",")}"
+        val updateProfile = NetworkConfig.RequestProfile.UPDATE_CHECK
 
-        var releaseListSucceeded = false
-        val release = try {
-            api.getLatestRelease(owner, repo).takeUnless { it.draft || it.prerelease }
-        } catch (ce: kotlinx.coroutines.CancellationException) {
-            throw ce
-        } catch (_: Throwable) {
-            try {
-                val list = api.listReleases(owner, repo, perPage = 10)
-                releaseListSucceeded = true
-                selectLatestStableRelease(list)
+        checkDeduplicator.execute(dedupeKey) {
+            var releaseListSucceeded = false
+            val release = try {
+                NetworkConfig.retrySuspend(
+                    maxAttempts = updateProfile.defaultMaxAttempts,
+                    baseDelayMillis = updateProfile.baseDelayMillis,
+                    maxDelayMillis = updateProfile.maxDelayMillis
+                ) {
+                    api.getLatestRelease(owner, repo)
+                }.takeUnless { it.draft || it.prerelease }
             } catch (ce: kotlinx.coroutines.CancellationException) {
                 throw ce
             } catch (_: Throwable) {
-                null
+                try {
+                    val list = NetworkConfig.retrySuspend(
+                        maxAttempts = updateProfile.defaultMaxAttempts,
+                        baseDelayMillis = updateProfile.baseDelayMillis,
+                        maxDelayMillis = updateProfile.maxDelayMillis
+                    ) {
+                        api.listReleases(owner, repo, perPage = 10)
+                    }
+                    releaseListSucceeded = true
+                    selectLatestStableRelease(list)
+                } catch (ce: kotlinx.coroutines.CancellationException) {
+                    throw ce
+                } catch (_: Throwable) {
+                    null
+                }
             }
-        }
 
-        if (release == null) {
-            return@withContext if (releaseListSucceeded) {
-                AppUpdateState.UpToDate(
+            if (release == null) {
+                return@execute if (releaseListSucceeded) {
+                    AppUpdateState.UpToDate(
+                        currentVersionName = currentVersionName,
+                        currentVersionCode = currentVersionCode,
+                        checkedAtMillis = System.currentTimeMillis()
+                    )
+                } else {
+                    AppUpdateState.Error("release_fetch_failed")
+                }
+            }
+
+            val remoteBuild = extractBuildNumber(release)
+            val remoteSemver = extractCleanVersionName(release)
+
+            val newer = isRemoteNewer(
+                currentVersionName = currentVersionName,
+                currentVersionCode = currentVersionCode,
+                remoteVersionName = remoteSemver,
+                remoteBuildCode = remoteBuild
+            )
+
+            if (!newer) {
+                return@execute AppUpdateState.UpToDate(
                     currentVersionName = currentVersionName,
                     currentVersionCode = currentVersionCode,
                     checkedAtMillis = System.currentTimeMillis()
                 )
-            } else {
-                AppUpdateState.Error("release_fetch_failed")
             }
-        }
 
-        val remoteBuild = extractBuildNumber(release)
-        val remoteSemver = extractCleanVersionName(release)
+            val apkAsset = pickBestApkAsset(release.assets, supportedAbis)
+            val downloadUrl = apkAsset?.browserDownloadUrl?.takeIf { it.isNotBlank() }
+                ?: release.htmlUrl
 
-        val newer = isRemoteNewer(
-            currentVersionName = currentVersionName,
-            currentVersionCode = currentVersionCode,
-            remoteVersionName = remoteSemver,
-            remoteBuildCode = remoteBuild
-        )
-
-        if (!newer) {
-            return@withContext AppUpdateState.UpToDate(
-                currentVersionName = currentVersionName,
-                currentVersionCode = currentVersionCode,
-                checkedAtMillis = System.currentTimeMillis()
+            AppUpdateState.UpdateAvailable(
+                AppUpdateInfo(
+                    currentVersionName = currentVersionName,
+                    currentVersionCode = currentVersionCode,
+                    latestVersionName = remoteSemver,
+                    latestVersionCode = remoteBuild,
+                    releaseTitle = release.name.ifBlank { release.tagName },
+                    releaseNotes = release.body.trim(),
+                    releasePageUrl = release.htmlUrl,
+                    downloadUrl = downloadUrl,
+                    matchedApkName = apkAsset?.name ?: "Chand-release.apk",
+                    matchedApkSizeBytes = apkAsset?.size ?: 0L
+                )
             )
         }
-
-        val apkAsset = pickBestApkAsset(release.assets, supportedAbis)
-        val downloadUrl = apkAsset?.browserDownloadUrl?.takeIf { it.isNotBlank() }
-            ?: release.htmlUrl
-
-        AppUpdateState.UpdateAvailable(
-            AppUpdateInfo(
-                currentVersionName = currentVersionName,
-                currentVersionCode = currentVersionCode,
-                latestVersionName = remoteSemver,
-                latestVersionCode = remoteBuild,
-                releaseTitle = release.name.ifBlank { release.tagName },
-                releaseNotes = release.body.trim(),
-                releasePageUrl = release.htmlUrl,
-                downloadUrl = downloadUrl,
-                matchedApkName = apkAsset?.name ?: "Chand-release.apk",
-                matchedApkSizeBytes = apkAsset?.size ?: 0L
-            )
-        )
     }
 
     companion object {

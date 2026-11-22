@@ -50,6 +50,7 @@ import androidx.compose.foundation.clickable
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.AssetHistoryPoint
+import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.ui.strings.ChandStrings
@@ -102,7 +103,8 @@ fun AssetDetailSheet(
             val maxHist = historyPoints.maxOf { it.priceToman }
             val minHist = historyPoints.minOf { it.priceToman }
             if (selectedRange == TimeRange.H24) {
-                maxOf(maxHist, asset.high24hToman) to minOf(minHist, asset.low24hToman)
+                listOfNotNull(maxHist, asset.high24hToman).maxOrNull() to
+                    listOfNotNull(minHist, asset.low24hToman).minOrNull()
             } else {
                 maxHist to minHist
             }
@@ -179,20 +181,28 @@ fun AssetDetailSheet(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.Bottom) {
+                        val isUnavailablePrice = activePoint == null &&
+                            (asset.freshness == DataFreshness.UNAVAILABLE || displayPriceToman <= 0.0)
                         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                             Text(
-                                text = NumberFormatters.formatToman(displayPriceToman, prefs.usePersianDigits),
+                                text = if (isUnavailablePrice) {
+                                    "—"
+                                } else {
+                                    NumberFormatters.formatToman(displayPriceToman, prefs.usePersianDigits)
+                                },
                                 style = MaterialTheme.typography.displaySmall,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = strings.tomanUnit,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 5.dp)
-                        )
+                        if (!isUnavailablePrice) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = strings.tomanUnit,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 5.dp)
+                            )
+                        }
                     }
                     val subtitleText = if (activePoint != null) {
                         NumberFormatters.formatChartJalaliDate(
@@ -389,25 +399,64 @@ fun AssetDetailSheet(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Dynamic Range High / Low / Real History Source
+            val statusNotes = buildList {
+                when (asset.freshness) {
+                    DataFreshness.DELAYED -> add(strings.delayedBadge)
+                    DataFreshness.CACHED -> add(strings.cachedBadge)
+                    DataFreshness.UNAVAILABLE -> add(strings.unavailableBadge)
+                    DataFreshness.LIVE -> Unit
+                }
+                if (asset.disputed) add(strings.disputedLabel)
+                else if (asset.singleSource && historySourceLabel.isEmpty()) add(strings.singleSourceLabel)
+            }
+            val baseSource = historySourceLabel.ifEmpty { asset.sourceLabel.ifEmpty { strings.liveBadge } }
+            val sourceDisplay = if (statusNotes.isEmpty()) baseSource else "$baseSource · ${statusNotes.joinToString(" · ")}"
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 StatPillCard(
                     label = if (selectedRange == TimeRange.H24) strings.high24h else strings.rangeHighLabel,
-                    value = NumberFormatters.formatToman(rangeHigh, prefs.usePersianDigits),
+                    value = rangeHigh?.let { NumberFormatters.formatToman(it, prefs.usePersianDigits) } ?: "—",
                     modifier = Modifier.weight(1f)
                 )
                 StatPillCard(
                     label = if (selectedRange == TimeRange.H24) strings.low24h else strings.rangeLowLabel,
-                    value = NumberFormatters.formatToman(rangeLow, prefs.usePersianDigits),
+                    value = rangeLow?.let { NumberFormatters.formatToman(it, prefs.usePersianDigits) } ?: "—",
                     modifier = Modifier.weight(1f)
                 )
                 StatPillCard(
                     label = strings.sourceLabel,
-                    value = historySourceLabel.ifEmpty { asset.sourceLabel.ifEmpty { "Live" } },
-                    modifier = Modifier.weight(0.9f)
+                    value = sourceDisplay,
+                    modifier = Modifier.weight(0.95f)
                 )
+            }
+
+            if (asset.intrinsicValueToman != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                val bubbleDisplay = if (asset.bubbleToman != null && asset.bubblePercent != null) {
+                    val amt = NumberFormatters.formatToman(asset.bubbleToman, prefs.usePersianDigits)
+                    val pct = NumberFormatters.formatPercent(asset.bubblePercent, prefs.usePersianDigits)
+                    "$amt ($pct)"
+                } else {
+                    "—"
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    StatPillCard(
+                        label = strings.intrinsicEstimateLabel,
+                        value = NumberFormatters.formatToman(asset.intrinsicValueToman, prefs.usePersianDigits),
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatPillCard(
+                        label = strings.bubbleEstimateLabel,
+                        value = bubbleDisplay,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))

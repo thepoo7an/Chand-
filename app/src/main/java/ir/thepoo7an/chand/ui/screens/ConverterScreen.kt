@@ -113,7 +113,8 @@ fun ConverterScreen(
         )
     }
 
-    val allChoices = remember(assets, tomanVirtual) { listOf(tomanVirtual) + assets }
+    val usableAssets = remember(assets) { assets.filter { it.priceToman > 0.0 } }
+    val allChoices = remember(usableAssets, tomanVirtual) { listOf(tomanVirtual) + usableAssets }
     val fromAsset = allChoices.firstOrNull { it.id == fromAssetId } ?: tomanVirtual
     val toAsset = allChoices.firstOrNull { it.id == toAssetId } ?: tomanVirtual
 
@@ -391,7 +392,8 @@ private fun ConverterCardsColumn(
         // Live Equivalents Strip
         val benchmarkAssets = remember(assets, fromAsset.id, toAsset.id) {
             assets.filter {
-                it.id in listOf("USD", "EUR", "GOLD_18K", "BTC") &&
+                it.priceToman > 0.0 &&
+                    it.id in listOf("USD", "EUR", "GOLD_18K", "BTC") &&
                     it.id != fromAsset.id &&
                     it.id != toAsset.id
             }

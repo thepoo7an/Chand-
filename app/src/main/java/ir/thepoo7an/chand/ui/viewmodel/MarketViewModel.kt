@@ -9,6 +9,7 @@ import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.AssetHistoryPoint
+import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.MarketUiState
 import ir.thepoo7an.chand.model.ThemeMode
@@ -155,10 +156,11 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                 val cached = repository.loadCached()
                 if (cached != null && cached.assets.isNotEmpty()) {
                     _uiState.value = MarketUiState.Ready(
-                        assets = cached.assets,
+                        assets = cached.assets.map { it.copy(freshness = if (it.priceToman > 0.0) DataFreshness.CACHED else DataFreshness.UNAVAILABLE) },
                         lastUpdatedMillis = cached.updatedAtMillis,
                         isRefreshing = true,
-                        sourceSummary = cached.sourceSummary
+                        sourceSummary = cached.sourceSummary,
+                        freshness = DataFreshness.CACHED
                     )
                 }
             } catch (ce: CancellationException) {
@@ -213,8 +215,10 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                     lastUpdatedMillis = sync.updatedAtMillis,
                     isRefreshing = false,
                     sourceSummary = sync.sourceSummary,
+                    freshness = sync.freshness,
                     errorBanner = when {
-                        sync.isLive -> null
+                        sync.freshness == DataFreshness.LIVE -> null
+                        sync.freshness == DataFreshness.DELAYED -> "delayed"
                         sync.sourceSummary.contains(TomanRateBasis.OFFLINE_REFERENCE.labelEn) -> "offline_reference"
                         else -> "offline"
                     }
@@ -228,7 +232,7 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
             } else if (_uiState.value !is MarketUiState.Ready) {
                 _uiState.value = MarketUiState.Error("network_unavailable")
             } else if (current is MarketUiState.Ready) {
-                _uiState.value = current.copy(isRefreshing = false, errorBanner = "offline")
+                _uiState.value = current.copy(isRefreshing = false, freshness = DataFreshness.CACHED, errorBanner = "offline")
             }
         }
     }

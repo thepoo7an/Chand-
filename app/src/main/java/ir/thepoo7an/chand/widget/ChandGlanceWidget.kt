@@ -45,9 +45,12 @@ import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
+import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
+import ir.thepoo7an.chand.network.MarketValidationConfig
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
+import ir.thepoo7an.chand.ui.strings.stringsFor
 
 private object WidgetColors {
     val solidDivider = ColorProvider(day = Color(0xFFECE8E0), night = Color(0xFF1D232E))
@@ -56,8 +59,87 @@ private object WidgetColors {
     val sub = ColorProvider(day = Color(0xFF525B69), night = Color(0xFFCBD5E1))
     val gain = ColorProvider(day = Color(0xFF059669), night = Color(0xFF34D399))
     val loss = ColorProvider(day = Color(0xFFDC2626), night = Color(0xFFF87171))
+    val warn = ColorProvider(day = Color(0xFFD97706), night = Color(0xFFFBBF24))
     val solidBadgeBg = ColorProvider(day = Color(0xFFF3F1EC), night = Color(0xFF161D28))
     val glassBadgeBg = ColorProvider(day = Color(0x260F172A), night = Color(0x29FFFFFF))
+
+    fun freshnessColor(freshness: DataFreshness): androidx.glance.unit.ColorProvider = when (freshness) {
+        DataFreshness.LIVE -> gain
+        DataFreshness.DELAYED, DataFreshness.CACHED -> warn
+        DataFreshness.UNAVAILABLE -> sub
+    }
+}
+
+internal object WidgetStatusHelper {
+    fun resolveFreshness(
+        displayedAssets: List<MarketAsset>,
+        snapshotFreshness: DataFreshness,
+        updatedAtMillis: Long,
+        nowMillis: Long = System.currentTimeMillis()
+    ): DataFreshness {
+        if (updatedAtMillis <= 0L) return DataFreshness.UNAVAILABLE
+        val validAssets = displayedAssets.filter {
+            it.priceToman > 0.0 && it.freshness != DataFreshness.UNAVAILABLE
+        }
+        if (validAssets.isEmpty()) return DataFreshness.UNAVAILABLE
+
+        val recorded = DataFreshness.stalest(
+            snapshotFreshness,
+            DataFreshness.stalest(*validAssets.map { it.freshness }.toTypedArray())
+        )
+        if (recorded == DataFreshness.UNAVAILABLE) return DataFreshness.UNAVAILABLE
+        if (recorded == DataFreshness.CACHED) return DataFreshness.CACHED
+
+        val maxLiveAgeMs = if (validAssets.any { it.category == AssetCategory.CRYPTO }) {
+            MarketValidationConfig.CRYPTO_LIVE_MAX_AGE_MILLIS
+        } else {
+            MarketValidationConfig.FIAT_GOLD_LIVE_MAX_AGE_MILLIS
+        }
+        val snapshotAgeMs = (nowMillis - updatedAtMillis).coerceAtLeast(0L)
+        return if (snapshotAgeMs > maxLiveAgeMs) {
+            DataFreshness.CACHED
+        } else {
+            recorded
+        }
+    }
+
+    fun formatStatusLabel(
+        freshness: DataFreshness,
+        updatedAtMillis: Long,
+        language: AppLanguage,
+        usePersianDigits: Boolean
+    ): String {
+        val strings = stringsFor(language)
+        val badge = when (freshness) {
+            DataFreshness.LIVE -> strings.liveBadge
+            DataFreshness.DELAYED -> strings.delayedBadge
+            DataFreshness.CACHED -> strings.cachedBadge
+            DataFreshness.UNAVAILABLE -> strings.unavailableBadge
+        }
+        val timeTag = NumberFormatters.formatTime(updatedAtMillis, usePersianDigits)
+        if (freshness == DataFreshness.UNAVAILABLE || timeTag.isBlank()) {
+            return badge
+        }
+        return "$badge • $timeTag"
+    }
+
+    fun formatHeroSubLine(
+        symbol: String,
+        freshness: DataFreshness,
+        updatedAtMillis: Long,
+        language: AppLanguage,
+        usePersianDigits: Boolean
+    ): String {
+        val status = formatStatusLabel(freshness, updatedAtMillis, language, usePersianDigits)
+        return "$symbol • $status"
+    }
+
+    fun formatLockScreenStatusPill(
+        freshness: DataFreshness,
+        updatedAtMillis: Long,
+        language: AppLanguage,
+        usePersianDigits: Boolean
+    ): String = formatStatusLabel(freshness, updatedAtMillis, language, usePersianDigits)
 }
 
 @DrawableRes
@@ -88,6 +170,7 @@ class ChandSingleAssetWidget : GlanceAppWidget() {
         provideContent {
             SingleHeroWidgetContent(
                 asset = hero,
+                snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
                 updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
                 prefs = prefs
             )
@@ -98,12 +181,12 @@ class ChandSingleAssetWidget : GlanceAppWidget() {
 @Composable
 private fun SingleHeroWidgetContent(
     asset: MarketAsset?,
+    snapshotFreshness: DataFreshness,
     updatedAtMillis: Long,
     prefs: AppPreferences
 ) {
     val isFa = prefs.language == AppLanguage.FA
     val badgeBg = if (prefs.widgetTranslucent) WidgetColors.glassBadgeBg else WidgetColors.solidBadgeBg
-    val timeTag = NumberFormatters.formatTime(updatedAtMillis, prefs.usePersianDigits)
 
     Box(
         modifier = GlanceModifier
@@ -141,7 +224,18 @@ private fun SingleHeroWidgetContent(
             }
         } else {
             val isGain = asset.change24hPercent >= 0.0
-            val subLine = if (timeTag.isNotBlank()) "${asset.symbol} • $timeTag" else asset.symbol
+            val effectiveFreshness = WidgetStatusHelper.resolveFreshness(
+                displayedAssets = listOf(asset),
+                snapshotFreshness = snapshotFreshness,
+                updatedAtMillis = updatedAtMillis
+            )
+            val subLine = WidgetStatusHelper.formatHeroSubLine(
+                symbol = asset.symbol,
+                freshness = effectiveFreshness,
+                updatedAtMillis = updatedAtMillis,
+                language = prefs.language,
+                usePersianDigits = prefs.usePersianDigits
+            )
             Column(
                 modifier = GlanceModifier.fillMaxSize(),
                 verticalAlignment = Alignment.Top
@@ -178,8 +272,9 @@ private fun SingleHeroWidgetContent(
                         Text(
                             text = subLine,
                             style = TextStyle(
-                                color = WidgetColors.sub,
-                                fontSize = 10.sp,
+                                color = WidgetColors.freshnessColor(effectiveFreshness),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Medium,
                                 textAlign = TextAlign.End
                             ),
                             maxLines = 1
@@ -189,21 +284,26 @@ private fun SingleHeroWidgetContent(
 
                 Spacer(modifier = GlanceModifier.defaultWeight())
 
+                val isUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || asset.priceToman <= 0.0
                 Text(
-                    text = NumberFormatters.formatDeltaWithArrow(
-                        asset.change24hToman,
-                        asset.change24hPercent,
-                        prefs.usePersianDigits
-                    ),
+                    text = if (isUnavailable) {
+                        "—"
+                    } else {
+                        NumberFormatters.formatDeltaWithArrow(
+                            asset.change24hToman,
+                            asset.change24hPercent,
+                            prefs.usePersianDigits
+                        )
+                    },
                     style = TextStyle(
-                        color = if (isGain) WidgetColors.gain else WidgetColors.loss,
+                        color = if (isUnavailable) WidgetColors.sub else if (isGain) WidgetColors.gain else WidgetColors.loss,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
                     )
                 )
                 Spacer(modifier = GlanceModifier.height(2.dp))
                 Text(
-                    text = NumberFormatters.formatCardPrice(asset.priceToman, prefs.usePersianDigits),
+                    text = if (isUnavailable) "—" else NumberFormatters.formatCardPrice(asset.priceToman, prefs.usePersianDigits),
                     style = TextStyle(
                         color = WidgetColors.title,
                         fontSize = 24.sp,
@@ -239,6 +339,7 @@ class ChandWideListWidget : GlanceAppWidget() {
         provideContent {
             MultiRowWidgetContent(
                 rows = rows,
+                snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
                 updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
                 prefs = prefs,
                 compactMode = false
@@ -265,6 +366,7 @@ class ChandCompactCryptoWidget : GlanceAppWidget() {
         provideContent {
             MultiRowWidgetContent(
                 rows = rows,
+                snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
                 updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
                 prefs = prefs,
                 compactMode = true
@@ -293,6 +395,7 @@ class ChandCompact2x1Widget : GlanceAppWidget() {
         provideContent {
             Compact2x1WidgetContent(
                 rows = rows,
+                snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
                 updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
                 prefs = prefs
             )
@@ -303,6 +406,7 @@ class ChandCompact2x1Widget : GlanceAppWidget() {
 @Composable
 private fun Compact2x1WidgetContent(
     rows: List<MarketAsset>,
+    snapshotFreshness: DataFreshness,
     updatedAtMillis: Long,
     prefs: AppPreferences
 ) {
@@ -310,7 +414,17 @@ private fun Compact2x1WidgetContent(
     val isFa = prefs.language == AppLanguage.FA
     val isTall = size.height >= 92.dp
     val showFullDelta = size.width >= 165.dp || isTall
-    val timeTag = NumberFormatters.formatTime(updatedAtMillis, prefs.usePersianDigits)
+    val effectiveFreshness = WidgetStatusHelper.resolveFreshness(
+        displayedAssets = rows,
+        snapshotFreshness = snapshotFreshness,
+        updatedAtMillis = updatedAtMillis
+    )
+    val statusLabel = WidgetStatusHelper.formatStatusLabel(
+        freshness = effectiveFreshness,
+        updatedAtMillis = updatedAtMillis,
+        language = prefs.language,
+        usePersianDigits = prefs.usePersianDigits
+    )
     val dividerColor = if (prefs.widgetTranslucent) WidgetColors.glassDivider else WidgetColors.solidDivider
 
     Box(
@@ -346,8 +460,9 @@ private fun Compact2x1WidgetContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 rows.forEachIndexed { idx, asset ->
+                    val rowUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || asset.priceToman <= 0.0
                     val isGain = asset.change24hPercent >= 0.0
-                    val trendColor = if (isGain) WidgetColors.gain else WidgetColors.loss
+                    val trendColor = if (rowUnavailable) WidgetColors.sub else if (isGain) WidgetColors.gain else WidgetColors.loss
                     val shortLabel = when (asset.id) {
                         "USD" -> if (isFa) "دلار" else "USD"
                         "EUR" -> if (isFa) "یورو" else "EUR"
@@ -355,6 +470,7 @@ private fun Compact2x1WidgetContent(
                         else -> asset.symbol
                     }
                     val arrowSymbol = when {
+                        rowUnavailable -> "—"
                         asset.change24hToman > 0.001 || asset.change24hPercent > 0.005 -> "↑"
                         asset.change24hToman < -0.001 || asset.change24hPercent < -0.005 -> "↓"
                         else -> "•"
@@ -390,11 +506,15 @@ private fun Compact2x1WidgetContent(
 
                         if (showFullDelta) {
                             Text(
-                                text = NumberFormatters.formatDeltaWithArrow(
-                                    asset.change24hToman,
-                                    asset.change24hPercent,
-                                    prefs.usePersianDigits
-                                ),
+                                text = if (rowUnavailable) {
+                                    "—"
+                                } else {
+                                    NumberFormatters.formatDeltaWithArrow(
+                                        asset.change24hToman,
+                                        asset.change24hPercent,
+                                        prefs.usePersianDigits
+                                    )
+                                },
                                 style = TextStyle(
                                     color = trendColor,
                                     fontSize = if (isTall) 10.sp else 9.sp,
@@ -417,10 +537,14 @@ private fun Compact2x1WidgetContent(
                         }
 
                         Text(
-                            text = NumberFormatters.formatCardPrice(
-                                asset.priceToman,
-                                prefs.usePersianDigits
-                            ),
+                            text = if (rowUnavailable) {
+                                "—"
+                            } else {
+                                NumberFormatters.formatCardPrice(
+                                    asset.priceToman,
+                                    prefs.usePersianDigits
+                                )
+                            },
                             style = TextStyle(
                                 color = WidgetColors.title,
                                 fontSize = if (isTall) 13.sp else 11.sp,
@@ -439,17 +563,18 @@ private fun Compact2x1WidgetContent(
                         ) {}
                     }
                 }
-                if (isTall && timeTag.isNotBlank()) {
+                if (isTall && statusLabel.isNotBlank()) {
                     Row(
                         modifier = GlanceModifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Spacer(modifier = GlanceModifier.defaultWeight())
                         Text(
-                            text = timeTag,
+                            text = statusLabel,
                             style = TextStyle(
-                                color = WidgetColors.sub,
-                                fontSize = 8.sp
+                                color = WidgetColors.freshnessColor(effectiveFreshness),
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Medium
                             ),
                             maxLines = 1
                         )
@@ -463,12 +588,23 @@ private fun Compact2x1WidgetContent(
 @Composable
 private fun MultiRowWidgetContent(
     rows: List<MarketAsset>,
+    snapshotFreshness: DataFreshness,
     updatedAtMillis: Long,
     prefs: AppPreferences,
     compactMode: Boolean
 ) {
     val isFa = prefs.language == AppLanguage.FA
-    val timeTag = NumberFormatters.formatTime(updatedAtMillis, prefs.usePersianDigits)
+    val effectiveFreshness = WidgetStatusHelper.resolveFreshness(
+        displayedAssets = rows,
+        snapshotFreshness = snapshotFreshness,
+        updatedAtMillis = updatedAtMillis
+    )
+    val statusLabel = WidgetStatusHelper.formatStatusLabel(
+        freshness = effectiveFreshness,
+        updatedAtMillis = updatedAtMillis,
+        language = prefs.language,
+        usePersianDigits = prefs.usePersianDigits
+    )
     val dividerColor = if (prefs.widgetTranslucent) WidgetColors.glassDivider else WidgetColors.solidDivider
     val badgeBg = if (prefs.widgetTranslucent) WidgetColors.glassBadgeBg else WidgetColors.solidBadgeBg
 
@@ -497,6 +633,7 @@ private fun MultiRowWidgetContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 rows.forEachIndexed { idx, asset ->
+                    val rowUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || asset.priceToman <= 0.0
                     val isGain = asset.change24hPercent >= 0.0
                     Row(
                         modifier = GlanceModifier
@@ -530,23 +667,31 @@ private fun MultiRowWidgetContent(
                         Spacer(modifier = GlanceModifier.defaultWeight())
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = NumberFormatters.formatDeltaWithArrow(
-                                    asset.change24hToman,
-                                    asset.change24hPercent,
-                                    prefs.usePersianDigits
-                                ),
+                                text = if (rowUnavailable) {
+                                    "—"
+                                } else {
+                                    NumberFormatters.formatDeltaWithArrow(
+                                        asset.change24hToman,
+                                        asset.change24hPercent,
+                                        prefs.usePersianDigits
+                                    )
+                                },
                                 style = TextStyle(
-                                    color = if (isGain) WidgetColors.gain else WidgetColors.loss,
+                                    color = if (rowUnavailable) WidgetColors.sub else if (isGain) WidgetColors.gain else WidgetColors.loss,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Medium
                                 ),
                                 maxLines = 1
                             )
                             Text(
-                                text = NumberFormatters.formatCardPrice(
-                                    asset.priceToman,
-                                    prefs.usePersianDigits
-                                ),
+                                text = if (rowUnavailable) {
+                                    "—"
+                                } else {
+                                    NumberFormatters.formatCardPrice(
+                                        asset.priceToman,
+                                        prefs.usePersianDigits
+                                    )
+                                },
                                 style = TextStyle(
                                     color = WidgetColors.title,
                                     fontSize = if (compactMode) 14.sp else 15.sp,
@@ -565,7 +710,7 @@ private fun MultiRowWidgetContent(
                         ) {}
                     }
                 }
-                if (timeTag.isNotBlank()) {
+                if (statusLabel.isNotBlank()) {
                     Row(
                         modifier = GlanceModifier
                             .fillMaxWidth()
@@ -574,10 +719,11 @@ private fun MultiRowWidgetContent(
                     ) {
                         Spacer(modifier = GlanceModifier.defaultWeight())
                         Text(
-                            text = timeTag,
+                            text = statusLabel,
                             style = TextStyle(
-                                color = WidgetColors.sub,
-                                fontSize = 9.sp
+                                color = WidgetColors.freshnessColor(effectiveFreshness),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Medium
                             ),
                             maxLines = 1
                         )
@@ -636,6 +782,7 @@ class ChandLockScreenWidget : GlanceAppWidget() {
             LockScreenWidgetContent(
                 hero = hero,
                 secondary = secondary,
+                snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
                 updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
                 prefs = prefs
             )
@@ -647,6 +794,7 @@ class ChandLockScreenWidget : GlanceAppWidget() {
 private fun LockScreenWidgetContent(
     hero: MarketAsset?,
     secondary: List<MarketAsset>,
+    snapshotFreshness: DataFreshness,
     updatedAtMillis: Long,
     prefs: AppPreferences
 ) {
@@ -654,8 +802,21 @@ private fun LockScreenWidgetContent(
     val isTall = size.height >= 84.dp
     val isWide = size.width >= 215.dp
     val isFa = prefs.language == AppLanguage.FA
-    val timeTag = NumberFormatters.formatTime(updatedAtMillis, prefs.usePersianDigits)
-        .ifBlank { if (isFa) "زنده" else "LIVE" }
+    val displayedAssets = buildList {
+        if (hero != null) add(hero)
+        addAll(secondary)
+    }
+    val effectiveFreshness = WidgetStatusHelper.resolveFreshness(
+        displayedAssets = displayedAssets,
+        snapshotFreshness = snapshotFreshness,
+        updatedAtMillis = updatedAtMillis
+    )
+    val statusPillText = WidgetStatusHelper.formatLockScreenStatusPill(
+        freshness = effectiveFreshness,
+        updatedAtMillis = updatedAtMillis,
+        language = prefs.language,
+        usePersianDigits = prefs.usePersianDigits
+    )
 
     // Root Box intentionally has NO background so the lock screen / home wallpaper shines through.
     Box(
@@ -709,19 +870,28 @@ private fun LockScreenWidgetContent(
                 )
             }
         } else {
-            val deltaText = NumberFormatters.formatDeltaWithArrow(
-                hero.change24hToman,
-                hero.change24hPercent,
-                prefs.usePersianDigits
-            )
-            val pctText = NumberFormatters.formatPercent(hero.change24hPercent, prefs.usePersianDigits)
-            val statusBadgeText = if (isWide && isTall) "$deltaText • $pctText" else deltaText
+            val heroUnavailable = hero.freshness == DataFreshness.UNAVAILABLE || hero.priceToman <= 0.0
+            val deltaText = if (heroUnavailable) {
+                "—"
+            } else {
+                NumberFormatters.formatDeltaWithArrow(
+                    hero.change24hToman,
+                    hero.change24hPercent,
+                    prefs.usePersianDigits
+                )
+            }
+            val pctText = if (heroUnavailable) {
+                ""
+            } else {
+                NumberFormatters.formatPercent(hero.change24hPercent, prefs.usePersianDigits)
+            }
+            val statusBadgeText = if (!heroUnavailable && isWide && isTall) "$deltaText • $pctText" else deltaText
 
             Column(
                 modifier = GlanceModifier.fillMaxSize(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Row 1: Monochrome pill header inspired by [20] (NOV) 21:45 ▮  ✳
+                // Row 1: Monochrome pill header inspired by [20] (NOV) LIVE • 21:45 ▮  ✳
                 Row(
                     modifier = GlanceModifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -762,7 +932,7 @@ private fun LockScreenWidgetContent(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = timeTag,
+                            text = statusPillText,
                             style = TextStyle(
                                 color = LockWidgetColors.pureWhite,
                                 fontSize = if (isTall) 10.sp else 9.sp,
@@ -808,7 +978,7 @@ private fun LockScreenWidgetContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = NumberFormatters.formatCardPrice(hero.priceToman, prefs.usePersianDigits),
+                        text = if (heroUnavailable) "—" else NumberFormatters.formatCardPrice(hero.priceToman, prefs.usePersianDigits),
                         style = TextStyle(
                             color = LockWidgetColors.pureWhite,
                             fontSize = if (isTall) 25.sp else 19.sp,
@@ -856,11 +1026,13 @@ private fun LockScreenWidgetContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         secondary.forEachIndexed { idx, item ->
+                            val itemUnavailable = item.freshness == DataFreshness.UNAVAILABLE || item.priceToman <= 0.0
                             val shortCode = when (item.id) {
                                 "GOLD_18K" -> "18K"
                                 else -> item.symbol
                             }
                             val arrow = when {
+                                itemUnavailable -> ""
                                 item.change24hToman > 0.001 || item.change24hPercent > 0.005 -> "↑"
                                 item.change24hToman < -0.001 || item.change24hPercent < -0.005 -> "↓"
                                 else -> "•"
@@ -886,10 +1058,14 @@ private fun LockScreenWidgetContent(
                                 }
                                 Spacer(modifier = GlanceModifier.width(5.dp))
                                 Text(
-                                    text = NumberFormatters.formatCardPrice(
-                                        item.priceToman,
-                                        prefs.usePersianDigits
-                                    ),
+                                    text = if (itemUnavailable) {
+                                        "—"
+                                    } else {
+                                        NumberFormatters.formatCardPrice(
+                                            item.priceToman,
+                                            prefs.usePersianDigits
+                                        )
+                                    },
                                     style = TextStyle(
                                         color = LockWidgetColors.pureWhite,
                                         fontSize = 12.sp,
@@ -898,7 +1074,7 @@ private fun LockScreenWidgetContent(
                                     ),
                                     maxLines = 1
                                 )
-                                if (isWide) {
+                                if (isWide && arrow.isNotEmpty()) {
                                     Spacer(modifier = GlanceModifier.width(3.dp))
                                     Text(
                                         text = arrow,

@@ -5,6 +5,8 @@ import ir.thepoo7an.chand.model.TimeRange
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
+import ir.thepoo7an.chand.network.NetworkConfig.RequestProfile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -43,6 +45,7 @@ data class FrankfurterTimeSeriesResponse(
 data class OpenErLatestResponse(
     val result: String = "",
     @Json(name = "base_code") val baseCode: String = "USD",
+    @Json(name = "time_last_update_unix") val timeLastUpdateUnix: Long = 0L,
     val rates: Map<String, Double> = emptyMap()
 )
 
@@ -88,68 +91,211 @@ interface FinancialRetrofitApi {
  * Reliable multi-provider Retrofit financial data service for real-time and long-term
  * historical fiat exchange rates & gold spot prices (no API key required).
  *
- * Providers:
- * 1. Frankfurter (ECB official rates & daily timeseries)
- * 2. Fawazahmed0 Currency-API (150+ currencies + XAU precious metals historical snapshots)
- * 3. Gold-API (real-time XAU/USD gold ounce spot)
- * 4. Open ExchangeRate-API (160+ live global FX rates)
+ * Provider priority & cross-validation order:
+ * 1. Frankfurter (ECB official rates & daily timeseries) - primary for ECB currencies
+ * 2. Fawazahmed0 Currency-API (150+ currencies + XAU precious metals snapshots)
+ * 3. Open ExchangeRate-API (160+ live global FX rates)
+ * 4. Gold-API (real-time XAU/USD gold ounce spot)
  */
 class FinancialApiService(
     client: OkHttpClient = defaultFinancialClient()
 ) {
     private val moshi: Moshi = Moshi.Builder().build()
 
-    private val api: FinancialRetrofitApi by lazy {
+    private val quoteApi: FinancialRetrofitApi by lazy {
         Retrofit.Builder()
             .baseUrl("https://api.frankfurter.app/")
-            .client(client)
+            .client(NetworkConfig.clientFor(RequestProfile.FAST_QUOTE, client))
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
             .create(FinancialRetrofitApi::class.java)
     }
 
-    /**
-     * Fetches latest USD-based exchange rates across multiple reliable FX providers.
-     */
-    suspend fun fetchLiveUsdRates(): Map<String, Double> = withContext(Dispatchers.IO) {
-        coroutineScope {
-            val openErDeferred = async { runCatching { api.getOpenExchangeRatesLatest().rates }.getOrDefault(emptyMap()) }
-            val cdnDeferred = async { fetchCdnRates("latest") }
-            val frankfurterDeferred = async {
-                runCatching { api.getFrankfurterLatest("https://api.frankfurter.dev/v1/latest?base=USD").rates }
-                    .getOrElse {
-                        runCatching { api.getFrankfurterLatest("https://api.frankfurter.app/latest?from=USD").rates }
-                            .getOrDefault(emptyMap())
-                    }
-            }
-
-            val openEr = openErDeferred.await()
-            val cdn = cdnDeferred.await()
-            val frankfurter = frankfurterDeferred.await()
-
-            val merged = LinkedHashMap<String, Double>()
-            frankfurter.forEach { (k, v) -> if (v > 0.0) merged[k.uppercase(Locale.US)] = v }
-            cdn.forEach { (k, v) -> if (v > 0.0) merged[k.uppercase(Locale.US)] = v }
-            openEr.forEach { (k, v) -> if (v > 0.0) merged[k.uppercase(Locale.US)] = v }
-            merged
-        }
+    private val historyApi: FinancialRetrofitApi by lazy {
+        Retrofit.Builder()
+            .baseUrl("https://api.frankfurter.app/")
+            .client(NetworkConfig.clientFor(RequestProfile.HISTORY, client))
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(FinancialRetrofitApi::class.java)
     }
+
+    private val liveUsdDeduplicator = InFlightRequestDeduplicator<String, SourcedFxSnapshot>()
+    private val liveGoldSpotDeduplicator = InFlightRequestDeduplicator<String, MarketPriceMapper.PriceCandidate?>()
+    private val cdnResponseDeduplicator = InFlightRequestDeduplicator<String, CurrencyCdnResponse?>()
+    private val multiFxHistoryDeduplicator = InFlightRequestDeduplicator<String, Map<String, List<Pair<Long, Double>>>>()
+    private val currencyHistoryDeduplicator = InFlightRequestDeduplicator<String, Pair<List<Pair<Long, Double>>, String>>()
+    private val goldHistoryDeduplicator = InFlightRequestDeduplicator<String, List<AssetHistoryPoint>>()
+
+    private suspend fun <T> safeRetry(
+        profile: RequestProfile,
+        block: suspend () -> T
+    ): T? = try {
+        NetworkConfig.retrySuspend(
+            maxAttempts = profile.defaultMaxAttempts,
+            baseDelayMillis = profile.baseDelayMillis,
+            maxDelayMillis = profile.maxDelayMillis,
+            block = block
+        )
+    } catch (ce: CancellationException) {
+        throw ce
+    } catch (_: Throwable) {
+        null
+    }
+
+    data class SourcedFxSnapshot(
+        val candidatesBySymbol: Map<String, List<MarketPriceMapper.PriceCandidate>>,
+        val consensusRates: Map<String, MarketPriceMapper.ConsensusResult>,
+        val goldSpotXauCandidates: List<MarketPriceMapper.PriceCandidate>
+    )
+
+    suspend fun fetchLiveUsdRateSnapshot(nowMillis: Long = System.currentTimeMillis()): SourcedFxSnapshot =
+        withContext(Dispatchers.IO) {
+            liveUsdDeduplicator.execute("live") {
+                coroutineScope {
+                    val openErDeferred = async {
+                        safeRetry(RequestProfile.FAST_QUOTE) { quoteApi.getOpenExchangeRatesLatest() }
+                    }
+                    val cdnDeferred = async { fetchCdnResponse("latest") }
+                    val frankfurterDeferred = async {
+                        safeRetry(RequestProfile.FAST_QUOTE) {
+                            quoteApi.getFrankfurterLatest("https://api.frankfurter.dev/v1/latest?base=USD")
+                        } ?: safeRetry(RequestProfile.FAST_QUOTE) {
+                            quoteApi.getFrankfurterLatest("https://api.frankfurter.app/latest?from=USD")
+                        }
+                    }
+
+                    val openEr = openErDeferred.await()
+                    val cdn = cdnDeferred.await()
+                    val frankfurter = frankfurterDeferred.await()
+
+                val candidates = LinkedHashMap<String, MutableList<MarketPriceMapper.PriceCandidate>>()
+
+                if (frankfurter != null && frankfurter.rates.isNotEmpty()) {
+                    val ts = parseDailyUtcTimestampMillis(frankfurter.date, hourUtc = 15, nowMillis = nowMillis)
+                    frankfurter.rates.forEach { (k, v) ->
+                        if (v > 0.0 && v.isFinite()) {
+                            candidates.getOrPut(k.uppercase(Locale.US)) { mutableListOf() }.add(
+                                MarketPriceMapper.PriceCandidate(
+                                    sourceName = "Frankfurter",
+                                    price = v,
+                                    isPrimary = true,
+                                    timestampMillis = ts
+                                )
+                            )
+                        }
+                    }
+                }
+
+                if (cdn != null && cdn.usd.isNotEmpty()) {
+                    val ts = parseDailyUtcTimestampMillis(cdn.date, hourUtc = 12, nowMillis = nowMillis)
+                    cdn.usd.forEach { (k, v) ->
+                        if (v > 0.0 && v.isFinite()) {
+                            candidates.getOrPut(k.uppercase(Locale.US)) { mutableListOf() }.add(
+                                MarketPriceMapper.PriceCandidate(
+                                    sourceName = "CurrencyAPI",
+                                    price = v,
+                                    isPrimary = frankfurter == null,
+                                    timestampMillis = ts
+                                )
+                            )
+                        }
+                    }
+                }
+
+                if (openEr != null && openEr.rates.isNotEmpty()) {
+                    val ts = if (openEr.timeLastUpdateUnix > 0L) openEr.timeLastUpdateUnix * 1000L else nowMillis
+                    openEr.rates.forEach { (k, v) ->
+                        if (v > 0.0 && v.isFinite()) {
+                            candidates.getOrPut(k.uppercase(Locale.US)) { mutableListOf() }.add(
+                                MarketPriceMapper.PriceCandidate(
+                                    sourceName = "OpenER",
+                                    price = v,
+                                    isPrimary = false,
+                                    timestampMillis = ts
+                                )
+                            )
+                        }
+                    }
+                }
+
+                val consensusMap = LinkedHashMap<String, MarketPriceMapper.ConsensusResult>()
+                candidates.forEach { (sym, list) ->
+                    if (sym != "XAU") {
+                        MarketPriceMapper.validateCrossSourcePrices(
+                            candidates = list,
+                            thresholdPct = MarketValidationConfig.FIAT_DISAGREEMENT_THRESHOLD_PCT,
+                            nowMillis = nowMillis
+                        )?.let { consensusMap[sym] = it }
+                    }
+                }
+
+                val xauCandidates = mutableListOf<MarketPriceMapper.PriceCandidate>()
+                val xauPerUsd = cdn?.usd?.get("xau") ?: cdn?.usd?.get("XAU")
+                if (xauPerUsd != null && xauPerUsd > 0.0) {
+                    val usdPerOz = 1.0 / xauPerUsd
+                    if (usdPerOz in 1000.0..10_000.0) {
+                        val cdnTs = parseDailyUtcTimestampMillis(cdn?.date.orEmpty(), hourUtc = 12, nowMillis = nowMillis)
+                        xauCandidates.add(
+                            MarketPriceMapper.PriceCandidate(
+                                sourceName = "CurrencyAPI",
+                                price = usdPerOz,
+                                isPrimary = false,
+                                timestampMillis = cdnTs
+                            )
+                        )
+                    }
+                }
+
+                SourcedFxSnapshot(
+                    candidatesBySymbol = candidates,
+                    consensusRates = consensusMap,
+                    goldSpotXauCandidates = xauCandidates
+                )
+            }
+            }
+        }
+
+    /**
+     * Fetches latest USD-based exchange rates using cross-source consensus validation.
+     */
+    suspend fun fetchLiveUsdRates(): Map<String, Double> =
+        fetchLiveUsdRateSnapshot().consensusRates.mapValues { it.value.price }
+
+    /**
+     * Fetches real-time Gold spot price candidate (USD per Troy Ounce) from Gold-API.
+     */
+    suspend fun fetchLiveGoldSpotCandidate(nowMillis: Long = System.currentTimeMillis()): MarketPriceMapper.PriceCandidate? =
+        withContext(Dispatchers.IO) {
+            liveGoldSpotDeduplicator.execute("xau") {
+                val resp = safeRetry(RequestProfile.FAST_QUOTE) { quoteApi.getGoldSpotXau() }
+                if (resp != null && resp.price in 1000.0..10_000.0) {
+                    val ts = parseIsoTimestampMillis(resp.updatedAt) ?: nowMillis
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "GoldAPI",
+                        price = resp.price,
+                        isPrimary = true,
+                        timestampMillis = ts
+                    )
+                } else {
+                    null
+                }
+            }
+        }
 
     /**
      * Fetches real-time Gold spot price (USD per Troy Ounce) from Gold-API with CDN fallback.
      */
     suspend fun fetchLiveGoldSpotUsd(): Double? = withContext(Dispatchers.IO) {
-        val spot = runCatching { api.getGoldSpotXau().price }.getOrNull()
-        if (spot != null && spot in 1000.0..10_000.0) {
-            return@withContext spot
+        fetchLiveGoldSpotCandidate()?.price ?: run {
+            val cdn = fetchCdnRates("latest")
+            val xauPerUsd = cdn["xau"] ?: cdn["XAU"]
+            if (xauPerUsd != null && xauPerUsd > 0.0) {
+                val usdPerOz = 1.0 / xauPerUsd
+                if (usdPerOz in 1000.0..10_000.0) return@withContext usdPerOz
+            }
+            null
         }
-        val cdn = fetchCdnRates("latest")
-        val xauPerUsd = cdn["xau"] ?: cdn["XAU"]
-        if (xauPerUsd != null && xauPerUsd > 0.0) {
-            val usdPerOz = 1.0 / xauPerUsd
-            if (usdPerOz in 1000.0..10_000.0) return@withContext usdPerOz
-        }
-        null
     }
 
     /**
@@ -164,25 +310,28 @@ class FinancialApiService(
         range: TimeRange
     ): Pair<List<Pair<Long, Double>>, String> = withContext(Dispatchers.IO) {
         val upper = targetCurrency.uppercase(Locale.US)
-        if (upper in ECB_SUPPORTED_CURRENCIES) {
-            val frankfurterPoints = fetchFrankfurterRange(upper, fromSec, toSec)
-            if (frankfurterPoints.size >= 3) {
-                return@withContext frankfurterPoints to "Frankfurter ECB"
+        val dedupeKey = "$upper|${range.name}|${fromSec / 60L}|${toSec / 60L}"
+        currencyHistoryDeduplicator.execute(dedupeKey) {
+            if (upper in ECB_SUPPORTED_CURRENCIES) {
+                val frankfurterPoints = fetchFrankfurterRange(upper, fromSec, toSec)
+                if (frankfurterPoints.size >= 3) {
+                    return@execute frankfurterPoints to "Frankfurter ECB"
+                }
             }
-        }
 
-        val cdnPoints = fetchCdnHistoricalSeries(
-            currencyKey = upper.lowercase(Locale.US),
-            fromSec = fromSec,
-            toSec = toSec,
-            range = range,
-            invertRate = false
-        )
-        if (cdnPoints.size >= 3) {
-            return@withContext cdnPoints to "CurrencyAPI"
-        }
+            val cdnPoints = fetchCdnHistoricalSeries(
+                currencyKey = upper.lowercase(Locale.US),
+                fromSec = fromSec,
+                toSec = toSec,
+                range = range,
+                invertRate = false
+            )
+            if (cdnPoints.size >= 3) {
+                return@execute cdnPoints to "CurrencyAPI"
+            }
 
-        emptyList<Pair<Long, Double>>() to ""
+            emptyList<Pair<Long, Double>>() to ""
+        }
     }
 
     /**
@@ -194,15 +343,19 @@ class FinancialApiService(
         toSec: Long,
         range: TimeRange
     ): List<AssetHistoryPoint> = withContext(Dispatchers.IO) {
-        val raw = fetchCdnHistoricalSeries(
-            currencyKey = "xau",
-            fromSec = fromSec,
-            toSec = toSec,
-            range = range,
-            invertRate = true
-        )
-        raw.filter { it.second in 1000.0..10_000.0 }
-            .map { AssetHistoryPoint(it.first, it.second) }
+        val dedupeKey = "${range.name}|${fromSec / 60L}|${toSec / 60L}"
+        goldHistoryDeduplicator.execute(dedupeKey) {
+            val raw = fetchCdnHistoricalSeries(
+                currencyKey = "xau",
+                fromSec = fromSec,
+                toSec = toSec,
+                range = range,
+                invertRate = true
+            )
+            val pts = raw.filter { it.second in 1000.0..10_000.0 }
+                .map { AssetHistoryPoint(it.first, it.second) }
+            HistoryNormalizer.normalize(pts)
+        }
     }
 
     /**
@@ -220,32 +373,33 @@ class FinancialApiService(
             .distinct()
         if (ecbTargets.isEmpty()) return@withContext emptyMap()
 
-        val toParam = ecbTargets.joinToString(",")
-        val sdf = utcDateFormat()
-        val startStr = sdf.format(Date(fromSec * 1000L))
-        val endStr = sdf.format(Date(toSec * 1000L))
+        val dedupeKey = "${ecbTargets.sorted().joinToString(",")}|${fromSec / 60L}|${toSec / 60L}"
+        multiFxHistoryDeduplicator.execute(dedupeKey) {
+            val toParam = ecbTargets.joinToString(",")
+            val sdf = utcDateFormat()
+            val startStr = sdf.format(Date(fromSec * 1000L))
+            val endStr = sdf.format(Date(toSec * 1000L))
 
-        val resp = runCatching {
-            api.getFrankfurterSeries("https://api.frankfurter.dev/v1/$startStr..$endStr", "USD", toParam)
-        }.getOrElse {
-            runCatching {
-                api.getFrankfurterSeries("https://api.frankfurter.app/$startStr..$endStr", "USD", toParam)
-            }.getOrNull()
-        } ?: return@withContext emptyMap()
+            val resp = safeRetry(RequestProfile.HISTORY) {
+                historyApi.getFrankfurterSeries("https://api.frankfurter.dev/v1/$startStr..$endStr", "USD", toParam)
+            } ?: safeRetry(RequestProfile.HISTORY) {
+                historyApi.getFrankfurterSeries("https://api.frankfurter.app/$startStr..$endStr", "USD", toParam)
+            } ?: return@execute emptyMap()
 
-        val result = LinkedHashMap<String, MutableList<Pair<Long, Double>>>()
-        resp.rates.entries
-            .sortedBy { it.key }
-            .forEach { (dateKey, rateMap) ->
-                val ts = (runCatching { sdf.parse(dateKey)?.time }.getOrNull() ?: return@forEach) / 1000L
-                rateMap.forEach { (sym, valRate) ->
-                    if (valRate > 0.0) {
-                        result.getOrPut(sym.uppercase(Locale.US)) { mutableListOf() }
-                            .add(ts to valRate)
+            val result = LinkedHashMap<String, MutableList<Pair<Long, Double>>>()
+            resp.rates.entries
+                .sortedBy { it.key }
+                .forEach { (dateKey, rateMap) ->
+                    val ts = (runCatching { sdf.parse(dateKey)?.time }.getOrNull() ?: return@forEach) / 1000L
+                    rateMap.forEach { (sym, valRate) ->
+                        if (valRate > 0.0) {
+                            result.getOrPut(sym.uppercase(Locale.US)) { mutableListOf() }
+                                .add(ts to valRate)
+                        }
                     }
                 }
-            }
-        result
+            result.mapValues { (_, list) -> HistoryNormalizer.normalizePairs(list) }
+        }
     }
 
     private suspend fun fetchFrankfurterRange(
@@ -257,15 +411,13 @@ class FinancialApiService(
         val startStr = sdf.format(Date(fromSec * 1000L))
         val endStr = sdf.format(Date(toSec * 1000L))
 
-        val resp = runCatching {
-            api.getFrankfurterSeries("https://api.frankfurter.dev/v1/$startStr..$endStr", "USD", targetSymbol)
-        }.getOrElse {
-            runCatching {
-                api.getFrankfurterSeries("https://api.frankfurter.app/$startStr..$endStr", "USD", targetSymbol)
-            }.getOrNull()
+        val resp = safeRetry(RequestProfile.HISTORY) {
+            historyApi.getFrankfurterSeries("https://api.frankfurter.dev/v1/$startStr..$endStr", "USD", targetSymbol)
+        } ?: safeRetry(RequestProfile.HISTORY) {
+            historyApi.getFrankfurterSeries("https://api.frankfurter.app/$startStr..$endStr", "USD", targetSymbol)
         } ?: return emptyList()
 
-        return resp.rates.entries
+        val rawPairs = resp.rates.entries
             .sortedBy { it.key }
             .mapNotNull { (dateKey, rateMap) ->
                 val valRate = rateMap[targetSymbol] ?: return@mapNotNull null
@@ -273,6 +425,7 @@ class FinancialApiService(
                 val ts = (runCatching { sdf.parse(dateKey)?.time }.getOrNull() ?: return@mapNotNull null) / 1000L
                 ts to valRate
             }
+        return HistoryNormalizer.normalizePairs(rawPairs)
     }
 
     private suspend fun fetchCdnHistoricalSeries(
@@ -297,19 +450,23 @@ class FinancialApiService(
                 }
             }
         }
-        tasks.awaitAll()
-            .filterNotNull()
-            .sortedBy { it.first }
-            .distinctBy { it.first }
+        HistoryNormalizer.normalizePairs(tasks.awaitAll().filterNotNull())
     }
 
-    private suspend fun fetchCdnRates(dateTag: String): Map<String, Double> {
-        val primary = runCatching { api.getCurrencyCdnSnapshot(dateTag).usd }.getOrNull()
-        if (!primary.isNullOrEmpty()) return primary
-        return runCatching {
-            api.getCurrencyCdnFallback("https://$dateTag.currency-api.pages.dev/v1/currencies/usd.json").usd
-        }.getOrDefault(emptyMap())
-    }
+    private suspend fun fetchCdnResponse(dateTag: String): CurrencyCdnResponse? =
+        cdnResponseDeduplicator.execute(dateTag) {
+            val profile = if (dateTag == "latest") RequestProfile.FAST_QUOTE else RequestProfile.HISTORY
+            val clientApi = if (dateTag == "latest") quoteApi else historyApi
+            val primary = safeRetry(profile) { clientApi.getCurrencyCdnSnapshot(dateTag) }
+            if (primary != null && primary.usd.isNotEmpty()) return@execute primary
+            val fallback = safeRetry(profile) {
+                clientApi.getCurrencyCdnFallback("https://$dateTag.currency-api.pages.dev/v1/currencies/usd.json")
+            }
+            fallback?.takeIf { it.usd.isNotEmpty() }
+        }
+
+    private suspend fun fetchCdnRates(dateTag: String): Map<String, Double> =
+        fetchCdnResponse(dateTag)?.usd ?: emptyMap()
 
     private fun buildSampleTimestamps(fromSec: Long, toSec: Long, range: TimeRange): List<Long> {
         val daySec = 86_400L
@@ -343,6 +500,45 @@ class FinancialApiService(
             "INR", "ISK", "KRW", "MXN", "MYR", "NOK", "NZD", "PHP",
             "PLN", "RON", "SEK", "SGD", "THB", "ZAR"
         )
+
+        internal fun parseDailyUtcTimestampMillis(
+            dateStr: String,
+            hourUtc: Int,
+            nowMillis: Long
+        ): Long {
+            val clean = dateStr.trim().take(10)
+            if (clean.length < 10) return nowMillis
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+            val parsedMidnight = runCatching { sdf.parse(clean)?.time }.getOrNull() ?: return nowMillis
+            val todayMidnight = runCatching {
+                sdf.parse(sdf.format(Date(nowMillis)))?.time
+            }.getOrNull()
+            return if (todayMidnight != null && parsedMidnight >= todayMidnight) {
+                nowMillis
+            } else {
+                minOf(parsedMidnight + hourUtc.toLong() * 3600_000L, nowMillis)
+            }
+        }
+
+        internal fun parseIsoTimestampMillis(raw: String?): Long? {
+            if (raw.isNullOrBlank()) return null
+            val trimmed = raw.trim()
+            val normalized = trimmed
+                .replace(Regex("\\.\\d+"), "")
+                .replace("Z", "+0000")
+                .replace(Regex("([+-]\\d{2}):(\\d{2})$"), "$1$2")
+            val patterns = listOf("yyyy-MM-dd'T'HH:mm:ssZ", "yyyy-MM-dd HH:mm:ss")
+            for (pattern in patterns) {
+                val sdf = SimpleDateFormat(pattern, Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }
+                val parsed = runCatching { sdf.parse(normalized)?.time }.getOrNull()
+                if (parsed != null && parsed > 0L) return parsed
+            }
+            return null
+        }
 
         fun defaultFinancialClient(): OkHttpClient = NetworkConfig.sharedClient
     }

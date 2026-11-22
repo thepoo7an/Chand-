@@ -80,6 +80,7 @@ import androidx.compose.ui.unit.sp
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.AssetCategory
+import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.MarketUiState
 import ir.thepoo7an.chand.model.ThemeMode
@@ -278,10 +279,13 @@ fun MarketFeedScreen(
                 )
             }
 
-            // Offline Banner
+            // Offline / Delayed Banner
             AnimatedVisibility(visible = readyState?.errorBanner != null) {
+                val isDelayed = readyState?.errorBanner == "delayed"
+                val bannerBg = if (isDelayed) marketColors.gold.copy(alpha = 0.14f) else marketColors.lossContainer
+                val bannerFg = if (isDelayed) marketColors.gold else marketColors.loss
                 Surface(
-                    color = marketColors.lossContainer,
+                    color = bannerBg,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -295,17 +299,17 @@ fun MarketFeedScreen(
                         Icon(
                             imageVector = Icons.Outlined.CloudOff,
                             contentDescription = null,
-                            tint = marketColors.loss,
+                            tint = bannerFg,
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = if (readyState?.errorBanner == "offline_reference") {
-                                strings.offlineReferenceBanner
-                            } else {
-                                strings.offlineCachedBanner
+                            text = when (readyState?.errorBanner) {
+                                "offline_reference" -> strings.offlineReferenceBanner
+                                "delayed" -> strings.delayedBanner
+                                else -> strings.offlineCachedBanner
                             },
                             style = MaterialTheme.typography.labelMedium,
-                            color = marketColors.loss
+                            color = bannerFg
                         )
                     }
                 }
@@ -450,6 +454,7 @@ fun MarketFeedScreen(
                                             isPinned = asset.id in prefs.pinnedIds,
                                             isFa = isFa,
                                             usePersianDigits = prefs.usePersianDigits,
+                                            strings = strings,
                                             onClick = { onAssetClick(asset) },
                                             onLongClick = { onTogglePin(asset.id) }
                                         )
@@ -494,6 +499,7 @@ private fun ChandBentoCard(
     isPinned: Boolean,
     isFa: Boolean,
     usePersianDigits: Boolean,
+    strings: ChandStrings,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -501,6 +507,14 @@ private fun ChandBentoCard(
     val haptic = LocalHapticFeedback.current
     val isGain = asset.change24hPercent >= 0.0
     val trendColor = if (isGain) marketColors.gain else marketColors.loss
+    val isUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || asset.priceToman <= 0.0
+    val statusBadgeText = when {
+        asset.disputed -> strings.disputedLabel
+        asset.freshness == DataFreshness.DELAYED -> strings.delayedBadge
+        asset.freshness == DataFreshness.CACHED -> strings.cachedBadge
+        asset.freshness == DataFreshness.UNAVAILABLE -> strings.unavailableBadge
+        else -> null
+    }
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -526,16 +540,18 @@ private fun ChandBentoCard(
             .testTag("asset_row_${asset.id}")
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Subtle atmospheric micro-sparkline along lower mid
-            MiniSparkline(
-                points = asset.sparkline,
-                lineColor = trendColor.copy(alpha = 0.25f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(38.dp)
-                    .align(Alignment.Center)
-                    .padding(horizontal = 14.dp)
-            )
+            if (asset.sparkline.size >= 2) {
+                // Subtle atmospheric micro-sparkline along lower mid
+                MiniSparkline(
+                    points = asset.sparkline,
+                    lineColor = trendColor.copy(alpha = 0.25f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(38.dp)
+                        .align(Alignment.Center)
+                        .padding(horizontal = 14.dp)
+                )
+            }
 
             Column(
                 modifier = Modifier
@@ -606,18 +622,29 @@ private fun ChandBentoCard(
                     ) {
                         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                             Text(
-                                text = NumberFormatters.formatDeltaWithArrow(
-                                    asset.change24hToman,
-                                    asset.change24hPercent,
-                                    usePersianDigits
-                                ),
+                                text = if (isUnavailable) {
+                                    "—"
+                                } else {
+                                    NumberFormatters.formatDeltaWithArrow(
+                                        asset.change24hToman,
+                                        asset.change24hPercent,
+                                        usePersianDigits
+                                    )
+                                },
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
-                                color = trendColor
+                                color = if (isUnavailable) MaterialTheme.colorScheme.onSurfaceVariant else trendColor
                             )
                         }
 
-                        if (asset.category == AssetCategory.CRYPTO && asset.priceUsd != null) {
+                        if (statusBadgeText != null) {
+                            Text(
+                                text = statusBadgeText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (asset.disputed) marketColors.gold else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        } else if (asset.category == AssetCategory.CRYPTO && asset.priceUsd != null) {
                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                 Text(
                                     text = NumberFormatters.formatUsd(asset.priceUsd, usePersianDigits),
@@ -630,11 +657,16 @@ private fun ChandBentoCard(
 
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                         Text(
-                            text = NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits),
+                            text = if (isUnavailable) {
+                                "—"
+                            } else {
+                                NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)
+                            },
                             fontSize = 27.sp,
                             fontWeight = FontWeight.Bold,
                             lineHeight = 32.sp,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = if (isUnavailable) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -719,40 +751,54 @@ private fun MarketAssetListRow(
                 }
             }
 
-            MiniSparkline(
-                points = asset.sparkline,
-                lineColor = trendColor,
-                modifier = Modifier
-                    .width(44.dp)
-                    .height(24.dp)
-                    .padding(horizontal = 4.dp)
-            )
+            if (asset.sparkline.size >= 2) {
+                MiniSparkline(
+                    points = asset.sparkline,
+                    lineColor = trendColor,
+                    modifier = Modifier
+                        .width(44.dp)
+                        .height(24.dp)
+                        .padding(horizontal = 4.dp)
+                )
 
-            Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+            } else {
+                Spacer(modifier = Modifier.width(8.dp))
+            }
 
             Column(horizontalAlignment = Alignment.End) {
+                val isUnavailableRow = asset.freshness == DataFreshness.UNAVAILABLE || asset.priceToman <= 0.0
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                     Text(
-                        text = NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits),
+                        text = if (isUnavailableRow) {
+                            "—"
+                        } else {
+                            NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = if (isUnavailableRow) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurface
                     )
                 }
                 Spacer(modifier = Modifier.height(3.dp))
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = trendBg
+                    color = if (isUnavailableRow) MaterialTheme.colorScheme.surfaceVariant else trendBg
                 ) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                         Text(
-                            text = NumberFormatters.formatDeltaWithArrow(
-                                asset.change24hToman,
-                                asset.change24hPercent,
-                                usePersianDigits
-                            ),
+                            text = if (isUnavailableRow) {
+                                strings.unavailableBadge
+                            } else {
+                                NumberFormatters.formatDeltaWithArrow(
+                                    asset.change24hToman,
+                                    asset.change24hPercent,
+                                    usePersianDigits
+                                )
+                            },
                             style = MaterialTheme.typography.labelSmall,
-                            color = trendColor,
+                            color = if (isUnavailableRow) MaterialTheme.colorScheme.onSurfaceVariant else trendColor,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }

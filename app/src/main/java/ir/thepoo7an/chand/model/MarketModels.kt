@@ -37,6 +37,24 @@ enum class TimeRange(
 }
 
 @Serializable
+enum class DataFreshness {
+    LIVE,
+    DELAYED,
+    CACHED,
+    UNAVAILABLE;
+
+    companion object {
+        /**
+         * Returns the stalest freshness across inputs ("a derived price is only as fresh as its stalest input").
+         */
+        fun stalest(vararg inputs: DataFreshness): DataFreshness {
+            if (inputs.isEmpty()) return UNAVAILABLE
+            return inputs.maxBy { it.ordinal }
+        }
+    }
+}
+
+@Serializable
 data class MarketAsset(
     val id: String,
     val symbol: String,
@@ -49,11 +67,19 @@ data class MarketAsset(
     val priceUsd: Double? = null,
     val change24hPercent: Double = 0.0,
     val change24hToman: Double = 0.0,
-    val high24hToman: Double = priceToman,
-    val low24hToman: Double = priceToman,
+    val high24hToman: Double? = null,
+    val low24hToman: Double? = null,
     val sparkline: List<Double> = emptyList(),
     val sourceLabel: String = "",
-    val updatedAtMillis: Long = System.currentTimeMillis()
+    val updatedAtMillis: Long = System.currentTimeMillis(),
+    val freshness: DataFreshness = DataFreshness.CACHED,
+    val sourceTimestampMillis: Long = 0L,
+    val fetchedAtMillis: Long = 0L,
+    val disputed: Boolean = false,
+    val singleSource: Boolean = false,
+    val intrinsicValueToman: Double? = null,
+    val bubbleToman: Double? = null,
+    val bubblePercent: Double? = null
 )
 
 @Serializable
@@ -74,7 +100,8 @@ data class AssetHistoryResult(
 data class CachedMarketSnapshot(
     val assets: List<MarketAsset>,
     val updatedAtMillis: Long,
-    val sourceSummary: String
+    val sourceSummary: String,
+    val freshness: DataFreshness = DataFreshness.CACHED
 )
 
 data class AppPreferences(
@@ -101,7 +128,8 @@ sealed interface MarketUiState {
         val lastUpdatedMillis: Long,
         val isRefreshing: Boolean = false,
         val sourceSummary: String = "",
-        val errorBanner: String? = null
+        val errorBanner: String? = null,
+        val freshness: DataFreshness = DataFreshness.CACHED
     ) : MarketUiState
 
     data class Error(val message: String) : MarketUiState

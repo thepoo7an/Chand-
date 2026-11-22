@@ -3,6 +3,7 @@ package ir.thepoo7an.chand.network
 import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.AssetHistoryPoint
 import ir.thepoo7an.chand.model.AssetHistoryResult
+import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.network.MarketPriceMapper.ExchangeQuote
@@ -24,6 +25,10 @@ class MarketRemoteDataSource(
     private val client: OkHttpClient = NetworkConfig.sharedClient,
     private val financialApi: FinancialApiService = FinancialApiService(client)
 ) : MarketDataSource {
+
+    private val liveMarketDeduplicator = InFlightRequestDeduplicator<String, RemoteFetchResult>()
+    private val assetHistoryDeduplicator = InFlightRequestDeduplicator<String, AssetHistoryResult>()
+    private val usdHistoryDeduplicator = InFlightRequestDeduplicator<String, Pair<List<AssetHistoryPoint>, String>>()
 
     private val tgjuSlugs = mapOf(
         "USD" to "price_dollar_rl",
@@ -62,19 +67,25 @@ class MarketRemoteDataSource(
         "XAU_OZ" to "pax-gold"
     )
 
-    override suspend fun fetchLiveMarket(lastKnownUsdToman: Double?): RemoteFetchResult = withContext(Dispatchers.IO) {
-        try {
-            coroutineScope {
-                val nowSec = System.currentTimeMillis() / 1000L
-                val from24hSec = nowSec - 24L * 3600L
+    override suspend fun fetchLiveMarket(
+        lastKnownUsdToman: Double?,
+        cachedAssetsById: Map<String, MarketAsset>
+    ): RemoteFetchResult = withContext(Dispatchers.IO) {
+        val dedupeKey = "${lastKnownUsdToman ?: "none"}|${cachedAssetsById.size}"
+        liveMarketDeduplicator.execute(dedupeKey) {
+            try {
+                coroutineScope {
+                    val nowMillis = System.currentTimeMillis()
+                    val nowSec = nowMillis / 1000L
+                    val from24hSec = nowSec - 24L * 3600L
 
-                val tgjuDeferred = async { fetchTgjuQuotes() }
-                val wallexDeferred = async { fetchWallexQuotes() }
-                val bitpinDeferred = async { fetchBitpinQuotes() }
-                val nobitexUsdtDeferred = async { fetchNobitexOrderbook("USDTIRT") }
-                val binanceDeferred = async { fetchBinanceQuotes() }
-                val fxRatesDeferred = async { financialApi.fetchLiveUsdRates() }
-                val goldSpotDeferred = async { financialApi.fetchLiveGoldSpotUsd() }
+                val tgjuDeferred = async { fetchTgjuQuotes(nowMillis) }
+                val wallexDeferred = async { fetchWallexQuotes(nowMillis) }
+                val bitpinDeferred = async { fetchBitpinQuotes(nowMillis) }
+                val nobitexUsdtDeferred = async { fetchNobitexOrderbook("USDTIRT", nowMillis) }
+                val binanceDeferred = async { fetchBinanceQuotes(nowMillis) }
+                val fxSnapshotDeferred = async { financialApi.fetchLiveUsdRateSnapshot(nowMillis) }
+                val goldSpotDeferred = async { financialApi.fetchLiveGoldSpotCandidate(nowMillis) }
 
                 val usdtSparkDeferred = async {
                     fetchWallexUdfHistory("USDTTMN", TimeRange.H24, from24hSec, nowSec)
@@ -97,16 +108,16 @@ class MarketRemoteDataSource(
                     )
                 }
                 val goldSparkDeferred = async { fetchBinanceKlines("PAXGUSDT", TimeRange.H24) }
-                val tgjuUsdRecentDeferred = async { fetchTgjuTablePoints("price_dollar_rl", 7, null) }
-                val tgjuGoldRecentDeferred = async { fetchTgjuTablePoints("geram18", 3, null) }
+                val tgjuUsdRecentDeferred = async { fetchTgjuTablePoints("price_dollar_rl", 7) }
+                val tgjuGoldRecentDeferred = async { fetchTgjuTablePoints("geram18", 3) }
 
                 val tgjuAjax = tgjuDeferred.await()
                 val wallex = wallexDeferred.await()
                 val bitpin = bitpinDeferred.await()
                 val nobitexUsdt = nobitexUsdtDeferred.await()
                 val binance = binanceDeferred.await()
-                val fxUsdRates = fxRatesDeferred.await()
-                val liveGoldSpotUsd = goldSpotDeferred.await()
+                val fxSnapshot = fxSnapshotDeferred.await()
+                val liveGoldSpotCandidate = goldSpotDeferred.await()
                 val multiFxHistory = multiFxHistoryDeferred.await()
 
                 val usdtSpark = usdtSparkDeferred.await().map { it.priceToman }
@@ -120,7 +131,8 @@ class MarketRemoteDataSource(
                 val tgju = if (tgjuAjax.isNotEmpty()) {
                     tgjuAjax
                 } else if (tgjuUsdRecent.isNotEmpty()) {
-                    val lastPrice = tgjuUsdRecent.last().priceToman
+                    val lastPoint = tgjuUsdRecent.last()
+                    val lastPrice = lastPoint.priceToman
                     val prevPrice = tgjuUsdRecent.getOrNull(tgjuUsdRecent.lastIndex - 1)?.priceToman ?: lastPrice
                     val diff = lastPrice - prevPrice
                     val pct = if (prevPrice > 0.0) (diff / prevPrice) * 100.0 else 0.0
@@ -128,10 +140,11 @@ class MarketRemoteDataSource(
                         "price_dollar_rl" to MarketPriceMapper.TgjuQuote(
                             priceToman = lastPrice,
                             openToman = prevPrice,
-                            highToman = maxOf(lastPrice, prevPrice),
-                            lowToman = minOf(lastPrice, prevPrice),
+                            highToman = null,
+                            lowToman = null,
                             changeToman = diff,
-                            changePct = pct
+                            changePct = pct,
+                            timestampMillis = lastPoint.timestampSec * 1000L
                         )
                     )
                 } else {
@@ -144,34 +157,42 @@ class MarketRemoteDataSource(
                 if (bitpin.isNotEmpty()) activeSources.add("Bitpin")
                 if (nobitexUsdt != null) activeSources.add("Nobitex")
                 if (binance.isNotEmpty()) activeSources.add("Binance")
-                if (liveGoldSpotUsd != null) activeSources.add("GoldAPI")
-                if (fxUsdRates.isNotEmpty()) activeSources.add("FinancialFX")
+                if (liveGoldSpotCandidate != null) activeSources.add("GoldAPI")
+                if (fxSnapshot.consensusRates.isNotEmpty() || fxSnapshot.goldSpotXauCandidates.isNotEmpty()) {
+                    activeSources.add("FinancialFX")
+                }
 
                 if (activeSources.isEmpty()) {
                     return@coroutineScope RemoteFetchResult(
                         assets = emptyList(),
-                        fetchedAtMillis = System.currentTimeMillis(),
+                        fetchedAtMillis = nowMillis,
                         sourceSummary = "",
-                        isLive = false,
+                        freshness = DataFreshness.UNAVAILABLE,
                         rateBasis = TomanRateBasis.OFFLINE_REFERENCE
                     )
                 }
 
-                val now = System.currentTimeMillis()
+                val fetchDoneMillis = System.currentTimeMillis()
                 val usdQuote = tgju["price_dollar_rl"]
                 val tgjuUsdFallbackDelta = computeRecentTableDelta(
                     tgjuUsdRecent,
                     usdQuote?.priceToman ?: lastKnownUsdToman ?: MarketPriceMapper.DEFAULT_OFFLINE_USD_TOMAN
                 )
+                val cachedUsdTs = cachedAssetsById["USD"]
+                    ?.let { it.sourceTimestampMillis.takeIf { ts -> ts > 0L } ?: it.updatedAtMillis }
+                    ?: 0L
 
                 val resolvedUsd = MarketPriceMapper.resolveFreeMarketUsd(
                     tgjuUsdQuote = usdQuote,
                     wallexUsdt = wallex["USDT"],
                     bitpinUsdt = bitpin["USDT"],
-                    nobitexUsdtToman = nobitexUsdt,
+                    nobitexUsdtToman = nobitexUsdt?.first,
                     usdtSpark = usdtSpark,
                     tgjuTableFallbackDelta = tgjuUsdFallbackDelta,
-                    lastKnownUsdToman = lastKnownUsdToman
+                    lastKnownUsdToman = lastKnownUsdToman,
+                    nowMillis = fetchDoneMillis,
+                    nobitexTimestampMillis = nobitexUsdt?.second ?: fetchDoneMillis,
+                    cachedUsdTimestampMillis = cachedUsdTs
                 )
 
                 val usdToman = resolvedUsd.usdToman
@@ -183,7 +204,7 @@ class MarketRemoteDataSource(
                 val usdRealSpark = when {
                     usdtSpark.size >= 4 -> MarketPriceMapper.scaleSeriesToCurrent(usdtSpark, usdToman)
                     tgjuUsdRecent.size >= 2 -> tgjuUsdRecent.map { it.priceToman }
-                    else -> MarketPriceMapper.flatSparkline(usdToman, usdChangePct)
+                    else -> emptyList()
                 }
 
                 val assets = mutableListOf<MarketAsset>()
@@ -201,11 +222,16 @@ class MarketRemoteDataSource(
                         priceUsd = 1.0,
                         change24hPercent = usdChangePct,
                         change24hToman = usdChangeToman,
-                        high24hToman = maxOf(usdQuote?.highToman ?: (usdToman * 1.008), usdToman),
-                        low24hToman = minOf(usdQuote?.lowToman ?: (usdToman * 0.992), usdToman),
+                        high24hToman = usdQuote?.highToman?.takeIf { it > 0.0 }?.let { maxOf(it, usdToman) },
+                        low24hToman = usdQuote?.lowToman?.takeIf { it > 0.0 }?.let { minOf(it, usdToman) },
                         sparkline = usdRealSpark,
                         sourceLabel = resolvedUsd.usdSourceLabel,
-                        updatedAtMillis = now
+                        updatedAtMillis = fetchDoneMillis,
+                        freshness = resolvedUsd.usdFreshness,
+                        sourceTimestampMillis = resolvedUsd.usdSourceTimestampMillis,
+                        fetchedAtMillis = fetchDoneMillis,
+                        disputed = resolvedUsd.usdDisputed,
+                        singleSource = resolvedUsd.usdSingleSource
                     )
                 )
 
@@ -223,107 +249,42 @@ class MarketRemoteDataSource(
                     } else {
                         emptyList()
                     }
+                    val fxConsensus = fxSnapshot.consensusRates[spec.fxCode]
                     MarketPriceMapper.mapFiatAsset(
                         spec = spec,
                         usdToman = usdToman,
                         usdChangePct = usdChangePct,
                         tgjuQuote = tgju[spec.tgjuKey],
-                        fxPerUsd = fxUsdRates[spec.fxCode],
+                        fxPerUsd = fxConsensus?.price,
                         usdtSpark = usdtSpark,
-                        nowMillis = now,
-                        currencySpark = currencySpark
+                        nowMillis = fetchDoneMillis,
+                        currencySpark = currencySpark,
+                        fxConsensus = fxConsensus,
+                        usdBasisFreshness = resolvedUsd.usdFreshness,
+                        usdSourceTimestampMillis = resolvedUsd.usdSourceTimestampMillis
                     )?.let { assets.add(it) }
                 }
 
-                val binanceGoldOz = binance["PAXG"]?.priceUsd
-                val onsRaw = tgju["ons"]
-                val onsUsd = liveGoldSpotUsd ?: binanceGoldOz ?: run {
-                    val rawOns = (onsRaw?.priceToman ?: 0.0) * 10.0
-                    if (rawOns in 1200.0..6500.0) rawOns else MarketPriceMapper.DEFAULT_OFFLINE_ONS_USD
-                }
-                val gram24Theoretical = (onsUsd / 31.1035) * usdToman
-                val gram18Theoretical = gram24Theoretical * 0.75
+                val spotCandidates = mutableListOf<MarketPriceMapper.PriceCandidate>()
+                if (liveGoldSpotCandidate != null) spotCandidates.add(liveGoldSpotCandidate)
+                spotCandidates.addAll(fxSnapshot.goldSpotXauCandidates)
 
-                fun addGoldAsset(
-                    id: String,
-                    symbol: String,
-                    nameFa: String,
-                    nameEn: String,
-                    badge: String,
-                    tgjuKey: String,
-                    fallbackPrice: Double,
-                    usdValue: Double? = null,
-                    overrideSource: String? = null
-                ) {
-                    val q = tgju[tgjuKey]
-                    val price = if (id == "XAU_OZ") onsUsd * usdToman else (q?.priceToman ?: fallbackPrice)
-                    val goldTableFallback = if (id == "GOLD_18K") computeRecentTableDelta(tgjuGoldRecent, price) else null
-                    val changePct = if (id == "XAU_OZ") {
-                        binance["PAXG"]?.changePct ?: q?.changePct ?: usdChangePct
-                    } else {
-                        q?.changePct?.takeIf { abs(it) > 0.001 }
-                            ?: goldTableFallback?.second
-                            ?: 0.0
-                    }
-                    val changeToman = if (id == "XAU_OZ") {
-                        price * changePct / 100.0
-                    } else {
-                        q?.changeToman?.takeIf { abs(it) > 0.1 }
-                            ?: goldTableFallback?.first
-                            ?: (price * changePct / 100.0)
-                    }
-                    val high = if (id == "XAU_OZ") price * 1.008 else maxOf(q?.highToman ?: (price * 1.01), price)
-                    val low = if (id == "XAU_OZ") price * 0.992 else minOf(q?.lowToman ?: (price * 0.99), price)
-                    val spark = when {
-                        goldSpark.size >= 4 -> MarketPriceMapper.scaleSeriesToCurrent(goldSpark, price)
-                        usdtSpark.size >= 4 -> MarketPriceMapper.scaleSeriesToCurrent(usdtSpark, price)
-                        else -> MarketPriceMapper.flatSparkline(price, changePct)
-                    }
-
-                    assets.add(
-                        MarketAsset(
-                            id = id,
-                            symbol = symbol,
-                            nameFa = nameFa,
-                            nameEn = nameEn,
-                            category = AssetCategory.GOLD,
-                            badgeText = badge,
-                            accentHex = 0xFFF59E0B,
-                            priceToman = price,
-                            priceUsd = usdValue ?: (price / usdToman),
-                            change24hPercent = changePct,
-                            change24hToman = changeToman,
-                            high24hToman = high,
-                            low24hToman = low,
-                            sparkline = spark,
-                            sourceLabel = overrideSource ?: if (q != null) "TGJU" else "PAXG + USD",
-                            updatedAtMillis = now
-                        )
+                assets.addAll(
+                    MarketPriceMapper.mapGoldAssets(
+                        tgju = tgju,
+                        usdToman = usdToman,
+                        usdChangePct = usdChangePct,
+                        usdBasisFreshness = resolvedUsd.usdFreshness,
+                        usdSourceTimestampMillis = resolvedUsd.usdSourceTimestampMillis,
+                        goldSpotCandidates = spotCandidates,
+                        paxgQuote = binance["PAXG"],
+                        tgjuGoldRecent = tgjuGoldRecent,
+                        goldSpark = goldSpark,
+                        usdtSpark = usdtSpark,
+                        cachedAssetsById = cachedAssetsById,
+                        nowMillis = fetchDoneMillis,
+                        computeTableDelta = ::computeRecentTableDelta
                     )
-                }
-
-                addGoldAsset("GOLD_18K", "GRAM", "طلای ۱۸ عیار", "18K Gold", "✨", "geram18", gram18Theoretical)
-                addGoldAsset("GOLD_24K", "GRAM24", "طلای ۲۴ عیار", "24K Gold", "✨", "geram24", gram24Theoretical)
-                addGoldAsset("GOLD_MESGHAL", "MESGHAL", "مثقال طلا", "Gold Mesghal", "⚖️", "mesghal", gram18Theoretical * 4.3318)
-                addGoldAsset("COIN_EMAMI", "SEKE", "سکه امامی", "Emami Coin", "🪙", "sekee", gram18Theoretical * 11.15)
-                addGoldAsset("COIN_BAHAR", "BAHAR", "سکه بهار آزادی", "Bahar Azadi", "🪙", "sekeb", gram18Theoretical * 10.65)
-                addGoldAsset("COIN_HALF", "HALF", "نیم سکه", "1/2 Azadi", "🥇", "nim", gram18Theoretical * 5.95)
-                addGoldAsset("COIN_QUARTER", "QUARTER", "ربع سکه", "1/4 Azadi", "🏅", "rob", gram18Theoretical * 3.55)
-                addGoldAsset("COIN_GERAMI", "GERAMI", "سکه گرمی", "Gerami Coin", "🟡", "gerami", gram18Theoretical * 1.85)
-                addGoldAsset(
-                    id = "XAU_OZ",
-                    symbol = "XAU",
-                    nameFa = "انس جهانی طلا",
-                    nameEn = "Gold Ounce",
-                    badge = "🏆",
-                    tgjuKey = "ons",
-                    fallbackPrice = onsUsd * usdToman,
-                    usdValue = onsUsd,
-                    overrideSource = when {
-                        liveGoldSpotUsd != null -> "GoldAPI + USD"
-                        binanceGoldOz != null -> "Binance PAXG"
-                        else -> "TGJU"
-                    }
                 )
 
                 MarketPriceMapper.SUPPORTED_CRYPTOS.forEach { spec ->
@@ -331,7 +292,7 @@ class MarketRemoteDataSource(
                         "USDT" -> usdtSpark
                         "BTC" -> btcSpark
                         "ETH" -> ethSpark
-                        else -> usdtSpark
+                        else -> emptyList()
                     }
                     MarketPriceMapper.mapCryptoAsset(
                         spec = spec,
@@ -340,17 +301,29 @@ class MarketRemoteDataSource(
                         wallex = wallex[spec.id],
                         bitpin = bitpin[spec.id],
                         binance = binance[spec.id],
-                        nobitexUsdtToman = nobitexUsdt,
+                        nobitexUsdtToman = nobitexUsdt?.first,
                         sparkInput = sparkInput,
-                        nowMillis = now
+                        nowMillis = fetchDoneMillis,
+                        usdtBasisFreshness = resolvedUsd.usdtFreshness,
+                        usdtSourceTimestampMillis = resolvedUsd.usdtSourceTimestampMillis,
+                        nobitexTimestampMillis = nobitexUsdt?.second ?: fetchDoneMillis
                     )?.let { assets.add(it) }
+                }
+
+                val resultFreshness = when {
+                    resolvedUsd.rateBasis == TomanRateBasis.OFFLINE_REFERENCE -> DataFreshness.UNAVAILABLE
+                    resolvedUsd.rateBasis == TomanRateBasis.CACHED_USD_ANCHOR -> DataFreshness.CACHED
+                    assets.any { it.freshness == DataFreshness.LIVE } -> DataFreshness.LIVE
+                    assets.any { it.freshness == DataFreshness.DELAYED } -> DataFreshness.DELAYED
+                    assets.any { it.freshness == DataFreshness.CACHED } -> DataFreshness.CACHED
+                    else -> DataFreshness.UNAVAILABLE
                 }
 
                 RemoteFetchResult(
                     assets = assets,
-                    fetchedAtMillis = now,
+                    fetchedAtMillis = fetchDoneMillis,
                     sourceSummary = "${resolvedUsd.rateBasis.labelEn} • ${activeSources.joinToString(" • ")}",
-                    isLive = true,
+                    freshness = resultFreshness,
                     rateBasis = resolvedUsd.rateBasis
                 )
             }
@@ -361,9 +334,10 @@ class MarketRemoteDataSource(
                 assets = emptyList(),
                 fetchedAtMillis = System.currentTimeMillis(),
                 sourceSummary = "",
-                isLive = false,
+                freshness = DataFreshness.UNAVAILABLE,
                 rateBasis = TomanRateBasis.OFFLINE_REFERENCE
             )
+        }
         }
     }
 
@@ -375,199 +349,209 @@ class MarketRemoteDataSource(
         asset: MarketAsset,
         range: TimeRange
     ): AssetHistoryResult = withContext(Dispatchers.IO) {
-        try {
-            coroutineScope {
-            val nowSec = System.currentTimeMillis() / 1000L
-            val fromSec = nowSec - range.lookbackSeconds
+        val dedupeKey = "${asset.id}|${range.name}"
+        assetHistoryDeduplicator.execute(dedupeKey) {
+            try {
+                coroutineScope {
+                    val nowSec = System.currentTimeMillis() / 1000L
+                    val fromSec = nowSec - range.lookbackSeconds
 
-            // 1. CRYPTO ASSETS (Wallex TMN -> Nobitex IRT -> Binance USDT*USD -> CoinGecko*USD)
-            if (asset.category == AssetCategory.CRYPTO) {
-                val wallexDeferred = async { fetchWallexUdfHistory("${asset.symbol}TMN", range, fromSec, nowSec) }
-                val nobitexDeferred = async { fetchNobitexUdf("${asset.symbol}IRT", range, fromSec, nowSec) }
-
-                val wallexPts = wallexDeferred.await()
-                if (wallexPts.size >= 4) {
-                    return@coroutineScope AssetHistoryResult(
-                        points = appendLivePointIfNewer(wallexPts, nowSec, asset.priceToman, scaleToLast = false),
-                        sourceLabel = "Wallex",
-                        isRealData = true
-                    )
-                }
-                val nobitexPts = nobitexDeferred.await()
-                if (nobitexPts.size >= 4) {
-                    return@coroutineScope AssetHistoryResult(
-                        points = appendLivePointIfNewer(nobitexPts, nowSec, asset.priceToman, scaleToLast = false),
-                        sourceLabel = "Nobitex",
-                        isRealData = true
-                    )
+                val liveAppendPrice = if (asset.freshness != DataFreshness.UNAVAILABLE && asset.priceToman > 0.0) {
+                    asset.priceToman
+                } else {
+                    0.0
                 }
 
-                if (asset.symbol != "USDT") {
-                    val binanceDeferred = async { fetchBinanceKlines("${asset.symbol}USDT", range) }
-                    val usdBaseDeferred = async { fetchUsdTomanHistory(range, fromSec, nowSec) }
+                // 1. CRYPTO ASSETS (Wallex TMN -> Nobitex IRT -> Binance USDT*USD -> CoinGecko*USD)
+                if (asset.category == AssetCategory.CRYPTO) {
+                    val wallexDeferred = async { fetchWallexUdfHistory("${asset.symbol}TMN", range, fromSec, nowSec) }
+                    val nobitexDeferred = async { fetchNobitexUdf("${asset.symbol}IRT", range, fromSec, nowSec) }
 
-                    var usdCurve = binanceDeferred.await()
-                    var src = "Binance"
-                    if (usdCurve.size < 4) {
-                        val cgId = coinGeckoIds[asset.id]
-                        if (cgId != null) {
-                            usdCurve = fetchCoinGeckoHistory(cgId, range)
-                            src = "CoinGecko"
-                        }
-                    }
-                    val (tmnCurve, tmnSrc) = usdBaseDeferred.await()
-                    if (usdCurve.size >= 4 && tmnCurve.isNotEmpty()) {
-                        val combined = combineUsdWithTomanHistory(usdCurve, tmnCurve)
-                        if (combined.size >= 4) {
-                            return@coroutineScope AssetHistoryResult(
-                                points = appendLivePointIfNewer(combined, nowSec, asset.priceToman, scaleToLast = false),
-                                sourceLabel = "$src + $tmnSrc",
-                                isRealData = true
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 2. GOLD & COINS
-            if (asset.category == AssetCategory.GOLD) {
-                if (asset.id == "XAU_OZ") {
-                    val paxgDeferred = async { fetchBinanceKlines("PAXGUSDT", range) }
-                    val goldApiDeferred = async {
-                        if (range != TimeRange.H24) financialApi.fetchGoldUsdHistory(fromSec, nowSec, range)
-                        else emptyList()
-                    }
-                    val usdBaseDeferred = async { fetchUsdTomanHistory(range, fromSec, nowSec) }
-
-                    val paxg = paxgDeferred.await()
-                    val goldCdn = goldApiDeferred.await()
-                    val (usdPts, usdSrc) = usdBaseDeferred.await()
-                    val goldUsdSeries = if (paxg.size >= 4) paxg to "PAXG" else goldCdn to "GoldAPI"
-
-                    if (goldUsdSeries.first.size >= 3 && usdPts.isNotEmpty()) {
-                        val combined = combineUsdWithTomanHistory(goldUsdSeries.first, usdPts)
-                        if (combined.size >= 3) {
-                            return@coroutineScope AssetHistoryResult(
-                                points = appendLivePointIfNewer(combined, nowSec, asset.priceToman, scaleToLast = false),
-                                sourceLabel = "${goldUsdSeries.second} + $usdSrc",
-                                isRealData = true
-                            )
-                        }
-                    }
-                }
-
-                // Multi-day ranges (7D, 1M, 1Y) -> TGJU official Tehran Gold & Coin history table
-                val slug = tgjuSlugs[asset.id]
-                if (range != TimeRange.H24 && slug != null) {
-                    val tgjuPts = fetchTgjuTablePoints(slug, tgjuLengthFor(range), asset.priceToman)
-                    if (tgjuPts.size >= 3) {
+                    val wallexPts = wallexDeferred.await()
+                    if (wallexPts.size >= 4) {
                         return@coroutineScope AssetHistoryResult(
-                            points = appendLivePointIfNewer(tgjuPts, nowSec, asset.priceToman, scaleToLast = false),
-                            sourceLabel = "TGJU",
+                            points = appendLivePointIfNewer(wallexPts, nowSec, liveAppendPrice, scaleToLast = false),
+                            sourceLabel = "Wallex",
                             isRealData = true
                         )
                     }
+                    val nobitexPts = nobitexDeferred.await()
+                    if (nobitexPts.size >= 4) {
+                        return@coroutineScope AssetHistoryResult(
+                            points = appendLivePointIfNewer(nobitexPts, nowSec, liveAppendPrice, scaleToLast = false),
+                            sourceLabel = "Nobitex",
+                            isRealData = true
+                        )
+                    }
+
+                    if (asset.symbol != "USDT") {
+                        val binanceDeferred = async { fetchBinanceKlines("${asset.symbol}USDT", range) }
+                        val usdBaseDeferred = async { fetchUsdTomanHistory(range, fromSec, nowSec) }
+
+                        var usdCurve = binanceDeferred.await()
+                        var src = "Binance"
+                        if (usdCurve.size < 4) {
+                            val cgId = coinGeckoIds[asset.id]
+                            if (cgId != null) {
+                                usdCurve = fetchCoinGeckoHistory(cgId, range)
+                                src = "CoinGecko"
+                            }
+                        }
+                        val (tmnCurve, tmnSrc) = usdBaseDeferred.await()
+                        if (usdCurve.size >= 4 && tmnCurve.isNotEmpty()) {
+                            val combined = combineUsdWithTomanHistory(usdCurve, tmnCurve)
+                            if (combined.size >= 4) {
+                                return@coroutineScope AssetHistoryResult(
+                                    points = appendLivePointIfNewer(combined, nowSec, liveAppendPrice, scaleToLast = false),
+                                    sourceLabel = "$src + $tmnSrc",
+                                    isRealData = true
+                                )
+                            }
+                        }
+                    }
                 }
 
-                // 24H Gold or fallback -> combine global gold (PAXG or GoldAPI XAU) with real USD/TMN history
-                val paxgDeferred = async { fetchBinanceKlines("PAXGUSDT", range) }
-                val goldApiDeferred = async {
-                    if (range != TimeRange.H24) financialApi.fetchGoldUsdHistory(fromSec, nowSec, range)
-                    else emptyList()
-                }
-                val usdBaseDeferred = async { fetchUsdTomanHistory(range, fromSec, nowSec) }
-                val paxg = paxgDeferred.await()
-                val goldCdn = goldApiDeferred.await()
-                val (usdPts, usdSrc) = usdBaseDeferred.await()
-                val goldUsdSeries = if (paxg.size >= 4) paxg to "PAXG" else goldCdn to "GoldAPI"
+                // 2. GOLD & COINS
+                if (asset.category == AssetCategory.GOLD) {
+                    if (asset.id == "XAU_OZ") {
+                        val paxgDeferred = async { fetchBinanceKlines("PAXGUSDT", range) }
+                        val goldApiDeferred = async {
+                            if (range != TimeRange.H24) financialApi.fetchGoldUsdHistory(fromSec, nowSec, range)
+                            else emptyList()
+                        }
+                        val usdBaseDeferred = async { fetchUsdTomanHistory(range, fromSec, nowSec) }
 
-                if (goldUsdSeries.first.size >= 3 && usdPts.isNotEmpty()) {
-                    val combined = combineUsdWithTomanHistory(goldUsdSeries.first, usdPts)
-                    if (combined.size >= 3) {
-                        val aligned = scalePointsToCurrent(combined, asset.priceToman)
+                        val paxg = paxgDeferred.await()
+                        val goldCdn = goldApiDeferred.await()
+                        val (usdPts, usdSrc) = usdBaseDeferred.await()
+                        val goldUsdSeries = if (paxg.size >= 4) paxg to "PAXG" else goldCdn to "GoldAPI"
+
+                        if (goldUsdSeries.first.size >= 3 && usdPts.isNotEmpty()) {
+                            val combined = combineUsdWithTomanHistory(goldUsdSeries.first, usdPts)
+                            if (combined.size >= 3) {
+                                return@coroutineScope AssetHistoryResult(
+                                    points = appendLivePointIfNewer(combined, nowSec, liveAppendPrice, scaleToLast = false),
+                                    sourceLabel = "${goldUsdSeries.second} + $usdSrc",
+                                    isRealData = true
+                                )
+                            }
+                        }
+                    }
+
+                    // Multi-day ranges (7D, 1M, 1Y) -> TGJU official Tehran Gold & Coin history table
+                    val slug = tgjuSlugs[asset.id]
+                    if (range != TimeRange.H24 && slug != null) {
+                        val tgjuPts = fetchTgjuTablePoints(slug, tgjuLengthFor(range))
+                        if (tgjuPts.size >= 3) {
+                            return@coroutineScope AssetHistoryResult(
+                                points = appendLivePointIfNewer(tgjuPts, nowSec, liveAppendPrice, scaleToLast = false),
+                                sourceLabel = "TGJU",
+                                isRealData = true
+                            )
+                        }
+                    }
+
+                    // 24H Gold or fallback -> combine global gold (PAXG or GoldAPI XAU) with real USD/TMN history
+                    if (liveAppendPrice > 0.0 && asset.id in setOf("XAU_OZ", "GOLD_18K", "GOLD_24K", "GOLD_MESGHAL")) {
+                        val paxgDeferred = async { fetchBinanceKlines("PAXGUSDT", range) }
+                        val goldApiDeferred = async {
+                            if (range != TimeRange.H24) financialApi.fetchGoldUsdHistory(fromSec, nowSec, range)
+                            else emptyList()
+                        }
+                        val usdBaseDeferred = async { fetchUsdTomanHistory(range, fromSec, nowSec) }
+                        val paxg = paxgDeferred.await()
+                        val goldCdn = goldApiDeferred.await()
+                        val (usdPts, usdSrc) = usdBaseDeferred.await()
+                        val goldUsdSeries = if (paxg.size >= 4) paxg to "PAXG" else goldCdn to "GoldAPI"
+
+                        if (goldUsdSeries.first.size >= 3 && usdPts.isNotEmpty()) {
+                            val combined = combineUsdWithTomanHistory(goldUsdSeries.first, usdPts)
+                            if (combined.size >= 3) {
+                                val aligned = scalePointsToCurrent(combined, liveAppendPrice)
+                                return@coroutineScope AssetHistoryResult(
+                                    points = aligned,
+                                    sourceLabel = "${goldUsdSeries.second} + $usdSrc",
+                                    isRealData = true
+                                )
+                            }
+                        }
+                    }
+
+                    // Final real fallback for Gold on 24H -> last daily points from TGJU if available
+                    if (slug != null) {
+                        val tgjuPts = fetchTgjuTablePoints(slug, 7)
+                        if (tgjuPts.size >= 2) {
+                            return@coroutineScope AssetHistoryResult(
+                                points = appendLivePointIfNewer(tgjuPts, nowSec, liveAppendPrice, scaleToLast = false),
+                                sourceLabel = "TGJU Daily",
+                                isRealData = true
+                            )
+                        }
+                    }
+                }
+
+                // 3. FIAT CURRENCIES (USD, EUR, AED, GBP, KWD, TRY, SAR, IQD, ...)
+                if (asset.category == AssetCategory.FIAT) {
+                    val slug = tgjuSlugs[asset.id]
+
+                    // Multi-day ranges (7D, 1M, 1Y) -> TGJU official daily table first
+                    if (range != TimeRange.H24 && slug != null) {
+                        val tgjuPts = fetchTgjuTablePoints(slug, tgjuLengthFor(range))
+                        if (tgjuPts.size >= 3) {
+                            return@coroutineScope AssetHistoryResult(
+                                points = appendLivePointIfNewer(tgjuPts, nowSec, liveAppendPrice, scaleToLast = false),
+                                sourceLabel = "TGJU",
+                                isRealData = true
+                            )
+                        }
+                    }
+
+                    // Multi-provider FinancialApiService FX timeseries (Frankfurter ECB + CurrencyAPI for AED/KWD/SAR/IQD)
+                    if (asset.symbol != "USD") {
+                        val fxDeferred = async {
+                            financialApi.fetchUsdToCurrencyHistory(asset.symbol, fromSec, nowSec, range)
+                        }
+                        val usdBaseDeferred = async { fetchUsdTomanHistory(range, fromSec, nowSec) }
+                        val (fxPts, fxSrc) = fxDeferred.await()
+                        val (usdPts, usdSrc) = usdBaseDeferred.await()
+                        if (fxPts.isNotEmpty() && usdPts.size >= 3) {
+                            val combined = combineTomanWithInverseFx(usdPts, fxPts)
+                            if (combined.size >= 3) {
+                                return@coroutineScope AssetHistoryResult(
+                                    points = scalePointsToCurrent(combined, liveAppendPrice),
+                                    sourceLabel = "$fxSrc + $usdSrc",
+                                    isRealData = true
+                                )
+                            }
+                        }
+                    }
+
+                    // 24H Fiat or USD -> Real hourly USDT/TMN candles aligned smoothly to asset.priceToman
+                    val (usdPts, usdSrc) = fetchUsdTomanHistory(range, fromSec, nowSec)
+                    if (usdPts.size >= 4) {
+                        val aligned = if (asset.symbol == "USD" && usdSrc == "TGJU") {
+                            appendLivePointIfNewer(usdPts, nowSec, liveAppendPrice, scaleToLast = false)
+                        } else {
+                            scalePointsToCurrent(usdPts, liveAppendPrice)
+                        }
                         return@coroutineScope AssetHistoryResult(
                             points = aligned,
-                            sourceLabel = "${goldUsdSeries.second} + $usdSrc",
+                            sourceLabel = usdSrc,
                             isRealData = true
                         )
                     }
-                }
 
-                // Final real fallback for Gold on 24H -> last daily points from TGJU if available
-                if (slug != null) {
-                    val tgjuPts = fetchTgjuTablePoints(slug, 7, asset.priceToman)
-                    if (tgjuPts.size >= 2) {
-                        return@coroutineScope AssetHistoryResult(
-                            points = appendLivePointIfNewer(tgjuPts, nowSec, asset.priceToman, scaleToLast = false),
-                            sourceLabel = "TGJU Daily",
-                            isRealData = true
-                        )
-                    }
-                }
-            }
-
-            // 3. FIAT CURRENCIES (USD, EUR, AED, GBP, KWD, TRY, SAR, IQD, ...)
-            if (asset.category == AssetCategory.FIAT) {
-                val slug = tgjuSlugs[asset.id]
-
-                // Multi-day ranges (7D, 1M, 1Y) -> TGJU official daily table first
-                if (range != TimeRange.H24 && slug != null) {
-                    val tgjuPts = fetchTgjuTablePoints(slug, tgjuLengthFor(range), asset.priceToman)
-                    if (tgjuPts.size >= 3) {
-                        return@coroutineScope AssetHistoryResult(
-                            points = appendLivePointIfNewer(tgjuPts, nowSec, asset.priceToman, scaleToLast = false),
-                            sourceLabel = "TGJU",
-                            isRealData = true
-                        )
-                    }
-                }
-
-                // Multi-provider FinancialApiService FX timeseries (Frankfurter ECB + CurrencyAPI for AED/KWD/SAR/IQD)
-                if (asset.symbol != "USD") {
-                    val fxDeferred = async {
-                        financialApi.fetchUsdToCurrencyHistory(asset.symbol, fromSec, nowSec, range)
-                    }
-                    val usdBaseDeferred = async { fetchUsdTomanHistory(range, fromSec, nowSec) }
-                    val (fxPts, fxSrc) = fxDeferred.await()
-                    val (usdPts, usdSrc) = usdBaseDeferred.await()
-                    if (fxPts.isNotEmpty() && usdPts.size >= 3) {
-                        val combined = combineTomanWithInverseFx(usdPts, fxPts)
-                        if (combined.size >= 3) {
+                    if (slug != null) {
+                        val tgjuPts = fetchTgjuTablePoints(slug, 7)
+                        if (tgjuPts.size >= 2) {
                             return@coroutineScope AssetHistoryResult(
-                                points = scalePointsToCurrent(combined, asset.priceToman),
-                                sourceLabel = "$fxSrc + $usdSrc",
+                                points = appendLivePointIfNewer(tgjuPts, nowSec, liveAppendPrice, scaleToLast = false),
+                                sourceLabel = "TGJU Daily",
                                 isRealData = true
                             )
                         }
                     }
                 }
-
-                // 24H Fiat or USD -> Real hourly USDT/TMN candles aligned smoothly to asset.priceToman
-                val (usdPts, usdSrc) = fetchUsdTomanHistory(range, fromSec, nowSec)
-                if (usdPts.size >= 4) {
-                    val aligned = if (asset.symbol == "USD" && usdSrc == "TGJU") {
-                        appendLivePointIfNewer(usdPts, nowSec, asset.priceToman, scaleToLast = false)
-                    } else {
-                        scalePointsToCurrent(usdPts, asset.priceToman)
-                    }
-                    return@coroutineScope AssetHistoryResult(
-                        points = aligned,
-                        sourceLabel = usdSrc,
-                        isRealData = true
-                    )
-                }
-
-                if (slug != null) {
-                    val tgjuPts = fetchTgjuTablePoints(slug, 7, asset.priceToman)
-                    if (tgjuPts.size >= 2) {
-                        return@coroutineScope AssetHistoryResult(
-                            points = appendLivePointIfNewer(tgjuPts, nowSec, asset.priceToman, scaleToLast = false),
-                            sourceLabel = "TGJU Daily",
-                            isRealData = true
-                        )
-                    }
-                }
-            }
 
                 AssetHistoryResult(
                     points = emptyList(),
@@ -584,28 +568,34 @@ class MarketRemoteDataSource(
                 isRealData = false
             )
         }
+        }
     }
 
     private suspend fun fetchUsdTomanHistory(
         range: TimeRange,
         fromSec: Long,
         nowSec: Long
-    ): Pair<List<AssetHistoryPoint>, String> = coroutineScope {
-        if (range != TimeRange.H24) {
-            val tgjuPts = fetchTgjuTablePoints("price_dollar_rl", tgjuLengthFor(range), null)
-            if (tgjuPts.size >= 3) {
-                return@coroutineScope tgjuPts to "TGJU"
+    ): Pair<List<AssetHistoryPoint>, String> {
+        val bucketKey = "${range.name}|${nowSec / 60L}"
+        return usdHistoryDeduplicator.execute(bucketKey) {
+            coroutineScope {
+                if (range != TimeRange.H24) {
+                    val tgjuPts = fetchTgjuTablePoints("price_dollar_rl", tgjuLengthFor(range))
+                    if (tgjuPts.size >= 3) {
+                        return@coroutineScope tgjuPts to "TGJU"
+                    }
+                }
+                val wallexPts = fetchWallexUdfHistory("USDTTMN", range, fromSec, nowSec)
+                if (wallexPts.size >= 4) {
+                    return@coroutineScope wallexPts to "Wallex"
+                }
+                val nobitexPts = fetchNobitexUdf("USDTIRT", range, fromSec, nowSec)
+                if (nobitexPts.size >= 4) {
+                    return@coroutineScope nobitexPts to "Nobitex"
+                }
+                emptyList<AssetHistoryPoint>() to ""
             }
         }
-        val wallexPts = fetchWallexUdfHistory("USDTTMN", range, fromSec, nowSec)
-        if (wallexPts.size >= 4) {
-            return@coroutineScope wallexPts to "Wallex"
-        }
-        val nobitexPts = fetchNobitexUdf("USDTIRT", range, fromSec, nowSec)
-        if (nobitexPts.size >= 4) {
-            return@coroutineScope nobitexPts to "Nobitex"
-        }
-        emptyList<AssetHistoryPoint>() to ""
     }
 
     private fun tgjuLengthFor(range: TimeRange): Int = when (range) {
@@ -615,170 +605,44 @@ class MarketRemoteDataSource(
         TimeRange.Y1 -> 370
     }
 
-    private fun executeGet(url: String): String? =
-        when (val outcome = NetworkConfig.executeGetWithRetry(client, url)) {
+    private suspend fun executeGet(
+        url: String,
+        profile: NetworkConfig.RequestProfile = NetworkConfig.profileForUrl(url)
+    ): String? =
+        when (val outcome = NetworkConfig.executeGetWithRetry(client = client, url = url, profile = profile)) {
             is NetworkOutcome.Success -> outcome.data
             is NetworkOutcome.HttpError, is NetworkOutcome.Failure -> null
         }
 
-    private fun fetchTgjuQuotes(): Map<String, MarketPriceMapper.TgjuQuote> {
-        val raw = executeGet("https://call5.tgju.org/ajax.json?t=${System.currentTimeMillis()}")
-            ?: return emptyMap()
-        return runCatching {
-            val root = JSONObject(raw)
-            val current = root.optJSONObject("current") ?: return emptyMap()
-            val map = mutableMapOf<String, MarketPriceMapper.TgjuQuote>()
-            val keys = current.keys()
-            while (keys.hasNext()) {
-                val k = keys.next()
-                val obj = current.optJSONObject(k) ?: continue
-                val priceRial = parseNumeric(obj.optString("p")) ?: continue
-                if (priceRial <= 0.0) continue
-                val openRial = parseNumeric(obj.optString("o"))
-                val highRial = parseNumeric(obj.optString("h")) ?: priceRial
-                val lowRial = parseNumeric(obj.optString("l")) ?: priceRial
-                var diffRial = parseNumeric(obj.optString("d")) ?: 0.0
-                var dp = parseNumeric(obj.optString("dp")) ?: 0.0
-                val dt = obj.optString("dt")
-                val sign = if (dt == "low") -1.0 else 1.0
-
-                if (dp > 0.0) dp *= sign
-                if (diffRial > 0.0) diffRial *= sign
-
-                if (abs(diffRial) < 0.01 && openRial != null && openRial > 0.0 && abs(priceRial - openRial) > 0.5) {
-                    diffRial = priceRial - openRial
-                }
-                if (abs(dp) < 0.001 && abs(diffRial) > 0.5 && priceRial > diffRial) {
-                    val prev = priceRial - diffRial
-                    if (prev > 0.0) dp = (diffRial / prev) * 100.0
-                }
-                if (abs(diffRial) < 0.01 && abs(dp) > 0.001) {
-                    val prev = priceRial / (1.0 + dp / 100.0)
-                    diffRial = priceRial - prev
-                }
-
-                map[k] = MarketPriceMapper.TgjuQuote(
-                    priceToman = priceRial / 10.0,
-                    openToman = openRial?.let { it / 10.0 },
-                    highToman = highRial / 10.0,
-                    lowToman = lowRial / 10.0,
-                    changeToman = diffRial / 10.0,
-                    changePct = dp
-                )
-            }
-            map
-        }.getOrDefault(emptyMap())
+    private suspend fun fetchTgjuQuotes(nowMillis: Long): Map<String, MarketPriceMapper.TgjuQuote> {
+        val raw = executeGet(
+            url = "https://call5.tgju.org/ajax.json?t=$nowMillis",
+            profile = NetworkConfig.RequestProfile.FAST_QUOTE
+        ) ?: return emptyMap()
+        return parseTgjuQuotesPayload(raw, nowMillis)
     }
 
-    /**
-     * Parses TGJU official summary table history:
-     * https://api.tgju.org/v1/market/indicator/summary-table-data/{slug}?length={length}
-     * Row shape: [open, low, high, close, change_html, pct_html, gregorian_date, jalali_date]
-     */
-    private fun fetchTgjuTablePoints(
+    private suspend fun fetchTgjuTablePoints(
         slug: String,
-        length: Int,
-        referenceCurrentPriceToman: Double?
+        length: Int
     ): List<AssetHistoryPoint> {
         val url = "https://api.tgju.org/v1/market/indicator/summary-table-data/$slug?length=$length&t=${System.currentTimeMillis()}"
-        val raw = executeGet(url) ?: return emptyList()
-        return runCatching {
-            val root = JSONObject(raw)
-            val dataArr = root.optJSONArray("data") ?: return emptyList()
-            val sdfSlash = SimpleDateFormat("yyyy/MM/dd", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("Asia/Tehran")
-            }
-            val sdfDash = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("Asia/Tehran")
-            }
-
-            val parsed = ArrayList<AssetHistoryPoint>(dataArr.length())
-            for (i in 0 until dataArr.length()) {
-                val row = dataArr.optJSONArray(i) ?: continue
-                if (row.length() < 7) continue
-                val closeRaw = parseNumeric(row.optString(3))
-                    ?: parseNumeric(row.optString(0))
-                    ?: continue
-                if (closeRaw <= 0.0) continue
-
-                val dateStr = row.optString(6).trim().substringBefore(" ")
-                val parsedDate = runCatching {
-                    if (dateStr.contains("/")) sdfSlash.parse(dateStr) else sdfDash.parse(dateStr)
-                }.getOrNull() ?: continue
-
-                // Set to afternoon Tehran close (17:00) for clean ordering
-                val tsSec = (parsedDate.time / 1000L) + 17L * 3600L
-                parsed.add(AssetHistoryPoint(tsSec, closeRaw))
-            }
-
-            if (parsed.isEmpty()) return emptyList()
-
-            // Sort chronologically ascending and dedupe timestamps
-            val sorted = parsed
-                .sortedBy { it.timestampSec }
-                .distinctBy { it.timestampSec }
-
-            val sampleLast = sorted.last().priceToman
-            val unitScale = if (referenceCurrentPriceToman != null && sampleLast > 0.0) {
-                val ratio = referenceCurrentPriceToman / sampleLast
-                when {
-                    ratio in 0.05..0.2 -> 0.1      // Rial -> Toman
-                    ratio in 0.5..2.0 -> 1.0       // Already Toman
-                    ratio in 0.005..0.02 -> 0.01   // 10-unit / 100-unit normalization
-                    ratio in 0.0005..0.002 -> 0.001 // 100-unit Rial -> 1-unit Toman (JPY/IQD)
-                    else -> 0.1
-                }
-            } else {
-                0.1
-            }
-
-            sorted.map { it.copy(priceToman = it.priceToman * unitScale) }
-        }.getOrDefault(emptyList())
+        val raw = executeGet(
+            url = url,
+            profile = NetworkConfig.RequestProfile.HISTORY
+        ) ?: return emptyList()
+        return parseTgjuTablePayload(raw, slug = slug)
     }
 
-    private fun fetchWallexQuotes(): Map<String, ExchangeQuote> {
-        val raw = executeGet("https://api.wallex.ir/v1/markets") ?: return emptyMap()
-        return runCatching {
-            val root = JSONObject(raw)
-            val markets = root.optJSONObject("result")?.optJSONObject("markets") ?: return emptyMap()
-            val tmnPrices = mutableMapOf<String, Pair<Double, Double>>()
-            val usdtPrices = mutableMapOf<String, Pair<Double, Double>>()
-
-            val keys = markets.keys()
-            while (keys.hasNext()) {
-                val sym = keys.next()
-                val item = markets.optJSONObject(sym) ?: continue
-                val base = item.optString("baseAsset")
-                val quote = item.optString("quoteAsset")
-                val price = parseNumeric(item.optString("price"))
-                    ?: item.optJSONObject("stats")?.optString("lastPrice")?.let { parseNumeric(it) }
-                    ?: continue
-                val change = item.optDouble("change_24h", Double.NaN).let {
-                    if (it.isNaN()) item.optJSONObject("stats")?.optDouble("24h_ch", 0.0) ?: 0.0 else it
-                }
-                if (quote == "TMN" && price > 0) {
-                    tmnPrices[base] = price to change
-                } else if (quote == "USDT" && price > 0) {
-                    usdtPrices[base] = price to change
-                }
-            }
-
-            val allBases = tmnPrices.keys + usdtPrices.keys
-            val result = mutableMapOf<String, ExchangeQuote>()
-            for (base in allBases) {
-                val tmn = tmnPrices[base]
-                val usdt = usdtPrices[base]
-                result[base] = ExchangeQuote(
-                    priceToman = tmn?.first,
-                    priceUsd = usdt?.first,
-                    changePct = tmn?.second ?: usdt?.second ?: 0.0
-                )
-            }
-            result
-        }.getOrDefault(emptyMap())
+    private suspend fun fetchWallexQuotes(nowMillis: Long): Map<String, ExchangeQuote> {
+        val raw = executeGet(
+            url = "https://api.wallex.ir/v1/markets",
+            profile = NetworkConfig.RequestProfile.FAST_QUOTE
+        ) ?: return emptyMap()
+        return parseWallexQuotesPayload(raw, nowMillis)
     }
 
-    private fun fetchWallexUdfHistory(
+    private suspend fun fetchWallexUdfHistory(
         symbol: String,
         range: TimeRange,
         fromSec: Long,
@@ -790,91 +654,31 @@ class MarketRemoteDataSource(
             TimeRange.M1, TimeRange.Y1 -> "1D"
         }
         val url = "https://api.wallex.ir/v1/udf/history?symbol=$symbol&resolution=$res&from=$fromSec&to=$toSec"
-        val raw = executeGet(url) ?: return emptyList()
-        return runCatching {
-            val obj = JSONObject(raw)
-            if (obj.optString("s") != "ok") return emptyList()
-            val tArr = obj.optJSONArray("t") ?: return emptyList()
-            val cArr = obj.optJSONArray("c") ?: return emptyList()
-            val count = minOf(tArr.length(), cArr.length())
-            val list = ArrayList<AssetHistoryPoint>(count)
-            for (i in 0 until count) {
-                val ts = tArr.optLong(i)
-                val close = parseNumeric(cArr.optString(i)) ?: cArr.optDouble(i, -1.0)
-                if (ts > 0 && close > 0.0) {
-                    list.add(AssetHistoryPoint(ts, close))
-                }
-            }
-            list.sortedBy { it.timestampSec }
-        }.getOrDefault(emptyList())
+        val raw = executeGet(
+            url = url,
+            profile = NetworkConfig.RequestProfile.HISTORY
+        ) ?: return emptyList()
+        return parseWallexUdfPayload(raw)
     }
 
-    private fun fetchBitpinQuotes(): Map<String, ExchangeQuote> {
-        val raw = executeGet("https://api.bitpin.ir/v1/mkt/markets/") ?: return emptyMap()
-        return runCatching {
-            val root = JSONObject(raw)
-            val results = root.optJSONArray("results") ?: return emptyMap()
-            val tmnPrices = mutableMapOf<String, Pair<Double, Double>>()
-            val usdtPrices = mutableMapOf<String, Pair<Double, Double>>()
-
-            for (i in 0 until results.length()) {
-                val item = results.optJSONObject(i) ?: continue
-                val base = item.optJSONObject("currency1")?.optString("code")
-                    ?: item.optJSONObject("base_currency")?.optString("code")
-                    ?: continue
-                val quote = item.optJSONObject("currency2")?.optString("code")
-                    ?: item.optJSONObject("quote_currency")?.optString("code")
-                    ?: continue
-                val priceInfo = item.optJSONObject("price_info")
-                val price = parseNumeric(priceInfo?.optString("price"))
-                    ?: parseNumeric(item.optString("price"))
-                    ?: continue
-                val change = priceInfo?.optDouble("change", 0.0) ?: 0.0
-                if (quote == "IRT" && price > 0) {
-                    tmnPrices[base] = price to change
-                } else if (quote == "USDT" && price > 0) {
-                    usdtPrices[base] = price to change
-                }
-            }
-
-            val allBases = tmnPrices.keys + usdtPrices.keys
-            val map = mutableMapOf<String, ExchangeQuote>()
-            for (base in allBases) {
-                val tmn = tmnPrices[base]
-                val usdt = usdtPrices[base]
-                map[base] = ExchangeQuote(
-                    priceToman = tmn?.first,
-                    priceUsd = usdt?.first,
-                    changePct = tmn?.second ?: usdt?.second ?: 0.0
-                )
-            }
-            map
-        }.getOrDefault(emptyMap())
+    private suspend fun fetchBitpinQuotes(nowMillis: Long): Map<String, ExchangeQuote> {
+        val raw = executeGet(
+            url = "https://api.bitpin.ir/v1/mkt/markets/",
+            profile = NetworkConfig.RequestProfile.FAST_QUOTE
+        ) ?: return emptyMap()
+        return parseBitpinQuotesPayload(raw, nowMillis)
     }
 
-    private fun fetchBinanceQuotes(): Map<String, ExchangeQuote> {
+    private suspend fun fetchBinanceQuotes(nowMillis: Long): Map<String, ExchangeQuote> {
         val symbols = "[\"BTCUSDT\",\"ETHUSDT\",\"TONUSDT\",\"SOLUSDT\",\"BNBUSDT\",\"XRPUSDT\",\"DOGEUSDT\",\"PAXGUSDT\"]"
-        val raw = executeGet("https://api.binance.com/api/v3/ticker/24hr?symbols=$symbols")
-            ?: return emptyMap()
-        return runCatching {
-            val arr = JSONArray(raw)
-            val map = mutableMapOf<String, ExchangeQuote>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.optJSONObject(i) ?: continue
-                val sym = obj.optString("symbol")
-                if (!sym.endsWith("USDT")) continue
-                val base = sym.removeSuffix("USDT")
-                val price = parseNumeric(obj.optString("lastPrice")) ?: continue
-                val change = parseNumeric(obj.optString("priceChangePercent")) ?: 0.0
-                if (price > 0) {
-                    map[base] = ExchangeQuote(priceToman = null, priceUsd = price, changePct = change)
-                }
-            }
-            map
-        }.getOrDefault(emptyMap())
+        val raw = executeGet(
+            url = "https://api.binance.com/api/v3/ticker/24hr?symbols=$symbols",
+            profile = NetworkConfig.RequestProfile.FAST_QUOTE
+        ) ?: return emptyMap()
+        return parseBinanceQuotesPayload(raw, nowMillis)
     }
 
-    private fun fetchBinanceKlines(
+    private suspend fun fetchBinanceKlines(
         symbol: String,
         range: TimeRange
     ): List<AssetHistoryPoint> {
@@ -885,24 +689,14 @@ class MarketRemoteDataSource(
             TimeRange.Y1 -> "1d" to 365
         }
         val url = "https://api.binance.com/api/v3/klines?symbol=$symbol&interval=$interval&limit=$limit"
-        val raw = executeGet(url) ?: return emptyList()
-        return runCatching {
-            val arr = JSONArray(raw)
-            val list = ArrayList<AssetHistoryPoint>(arr.length())
-            for (i in 0 until arr.length()) {
-                val item = arr.optJSONArray(i) ?: continue
-                if (item.length() < 7) continue
-                val tsSec = item.optLong(6) / 1000L
-                val close = parseNumeric(item.optString(4)) ?: continue
-                if (tsSec > 0 && close > 0.0) {
-                    list.add(AssetHistoryPoint(tsSec, close))
-                }
-            }
-            list.sortedBy { it.timestampSec }
-        }.getOrDefault(emptyList())
+        val raw = executeGet(
+            url = url,
+            profile = NetworkConfig.RequestProfile.HISTORY
+        ) ?: return emptyList()
+        return parseBinanceKlinesPayload(raw)
     }
 
-    private fun fetchCoinGeckoHistory(
+    private suspend fun fetchCoinGeckoHistory(
         coinId: String,
         range: TimeRange
     ): List<AssetHistoryPoint> {
@@ -913,35 +707,22 @@ class MarketRemoteDataSource(
             TimeRange.Y1 -> "365"
         }
         val url = "https://api.coingecko.com/api/v3/coins/$coinId/market_chart?vs_currency=usd&days=$days"
-        val raw = executeGet(url) ?: return emptyList()
-        return runCatching {
-            val root = JSONObject(raw)
-            val prices = root.optJSONArray("prices") ?: return emptyList()
-            val step = maxOf(1, prices.length() / 120)
-            val list = ArrayList<AssetHistoryPoint>()
-            for (i in 0 until prices.length() step step) {
-                val pair = prices.optJSONArray(i) ?: continue
-                val tsSec = pair.optLong(0) / 1000L
-                val price = pair.optDouble(1, -1.0)
-                if (tsSec > 0 && price > 0.0) {
-                    list.add(AssetHistoryPoint(tsSec, price))
-                }
-            }
-            list.sortedBy { it.timestampSec }
-        }.getOrDefault(emptyList())
+        val raw = executeGet(
+            url = url,
+            profile = NetworkConfig.RequestProfile.HISTORY
+        ) ?: return emptyList()
+        return parseCoinGeckoHistoryPayload(raw)
     }
 
-    private fun fetchNobitexOrderbook(symbol: String): Double? {
-        val raw = executeGet("https://api.nobitex.ir/v2/orderbook/$symbol") ?: return null
-        return runCatching {
-            val obj = JSONObject(raw)
-            if (obj.optString("status") != "ok") return null
-            val lastRial = parseNumeric(obj.optString("lastTradePrice")) ?: return null
-            lastRial / 10.0
-        }.getOrNull()
+    private suspend fun fetchNobitexOrderbook(symbol: String, nowMillis: Long): Pair<Double, Long>? {
+        val raw = executeGet(
+            url = "https://api.nobitex.ir/v2/orderbook/$symbol",
+            profile = NetworkConfig.RequestProfile.FAST_QUOTE
+        ) ?: return null
+        return parseNobitexOrderbookPayload(raw, nowMillis)
     }
 
-    private fun fetchNobitexUdf(
+    private suspend fun fetchNobitexUdf(
         symbol: String,
         range: TimeRange,
         fromSec: Long,
@@ -949,46 +730,39 @@ class MarketRemoteDataSource(
     ): List<AssetHistoryPoint> {
         val resolution = range.nobitexResolution
         val url = "https://apiv2.nobitex.ir/market/udf/history?symbol=$symbol&resolution=$resolution&from=$fromSec&to=$toSec"
-        val raw = executeGet(url) ?: return emptyList()
-        return runCatching {
-            val obj = JSONObject(raw)
-            if (obj.optString("s") != "ok") return emptyList()
-            val tArr = obj.optJSONArray("t") ?: return emptyList()
-            val cArr = obj.optJSONArray("c") ?: return emptyList()
-            val count = minOf(tArr.length(), cArr.length())
-            val list = ArrayList<AssetHistoryPoint>(count)
-            for (i in 0 until count) {
-                val ts = tArr.optLong(i)
-                val closeRial = parseNumeric(cArr.optString(i)) ?: cArr.optDouble(i, -1.0)
-                if (ts > 0 && closeRial > 0.0) {
-                    list.add(AssetHistoryPoint(ts, closeRial / 10.0))
-                }
-            }
-            list.sortedBy { it.timestampSec }
-        }.getOrDefault(emptyList())
+        val raw = executeGet(
+            url = url,
+            profile = NetworkConfig.RequestProfile.HISTORY
+        ) ?: return emptyList()
+        return parseNobitexUdfPayload(raw)
     }
 
     private fun combineUsdWithTomanHistory(
         usdSeries: List<AssetHistoryPoint>,
         tomanPerUsdSeries: List<AssetHistoryPoint>
     ): List<AssetHistoryPoint> {
-        if (usdSeries.isEmpty() || tomanPerUsdSeries.isEmpty()) return emptyList()
-        return usdSeries.map { pt ->
-            val usdTmn = nearestValue(pt.timestampSec, tomanPerUsdSeries)
+        val cleanUsd = HistoryNormalizer.normalize(usdSeries)
+        val cleanToman = HistoryNormalizer.normalize(tomanPerUsdSeries)
+        if (cleanUsd.isEmpty() || cleanToman.isEmpty()) return emptyList()
+        val combined = cleanUsd.map { pt ->
+            val usdTmn = nearestValue(pt.timestampSec, cleanToman)
             AssetHistoryPoint(pt.timestampSec, pt.priceToman * usdTmn)
         }
+        return HistoryNormalizer.normalize(combined)
     }
 
     private fun combineTomanWithInverseFx(
         usdTomanSeries: List<AssetHistoryPoint>,
         fxPerUsdSeries: List<Pair<Long, Double>>
     ): List<AssetHistoryPoint> {
-        if (usdTomanSeries.isEmpty() || fxPerUsdSeries.isEmpty()) return emptyList()
-        val fxPoints = fxPerUsdSeries.map { AssetHistoryPoint(it.first, it.second) }
-        return usdTomanSeries.map { pt ->
+        val cleanUsd = HistoryNormalizer.normalize(usdTomanSeries)
+        val fxPoints = HistoryNormalizer.normalize(fxPerUsdSeries.map { AssetHistoryPoint(it.first, it.second) })
+        if (cleanUsd.isEmpty() || fxPoints.isEmpty()) return emptyList()
+        val combined = cleanUsd.map { pt ->
             val fx = nearestValue(pt.timestampSec, fxPoints).coerceAtLeast(0.0001)
             AssetHistoryPoint(pt.timestampSec, pt.priceToman / fx)
         }
+        return HistoryNormalizer.normalize(combined)
     }
 
     private fun nearestValue(targetSec: Long, series: List<AssetHistoryPoint>): Double {
@@ -1056,22 +830,344 @@ class MarketRemoteDataSource(
         return diff to pct
     }
 
-    private fun parseNumeric(raw: String?): Double? {
-        if (raw.isNullOrBlank()) return null
-        val noHtml = raw.replace(Regex("<[^>]*>"), " ")
-        val ascii = StringBuilder(noHtml.length)
-        for (ch in noHtml) {
-            ascii.append(
-                when (ch) {
-                    in '۰'..'۹' -> ('0' + (ch - '۰'))
-                    in '٠'..'٩' -> ('0' + (ch - '٠'))
-                    '−', '–' -> '-'
-                    ',', '٬', ' ', '\u00A0' -> continue
-                    else -> ch
+    companion object {
+        internal fun parseTgjuQuotesPayload(
+            raw: String,
+            nowMillis: Long = System.currentTimeMillis()
+        ): Map<String, MarketPriceMapper.TgjuQuote> = runCatching {
+            val root = JSONObject(raw)
+            val current = root.optJSONObject("current") ?: return emptyMap()
+            val map = mutableMapOf<String, MarketPriceMapper.TgjuQuote>()
+            val keys = current.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val obj = current.optJSONObject(k) ?: continue
+                val priceRial = parseNumeric(obj.optString("p")) ?: continue
+                if (priceRial <= 0.0) continue
+                val openRial = parseNumeric(obj.optString("o"))?.takeIf { it > 0.0 }
+                val highRial = parseNumeric(obj.optString("h"))?.takeIf { it > 0.0 }
+                val lowRial = parseNumeric(obj.optString("l"))?.takeIf { it > 0.0 }
+                var diffRial = parseNumeric(obj.optString("d")) ?: 0.0
+                var dp = parseNumeric(obj.optString("dp")) ?: 0.0
+                val dt = obj.optString("dt")
+                val sign = if (dt == "low") -1.0 else 1.0
+
+                if (dp > 0.0) dp *= sign
+                if (diffRial > 0.0) diffRial *= sign
+
+                if (abs(diffRial) < 0.01 && openRial != null && openRial > 0.0 && abs(priceRial - openRial) > 0.5) {
+                    diffRial = priceRial - openRial
                 }
-            )
+                if (abs(dp) < 0.001 && abs(diffRial) > 0.5 && priceRial > diffRial) {
+                    val prev = priceRial - diffRial
+                    if (prev > 0.0) dp = (diffRial / prev) * 100.0
+                }
+                if (abs(diffRial) < 0.01 && abs(dp) > 0.001) {
+                    val prev = priceRial / (1.0 + dp / 100.0)
+                    diffRial = priceRial - prev
+                }
+
+                val quoteTs = parseTgjuTimestampMillis(obj.optString("ts")) ?: nowMillis
+
+                map[k] = MarketPriceMapper.TgjuQuote(
+                    priceToman = priceRial / 10.0,
+                    openToman = openRial?.let { it / 10.0 },
+                    highToman = highRial?.let { it / 10.0 },
+                    lowToman = lowRial?.let { it / 10.0 },
+                    changeToman = diffRial / 10.0,
+                    changePct = dp,
+                    timestampMillis = quoteTs
+                )
+            }
+            map
+        }.getOrDefault(emptyMap())
+
+        internal fun parseTgjuTimestampMillis(raw: String?): Long? {
+            if (raw.isNullOrBlank()) return null
+            val trimmed = raw.trim()
+            val tz = TimeZone.getTimeZone("Asia/Tehran")
+            val patterns = listOf("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy/MM/dd HH:mm:ss")
+            for (pattern in patterns) {
+                val sdf = SimpleDateFormat(pattern, Locale.US).apply { timeZone = tz }
+                val parsed = runCatching { sdf.parse(trimmed)?.time }.getOrNull()
+                if (parsed != null && parsed > 0L) return parsed
+            }
+            return null
         }
-        val match = Regex("-?\\d+(?:\\.\\d+)?").find(ascii.toString()) ?: return null
-        return match.value.toDoubleOrNull()
+
+        internal fun tgjuTableScaleForSlug(slug: String): Double = when (slug.trim().lowercase(Locale.US)) {
+            "price_jpy" -> 0.001   // TGJU quotes Rials per 100 JPY -> /1000 = Toman per 1 JPY
+            "price_iqd" -> 0.0001  // TGJU quotes Rials per 1000 IQD -> /10000 = Toman per 1 IQD
+            "ons" -> 1.0           // Global ounce spot in USD
+            else -> 0.1            // Standard TGJU Tehran quotes in Rials per 1 unit -> /10 = Toman
+        }
+
+        internal fun parseTgjuTablePayload(
+            raw: String,
+            slug: String = ""
+        ): List<AssetHistoryPoint> = runCatching {
+            val root = JSONObject(raw)
+            val dataArr = root.optJSONArray("data") ?: return emptyList()
+            val sdfSlash = SimpleDateFormat("yyyy/MM/dd", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("Asia/Tehran")
+            }
+            val sdfDash = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("Asia/Tehran")
+            }
+            val unitScale = tgjuTableScaleForSlug(slug)
+
+            val parsed = ArrayList<AssetHistoryPoint>(dataArr.length())
+            for (i in 0 until dataArr.length()) {
+                val row = dataArr.optJSONArray(i) ?: continue
+                if (row.length() < 7) continue
+                val closeRaw = parseNumeric(row.optString(3))
+                    ?: parseNumeric(row.optString(0))
+                    ?: continue
+                if (closeRaw <= 0.0) continue
+
+                val dateStr = row.optString(6).trim().substringBefore(" ")
+                val parsedDate = runCatching {
+                    if (dateStr.contains("/")) sdfSlash.parse(dateStr) else sdfDash.parse(dateStr)
+                }.getOrNull() ?: continue
+
+                // Set to afternoon Tehran close (17:00) for clean ordering
+                val tsSec = (parsedDate.time / 1000L) + 17L * 3600L
+                parsed.add(AssetHistoryPoint(tsSec, closeRaw * unitScale))
+            }
+
+            HistoryNormalizer.normalize(parsed)
+        }.getOrDefault(emptyList())
+
+        internal fun parseWallexQuotesPayload(
+            raw: String,
+            nowMillis: Long = System.currentTimeMillis()
+        ): Map<String, ExchangeQuote> = runCatching {
+            val root = JSONObject(raw)
+            val markets = root.optJSONObject("result")?.optJSONObject("markets") ?: return emptyMap()
+            data class WallexSide(val price: Double, val change: Double, val high: Double?, val low: Double?)
+            val tmnPrices = mutableMapOf<String, WallexSide>()
+            val usdtPrices = mutableMapOf<String, WallexSide>()
+
+            val keys = markets.keys()
+            while (keys.hasNext()) {
+                val sym = keys.next()
+                val item = markets.optJSONObject(sym) ?: continue
+                val base = item.optString("baseAsset")
+                val quote = item.optString("quoteAsset")
+                val stats = item.optJSONObject("stats")
+                val price = parseNumeric(item.optString("price"))
+                    ?: stats?.optString("lastPrice")?.let { parseNumeric(it) }
+                    ?: continue
+                val change = item.optDouble("change_24h", Double.NaN).let {
+                    if (it.isNaN()) stats?.optDouble("24h_ch", 0.0) ?: 0.0 else it
+                }
+                val high = stats?.optString("24h_highPrice")?.let { parseNumeric(it) }?.takeIf { it > 0.0 }
+                val low = stats?.optString("24h_lowPrice")?.let { parseNumeric(it) }?.takeIf { it > 0.0 }
+                if (quote == "TMN" && price > 0) {
+                    tmnPrices[base] = WallexSide(price, change, high, low)
+                } else if (quote == "USDT" && price > 0) {
+                    usdtPrices[base] = WallexSide(price, change, high, low)
+                }
+            }
+
+            val allBases = tmnPrices.keys + usdtPrices.keys
+            val result = mutableMapOf<String, ExchangeQuote>()
+            for (base in allBases) {
+                val tmn = tmnPrices[base]
+                val usdt = usdtPrices[base]
+                result[base] = ExchangeQuote(
+                    priceToman = tmn?.price,
+                    priceUsd = usdt?.price,
+                    changePct = tmn?.change ?: usdt?.change ?: 0.0,
+                    highToman = tmn?.high,
+                    lowToman = tmn?.low,
+                    highUsd = usdt?.high,
+                    lowUsd = usdt?.low,
+                    timestampMillis = nowMillis
+                )
+            }
+            result
+        }.getOrDefault(emptyMap())
+
+        internal fun parseBitpinQuotesPayload(
+            raw: String,
+            nowMillis: Long = System.currentTimeMillis()
+        ): Map<String, ExchangeQuote> = runCatching {
+            val root = JSONObject(raw)
+            val results = root.optJSONArray("results") ?: return emptyMap()
+            val tmnPrices = mutableMapOf<String, Pair<Double, Double>>()
+            val usdtPrices = mutableMapOf<String, Pair<Double, Double>>()
+
+            for (i in 0 until results.length()) {
+                val item = results.optJSONObject(i) ?: continue
+                val base = item.optJSONObject("currency1")?.optString("code")
+                    ?: item.optJSONObject("base_currency")?.optString("code")
+                    ?: continue
+                val quote = item.optJSONObject("currency2")?.optString("code")
+                    ?: item.optJSONObject("quote_currency")?.optString("code")
+                    ?: continue
+                val priceInfo = item.optJSONObject("price_info")
+                val price = parseNumeric(priceInfo?.optString("price"))
+                    ?: parseNumeric(item.optString("price"))
+                    ?: continue
+                val change = priceInfo?.optDouble("change", 0.0) ?: 0.0
+                if (quote == "IRT" && price > 0) {
+                    tmnPrices[base] = price to change
+                } else if (quote == "USDT" && price > 0) {
+                    usdtPrices[base] = price to change
+                }
+            }
+
+            val allBases = tmnPrices.keys + usdtPrices.keys
+            val map = mutableMapOf<String, ExchangeQuote>()
+            for (base in allBases) {
+                val tmn = tmnPrices[base]
+                val usdt = usdtPrices[base]
+                map[base] = ExchangeQuote(
+                    priceToman = tmn?.first,
+                    priceUsd = usdt?.first,
+                    changePct = tmn?.second ?: usdt?.second ?: 0.0,
+                    timestampMillis = nowMillis
+                )
+            }
+            map
+        }.getOrDefault(emptyMap())
+
+        internal fun parseBinanceQuotesPayload(
+            raw: String,
+            nowMillis: Long = System.currentTimeMillis()
+        ): Map<String, ExchangeQuote> = runCatching {
+            val arr = JSONArray(raw)
+            val map = mutableMapOf<String, ExchangeQuote>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val sym = obj.optString("symbol")
+                if (!sym.endsWith("USDT")) continue
+                val base = sym.removeSuffix("USDT")
+                val price = parseNumeric(obj.optString("lastPrice")) ?: continue
+                val change = parseNumeric(obj.optString("priceChangePercent")) ?: 0.0
+                val high = parseNumeric(obj.optString("highPrice"))?.takeIf { it > 0.0 }
+                val low = parseNumeric(obj.optString("lowPrice"))?.takeIf { it > 0.0 }
+                val closeTime = obj.optLong("closeTime", 0L).takeIf { it > 0L } ?: nowMillis
+                if (price > 0) {
+                    map[base] = ExchangeQuote(
+                        priceToman = null,
+                        priceUsd = price,
+                        changePct = change,
+                        highUsd = high,
+                        lowUsd = low,
+                        timestampMillis = closeTime
+                    )
+                }
+            }
+            map
+        }.getOrDefault(emptyMap())
+
+        internal fun parseNobitexOrderbookPayload(
+            raw: String,
+            nowMillis: Long = System.currentTimeMillis()
+        ): Pair<Double, Long>? = runCatching {
+            val obj = JSONObject(raw)
+            if (obj.optString("status") != "ok") return null
+            val lastRial = parseNumeric(obj.optString("lastTradePrice")) ?: return null
+            val ts = obj.optLong("lastUpdate", 0L).takeIf { it > 0L } ?: nowMillis
+            (lastRial / 10.0) to ts
+        }.getOrNull()
+
+        internal fun parseWallexUdfPayload(raw: String): List<AssetHistoryPoint> = runCatching {
+            val obj = JSONObject(raw)
+            if (obj.optString("s") != "ok") return emptyList()
+            val tArr = obj.optJSONArray("t") ?: return emptyList()
+            val cArr = obj.optJSONArray("c") ?: return emptyList()
+            val count = minOf(tArr.length(), cArr.length())
+            val list = ArrayList<AssetHistoryPoint>(count)
+            for (i in 0 until count) {
+                val ts = tArr.optLong(i)
+                val close = parseNumeric(cArr.optString(i)) ?: cArr.optDouble(i, -1.0)
+                if (ts > 0 && close > 0.0) {
+                    list.add(AssetHistoryPoint(ts, close))
+                }
+            }
+            HistoryNormalizer.normalize(list)
+        }.getOrDefault(emptyList())
+
+        internal fun parseNobitexUdfPayload(raw: String): List<AssetHistoryPoint> = runCatching {
+            val obj = JSONObject(raw)
+            if (obj.optString("s") != "ok") return emptyList()
+            val tArr = obj.optJSONArray("t") ?: return emptyList()
+            val cArr = obj.optJSONArray("c") ?: return emptyList()
+            val count = minOf(tArr.length(), cArr.length())
+            val list = ArrayList<AssetHistoryPoint>(count)
+            for (i in 0 until count) {
+                val ts = tArr.optLong(i)
+                val closeRial = parseNumeric(cArr.optString(i)) ?: cArr.optDouble(i, -1.0)
+                if (ts > 0 && closeRial > 0.0) {
+                    list.add(AssetHistoryPoint(ts, closeRial / 10.0))
+                }
+            }
+            HistoryNormalizer.normalize(list)
+        }.getOrDefault(emptyList())
+
+        internal fun parseBinanceKlinesPayload(raw: String): List<AssetHistoryPoint> = runCatching {
+            val arr = JSONArray(raw)
+            val list = ArrayList<AssetHistoryPoint>(arr.length())
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONArray(i) ?: continue
+                if (item.length() < 7) continue
+                val tsSec = item.optLong(6) / 1000L
+                val close = parseNumeric(item.optString(4)) ?: continue
+                if (tsSec > 0 && close > 0.0) {
+                    list.add(AssetHistoryPoint(tsSec, close))
+                }
+            }
+            HistoryNormalizer.normalize(list)
+        }.getOrDefault(emptyList())
+
+        internal fun parseCoinGeckoHistoryPayload(raw: String): List<AssetHistoryPoint> = runCatching {
+            val root = JSONObject(raw)
+            val prices = root.optJSONArray("prices") ?: return emptyList()
+            val list = ArrayList<AssetHistoryPoint>(prices.length())
+            for (i in 0 until prices.length()) {
+                val pair = prices.optJSONArray(i) ?: continue
+                val tsSec = pair.optLong(0) / 1000L
+                val price = pair.optDouble(1, -1.0)
+                if (tsSec > 0 && price > 0.0) {
+                    list.add(AssetHistoryPoint(tsSec, price))
+                }
+            }
+            val normalized = HistoryNormalizer.normalize(list)
+            if (normalized.size <= 120) {
+                normalized
+            } else {
+                val step = maxOf(1, normalized.size / 120)
+                val sampled = ArrayList<AssetHistoryPoint>(121)
+                for (i in normalized.indices step step) {
+                    sampled.add(normalized[i])
+                }
+                if (sampled.lastOrNull()?.timestampSec != normalized.last().timestampSec) {
+                    sampled.add(normalized.last())
+                }
+                sampled
+            }
+        }.getOrDefault(emptyList())
+
+        internal fun parseNumeric(raw: String?): Double? {
+            if (raw.isNullOrBlank()) return null
+            val noHtml = raw.replace(Regex("<[^>]*>"), " ")
+            val ascii = StringBuilder(noHtml.length)
+            for (ch in noHtml) {
+                ascii.append(
+                    when (ch) {
+                        in '۰'..'۹' -> ('0' + (ch - '۰'))
+                        in '٠'..'٩' -> ('0' + (ch - '٠'))
+                        '−', '–' -> '-'
+                        ',', '٬', ' ', '\u00A0' -> continue
+                        else -> ch
+                    }
+                )
+            }
+            val match = Regex("-?\\d+(?:\\.\\d+)?").find(ascii.toString()) ?: return null
+            return match.value.toDoubleOrNull()
+        }
     }
 }

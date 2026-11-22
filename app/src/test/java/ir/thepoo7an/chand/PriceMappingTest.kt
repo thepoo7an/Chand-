@@ -112,6 +112,8 @@ class PriceMappingTest {
         assertEquals(70_000.0 / 0.92, crossEur!!.priceToman, 0.5)
         assertEquals("FX + USD", crossEur.sourceLabel)
         assertEquals(AssetCategory.FIAT, crossEur.category)
+        assertNull(crossEur.high24hToman)
+        assertNull(crossEur.low24hToman)
 
         val jpySpec = MarketPriceMapper.SUPPORTED_FIATS.first { it.id == "JPY" }
         val normalizedJpy = MarketPriceMapper.mapFiatAsset(
@@ -132,6 +134,8 @@ class PriceMappingTest {
         )
         assertNotNull(normalizedJpy)
         assertEquals(466.0, normalizedJpy!!.priceToman, 0.1)
+        assertEquals(468.0, normalizedJpy.high24hToman ?: 0.0, 0.1)
+        assertEquals(459.0, normalizedJpy.low24hToman ?: 0.0, 0.1)
 
         val iqdSpec = MarketPriceMapper.SUPPORTED_FIATS.first { it.id == "IQD" }
         val normalizedIqd = MarketPriceMapper.mapFiatAsset(
@@ -173,6 +177,8 @@ class PriceMappingTest {
         assertEquals(90_000.0, asset.priceUsd ?: 0.0, 0.01)
         assertEquals("Binance", asset.sourceLabel)
         assertEquals(AssetCategory.CRYPTO, asset.category)
+        assertNull(asset.high24hToman)
+        assertNull(asset.low24hToman)
     }
 
     @Test
