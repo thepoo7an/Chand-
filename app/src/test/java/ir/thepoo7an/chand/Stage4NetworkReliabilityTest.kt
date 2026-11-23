@@ -28,7 +28,9 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import retrofit2.HttpException
+import java.io.File
 import java.io.IOException
+import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicInteger
 
 class Stage4NetworkReliabilityTest {
@@ -334,5 +336,92 @@ class Stage4NetworkReliabilityTest {
 
         assertEquals(1, githubHits.get())
         assertFalse(updateStates.any { it !is AppUpdateState.UpdateAvailable })
+    }
+
+    @Test
+    fun `parseReleaseNotes strips download boilerplate and formats changelog bullets`() {
+        val rawBody = """
+            ### 📲 Download / دانلود فایل نصب
+            - **Most modern Android phones (`arm64-v8a`):** `Chand-arm64-v8a-release.apk`
+            - **Universal (all CPUs):** `Chand-universal-release.apk`
+
+            ## What's Changed
+            * بهبود سرعت **نمایشگر نمودار** در ارزها by @dev in https://github.com/thepoo7an/Chand-/pull/12
+            * Add adaptive spike filter for volatile crypto ([details](https://example.com))
+
+            **Full Changelog**: https://github.com/thepoo7an/Chand-/compare/v1.0...v1.1
+        """.trimIndent()
+
+        val sections = AppUpdateService.parseReleaseNotes(rawBody)
+        assertEquals(1, sections.size)
+        assertEquals("What's Changed", sections.first().title)
+        assertEquals(
+            listOf(
+                "بهبود سرعت نمایشگر نمودار در ارزها",
+                "Add adaptive spike filter for volatile crypto (details)"
+            ),
+            sections.first().items
+        )
+    }
+
+    @Test
+    fun `downloadApk streams verified APK payload and rejects invalid non-ZIP payloads`() = runBlocking {
+        val tempDir = Files.createTempDirectory("chand-apk-test").toFile()
+        try {
+            val validApkBytes = byteArrayOf(0x50, 0x4B, 0x03, 0x04) + ByteArray(64 * 1024) { 0x2A }
+            val validClient = interceptorClient { req ->
+                Response.Builder()
+                    .request(req)
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(validApkBytes.toResponseBody("application/vnd.android.package-archive".toMediaType()))
+                    .build()
+            }
+            val service = AppUpdateService(validClient)
+            val destFile = File(tempDir, "Chand-arm64-v8a-release.apk")
+            val progressReports = mutableListOf<Pair<Long, Long>>()
+
+            val result = service.downloadApk(
+                downloadUrl = "https://example.invalid/Chand-arm64-v8a-release.apk",
+                destinationFile = destFile,
+                expectedSizeBytes = validApkBytes.size.toLong()
+            ) { read, total ->
+                progressReports.add(read to total)
+            }
+
+            assertTrue(result.exists())
+            assertEquals(validApkBytes.size.toLong(), result.length())
+            assertTrue(AppUpdateService.hasApkZipMagicHeader(result))
+            assertFalse(File(tempDir, "Chand-arm64-v8a-release.apk.part").exists())
+            assertTrue(progressReports.isNotEmpty())
+            assertEquals(validApkBytes.size.toLong(), progressReports.last().first)
+
+            // Reject HTML error payload masquerading as 200 OK
+            val htmlClient = interceptorClient { req ->
+                Response.Builder()
+                    .request(req)
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body("<html>Captive Portal</html>".toResponseBody("text/html".toMediaType()))
+                    .build()
+            }
+            val badDest = File(tempDir, "bad-update.apk")
+            var threw = false
+            try {
+                AppUpdateService(htmlClient).downloadApk(
+                    downloadUrl = "https://example.invalid/bad.apk",
+                    destinationFile = badDest
+                )
+            } catch (_: IOException) {
+                threw = true
+            }
+            assertTrue(threw)
+            assertFalse(badDest.exists())
+            assertFalse(File(tempDir, "bad-update.apk.part").exists())
+        } finally {
+            tempDir.deleteRecursively()
+        }
     }
 }

@@ -95,7 +95,22 @@ data class ChandStrings(
     val githubRepoPlaceholder: String,
     val updateRepoMissingHint: String,
     val updateCheckErrorLabel: String,
-    val laterButton: String
+    val laterButton: String,
+    val updateCatalogTitle: String,
+    val changelogTitle: String,
+    val changelogEmptyFallback: String,
+    val newVersionLabel: String,
+    val downloadingUpdateLabel: String,
+    val downloadCompleteLabel: String,
+    val installUpdateButton: String,
+    val grantInstallPermissionButton: String,
+    val installPermissionHint: String,
+    val cancelDownloadButton: String,
+    val downloadFailedLabel: String,
+    val retryDownloadButton: String,
+    val openUpdateCatalogButton: String,
+    val openInBrowserFallback: String,
+    val publishedAtPrefix: String
 ) {
     fun categoryLabel(category: AssetCategory): String = when (category) {
         AssetCategory.ALL -> categoryAll
@@ -185,13 +200,28 @@ val FaStrings = ChandStrings(
     checkingUpdatesLabel = "در حال بررسی...",
     upToDateLabel = "برنامه به آخرین نسخه بروز است",
     updateAvailableTitle = "نسخه جدید آماده دانلود است",
-    downloadUpdateButton = "دانلود نسخه جدید (مرورگر)",
+    downloadUpdateButton = "دانلود و نصب آپدیت",
     viewReleaseButton = "صفحه انتشار گیت‌هاب",
     githubRepoLabel = "مخزن گیت‌هاب (owner/repo)",
     githubRepoPlaceholder = "thepoo7an/chand-iran-currency-gold-crypto",
     updateRepoMissingHint = "نام مخزن گیت‌هاب را برای بررسی نسخه جدید وارد کنید.",
     updateCheckErrorLabel = "خطا در بررسی نسخه جدید",
-    laterButton = "بعداً"
+    laterButton = "بعداً",
+    updateCatalogTitle = "کاتالوگ بروزرسانی",
+    changelogTitle = "تغییرات نسخه جدید",
+    changelogEmptyFallback = "بهبود عملکرد، افزایش پایداری و رفع اشکالات جزئی.",
+    newVersionLabel = "نسخه جدید",
+    downloadingUpdateLabel = "در حال دانلود فایل نصب داخل برنامه...",
+    downloadCompleteLabel = "دانلود کامل شد و آماده نصب است",
+    installUpdateButton = "نصب نسخه جدید",
+    grantInstallPermissionButton = "اجازه نصب از این برنامه",
+    installPermissionHint = "برای نصب مستقیم، گزینه «اجازه نصب از این منبع» را در تنظیمات گوشی فعال کنید.",
+    cancelDownloadButton = "لغو دانلود",
+    downloadFailedLabel = "خطا در دانلود فایل بروزرسانی",
+    retryDownloadButton = "تلاش مجدد دانلود",
+    openUpdateCatalogButton = "مشاهده کاتالوگ تغییرات و آپدیت",
+    openInBrowserFallback = "دانلود از مرورگر",
+    publishedAtPrefix = "انتشار:"
 )
 
 val EnStrings = ChandStrings(
@@ -273,13 +303,28 @@ val EnStrings = ChandStrings(
     checkingUpdatesLabel = "Checking...",
     upToDateLabel = "You are on the latest version",
     updateAvailableTitle = "New Update Available",
-    downloadUpdateButton = "Download Update (Browser)",
+    downloadUpdateButton = "Download & Install",
     viewReleaseButton = "Release Page",
     githubRepoLabel = "GitHub Repository (owner/repo)",
     githubRepoPlaceholder = "thepoo7an/chand-iran-currency-gold-crypto",
     updateRepoMissingHint = "Enter your GitHub repository (owner/repo) to check releases.",
     updateCheckErrorLabel = "Could not check GitHub Releases",
-    laterButton = "Later"
+    laterButton = "Later",
+    updateCatalogTitle = "Update Catalog",
+    changelogTitle = "What's New in This Version",
+    changelogEmptyFallback = "Performance improvements, stability enhancements, and bug fixes.",
+    newVersionLabel = "New Version",
+    downloadingUpdateLabel = "Downloading update inside app...",
+    downloadCompleteLabel = "Download complete — ready to install",
+    installUpdateButton = "Install Update",
+    grantInstallPermissionButton = "Allow App Installs",
+    installPermissionHint = "Enable \"Install unknown apps\" in Android settings to finish installing.",
+    cancelDownloadButton = "Cancel",
+    downloadFailedLabel = "Could not download update package",
+    retryDownloadButton = "Retry Download",
+    openUpdateCatalogButton = "View Changelog & Update",
+    openInBrowserFallback = "Download in Browser",
+    publishedAtPrefix = "Published:"
 )
 
 fun stringsFor(language: AppLanguage): ChandStrings =

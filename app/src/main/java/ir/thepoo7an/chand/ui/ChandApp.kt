@@ -1,7 +1,5 @@
 package ir.thepoo7an.chand.ui
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -34,8 +32,6 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,9 +41,9 @@ import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,9 +68,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import ir.thepoo7an.chand.model.MarketUiState
+import ir.thepoo7an.chand.network.AppUpdateInfo
+import ir.thepoo7an.chand.network.AppUpdateInstaller
 import ir.thepoo7an.chand.network.AppUpdateState
+import ir.thepoo7an.chand.network.InstallLaunchResult
 import ir.thepoo7an.chand.ui.components.AssetDetailSheet
 import ir.thepoo7an.chand.ui.components.SettingsSheet
+import ir.thepoo7an.chand.ui.components.UpdateCatalogDialog
 import ir.thepoo7an.chand.ui.components.WatchlistSheet
 import ir.thepoo7an.chand.ui.navigation.ChandRoute
 import ir.thepoo7an.chand.ui.screens.ConverterScreen
@@ -84,6 +84,7 @@ import ir.thepoo7an.chand.ui.strings.stringsFor
 import ir.thepoo7an.chand.ui.theme.ChandTheme
 import ir.thepoo7an.chand.ui.theme.LocalMarketColors
 import ir.thepoo7an.chand.ui.viewmodel.MarketViewModel
+import java.io.File
 
 @Composable
 fun ChandApp(
@@ -101,6 +102,7 @@ fun ChandApp(
     val isHistoryLoading by viewModel.isHistoryLoading.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val updateBannerDismissed by viewModel.updateBannerDismissed.collectAsStateWithLifecycle()
+    val updateDownloadState by viewModel.updateDownloadState.collectAsStateWithLifecycle()
 
     val fromAssetId by viewModel.fromAssetId.collectAsStateWithLifecycle()
     val toAssetId by viewModel.toAssetId.collectAsStateWithLifecycle()
@@ -110,8 +112,28 @@ fun ChandApp(
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showWatchlistSheet by remember { mutableStateOf(false) }
 
+    fun triggerApkInstall(apkFile: File, info: AppUpdateInfo) {
+        val result = AppUpdateInstaller.launchInstallOrRequestPermission(context, apkFile)
+        viewModel.handleInstallLaunchResult(result, info)
+        if (result == InstallLaunchResult.NEEDS_UNKNOWN_SOURCES_PERMISSION) {
+            viewModel.markAwaitingInstallPermission()
+            runCatching {
+                context.startActivity(AppUpdateInstaller.createUnknownSourcesSettingsIntent(context))
+            }
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.installApkRequests.collect { apkPath ->
+            val info = (viewModel.updateState.value as? AppUpdateState.UpdateAvailable)?.info
+                ?: return@collect
+            triggerApkInstall(File(apkPath), info)
+        }
+    }
+
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         viewModel.startAutoRefresh()
+        viewModel.handleResumeForPendingInstall()
     }
     LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) {
         viewModel.stopAutoRefresh()
@@ -335,6 +357,7 @@ fun ChandApp(
                 prefs = prefs,
                 strings = strings,
                 updateState = updateState,
+                updateDownloadState = updateDownloadState,
                 availableAssets = allAssets,
                 onSetThemeMode = viewModel::setThemeMode,
                 onSetLanguage = viewModel::setLanguage,
@@ -346,61 +369,28 @@ fun ChandApp(
                 onSetWidgetHeroAsset = viewModel::setWidgetHeroAssetId,
                 onSetGithubRepoSlug = viewModel::setGithubRepoSlug,
                 onCheckForUpdates = viewModel::checkForUpdates,
+                onStartUpdateDownload = viewModel::startInAppUpdateDownload,
+                onCancelUpdateDownload = viewModel::cancelUpdateDownload,
+                onInstallUpdateApk = ::triggerApkInstall,
+                onOpenUpdateCatalog = {
+                    showSettingsSheet = false
+                    viewModel.openUpdateCatalog()
+                },
                 onDismiss = { showSettingsSheet = false }
             )
         }
 
         if (updateState is AppUpdateState.UpdateAvailable && !updateBannerDismissed && !showSettingsSheet) {
             val info = (updateState as AppUpdateState.UpdateAvailable).info
-            AlertDialog(
-                onDismissRequest = viewModel::dismissUpdateBanner,
-                title = {
-                    Text(
-                        text = "${strings.updateAvailableTitle} (v${info.latestVersionName})",
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                text = {
-                    androidx.compose.foundation.layout.Column(
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = "${strings.currentVersionLabel}: v${info.currentVersionName}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = info.matchedApkName,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        if (info.releaseNotes.isNotBlank()) {
-                            Text(
-                                text = info.releaseNotes.take(300),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
-                                )
-                            }
-                            viewModel.dismissUpdateBanner()
-                        }
-                    ) {
-                        Text(strings.downloadUpdateButton)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = viewModel::dismissUpdateBanner) {
-                        Text(strings.laterButton)
-                    }
-                }
+            UpdateCatalogDialog(
+                info = info,
+                downloadState = updateDownloadState,
+                prefs = prefs,
+                strings = strings,
+                onStartDownload = viewModel::startInAppUpdateDownload,
+                onCancelDownload = viewModel::cancelUpdateDownload,
+                onInstallApk = ::triggerApkInstall,
+                onDismiss = viewModel::dismissUpdateBanner
             )
         }
     }

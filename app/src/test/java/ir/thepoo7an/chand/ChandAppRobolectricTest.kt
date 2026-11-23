@@ -5,6 +5,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.core.app.ApplicationProvider
 import com.squareup.moshi.Moshi
+import ir.thepoo7an.chand.network.AppUpdateInfo
+import ir.thepoo7an.chand.network.AppUpdateInstaller
 import ir.thepoo7an.chand.network.AppUpdateService
 import ir.thepoo7an.chand.network.CurrencyCdnResponse
 import ir.thepoo7an.chand.network.FrankfurterTimeSeriesResponse
@@ -14,6 +16,7 @@ import ir.thepoo7an.chand.network.GoldSpotResponse
 import ir.thepoo7an.chand.ui.strings.EnStrings
 import ir.thepoo7an.chand.ui.strings.FaStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -153,5 +156,41 @@ class ChandAppRobolectricTest {
         assertFalse(FaStrings.offlineReferenceBanner == FaStrings.offlineCachedBanner)
         assertEquals("thepoo7an/chand-iran-currency-gold-crypto", EnStrings.githubRepoPlaceholder)
         assertEquals("thepoo7an/chand-iran-currency-gold-crypto", FaStrings.githubRepoPlaceholder)
+    }
+
+    @Test
+    fun `AppUpdateInstaller builds FileProvider install URI from cache updates directory`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val info = AppUpdateInfo(
+            currentVersionName = "1.0",
+            currentVersionCode = 1,
+            latestVersionName = "1.2.0",
+            latestVersionCode = 25,
+            releaseTitle = "Chand?! v1.2.0",
+            releaseNotes = "## What's Changed\n* In-app updater",
+            releasePageUrl = "https://github.com/thepoo7an/Chand-/releases/tag/v1.2.0",
+            downloadUrl = "https://example.invalid/Chand-arm64-v8a-release.apk",
+            matchedApkName = "Chand-arm64-v8a-release.apk",
+            matchedApkSizeBytes = 1024L,
+            publishedAtIso = "2026-11-23T10:00:00Z",
+            hasDirectApkAsset = true
+        )
+        val apkFile = AppUpdateInstaller.targetApkFile(context, info)
+        apkFile.parentFile?.mkdirs()
+        apkFile.writeBytes(byteArrayOf(0x50, 0x4B, 0x03, 0x04, 0x00, 0x00))
+
+        try {
+            val found = AppUpdateInstaller.findAlreadyDownloadedApk(
+                context,
+                info.copy(matchedApkSizeBytes = apkFile.length())
+            )
+            assertNotNull(found)
+            val intent = AppUpdateInstaller.createInstallApkIntent(context, apkFile)
+            assertEquals("application/vnd.android.package-archive", intent.type)
+            assertTrue(intent.data?.scheme == "content")
+            assertTrue(intent.data?.authority == "${context.packageName}.fileprovider")
+        } finally {
+            apkFile.delete()
+        }
     }
 }

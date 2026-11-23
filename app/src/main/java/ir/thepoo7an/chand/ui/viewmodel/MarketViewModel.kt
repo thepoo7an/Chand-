@@ -14,21 +14,29 @@ import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.MarketUiState
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.model.TimeRange
+import ir.thepoo7an.chand.network.AppUpdateDownloadState
+import ir.thepoo7an.chand.network.AppUpdateInfo
+import ir.thepoo7an.chand.network.AppUpdateInstaller
 import ir.thepoo7an.chand.network.AppUpdateState
+import ir.thepoo7an.chand.network.InstallLaunchResult
 import ir.thepoo7an.chand.network.TomanRateBasis
 import ir.thepoo7an.chand.widget.WidgetSyncCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.File
 
 class MarketViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -75,6 +83,12 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     private val _updateBannerDismissed = MutableStateFlow(false)
     val updateBannerDismissed: StateFlow<Boolean> = _updateBannerDismissed.asStateFlow()
 
+    private val _updateDownloadState = MutableStateFlow<AppUpdateDownloadState>(AppUpdateDownloadState.Idle)
+    val updateDownloadState: StateFlow<AppUpdateDownloadState> = _updateDownloadState.asStateFlow()
+
+    private val _installApkRequests = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val installApkRequests: SharedFlow<String> = _installApkRequests.asSharedFlow()
+
     // Converter State
     private val _fromAssetId = MutableStateFlow("USD")
     val fromAssetId: StateFlow<String> = _fromAssetId.asStateFlow()
@@ -116,6 +130,8 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
 
     private var pollingJob: Job? = null
     private var historyJob: Job? = null
+    private var updateDownloadJob: Job? = null
+    private var pendingInstallAfterPermission: Boolean = false
 
     init {
         loadInitialData()
@@ -140,6 +156,7 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                     if (res is AppUpdateState.UpdateAvailable) {
                         _updateState.value = res
                         _updateBannerDismissed.value = false
+                        syncCachedApkDownloadState(res.info)
                     }
                 }
             } catch (ce: CancellationException) {
@@ -313,14 +330,147 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
             }
             _updateState.value = AppUpdateState.Checking
             _updateBannerDismissed.value = false
-            _updateState.value = try {
+            val result = try {
                 repository.checkForUpdate(targetRepo)
             } catch (ce: CancellationException) {
                 throw ce
             } catch (_: Throwable) {
                 AppUpdateState.Error("update_check_failed")
             }
+            _updateState.value = result
+            if (result is AppUpdateState.UpdateAvailable) {
+                syncCachedApkDownloadState(result.info)
+            } else {
+                updateDownloadJob?.cancel()
+                _updateDownloadState.value = AppUpdateDownloadState.Idle
+            }
         }
+    }
+
+    private fun syncCachedApkDownloadState(info: AppUpdateInfo) {
+        val currentDownload = _updateDownloadState.value
+        if (currentDownload is AppUpdateDownloadState.Downloading) return
+        val appContext = getApplication<Application>().applicationContext
+        val existingApk = AppUpdateInstaller.findAlreadyDownloadedApk(appContext, info)
+        if (existingApk != null) {
+            _updateDownloadState.value = AppUpdateDownloadState.ReadyToInstall(
+                info = info,
+                apkFilePath = existingApk.absolutePath,
+                fileSizeBytes = existingApk.length()
+            )
+        } else if (currentDownload is AppUpdateDownloadState.ReadyToInstall &&
+            currentDownload.info.latestVersionName != info.latestVersionName
+        ) {
+            _updateDownloadState.value = AppUpdateDownloadState.Idle
+        }
+    }
+
+    fun startInAppUpdateDownload(info: AppUpdateInfo) {
+        val existingReady = AppUpdateInstaller.findAlreadyDownloadedApk(
+            getApplication<Application>().applicationContext,
+            info
+        )
+        if (existingReady != null) {
+            _updateDownloadState.value = AppUpdateDownloadState.ReadyToInstall(
+                info = info,
+                apkFilePath = existingReady.absolutePath,
+                fileSizeBytes = existingReady.length()
+            )
+            _installApkRequests.tryEmit(existingReady.absolutePath)
+            return
+        }
+
+        updateDownloadJob?.cancel()
+        val appContext = getApplication<Application>().applicationContext
+        val destFile = AppUpdateInstaller.targetApkFile(appContext, info)
+        _updateDownloadState.value = AppUpdateDownloadState.Downloading(
+            info = info,
+            downloadedBytes = 0L,
+            totalBytes = info.matchedApkSizeBytes
+        )
+
+        updateDownloadJob = viewModelScope.launch {
+            try {
+                AppUpdateInstaller.cleanupStaleApks(appContext, keepFile = destFile)
+                val downloaded = repository.downloadUpdateApk(
+                    downloadUrl = info.downloadUrl,
+                    destinationFile = destFile,
+                    expectedSizeBytes = info.matchedApkSizeBytes
+                ) { bytes, total ->
+                    _updateDownloadState.value = AppUpdateDownloadState.Downloading(
+                        info = info,
+                        downloadedBytes = bytes,
+                        totalBytes = total
+                    )
+                }
+                _updateDownloadState.value = AppUpdateDownloadState.ReadyToInstall(
+                    info = info,
+                    apkFilePath = downloaded.absolutePath,
+                    fileSizeBytes = downloaded.length()
+                )
+                _installApkRequests.tryEmit(downloaded.absolutePath)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                _updateDownloadState.value = AppUpdateDownloadState.Error(
+                    info = info,
+                    errorCode = "download_failed"
+                )
+            }
+        }
+    }
+
+    fun cancelUpdateDownload() {
+        updateDownloadJob?.cancel()
+        updateDownloadJob = null
+        pendingInstallAfterPermission = false
+        _updateDownloadState.value = AppUpdateDownloadState.Idle
+    }
+
+    fun markAwaitingInstallPermission() {
+        pendingInstallAfterPermission = true
+    }
+
+    fun handleResumeForPendingInstall() {
+        if (!pendingInstallAfterPermission) return
+        val ready = _updateDownloadState.value as? AppUpdateDownloadState.ReadyToInstall ?: run {
+            pendingInstallAfterPermission = false
+            return
+        }
+        val appContext = getApplication<Application>().applicationContext
+        if (AppUpdateInstaller.canRequestPackageInstalls(appContext)) {
+            pendingInstallAfterPermission = false
+            val file = File(ready.apkFilePath)
+            if (file.exists()) {
+                _installApkRequests.tryEmit(ready.apkFilePath)
+            }
+        }
+    }
+
+    fun handleInstallLaunchResult(result: InstallLaunchResult, info: AppUpdateInfo) {
+        when (result) {
+            InstallLaunchResult.LAUNCHED_INSTALLER -> {
+                pendingInstallAfterPermission = false
+            }
+            InstallLaunchResult.NEEDS_UNKNOWN_SOURCES_PERMISSION -> {
+                pendingInstallAfterPermission = true
+            }
+            InstallLaunchResult.FILE_MISSING -> {
+                pendingInstallAfterPermission = false
+                _updateDownloadState.value = AppUpdateDownloadState.Idle
+            }
+            InstallLaunchResult.FAILED -> {
+                pendingInstallAfterPermission = false
+                _updateDownloadState.value = AppUpdateDownloadState.Error(
+                    info = info,
+                    errorCode = "install_failed"
+                )
+            }
+        }
+    }
+
+    fun openUpdateCatalog() {
+        _updateBannerDismissed.value = false
     }
 
     fun dismissUpdateBanner() {

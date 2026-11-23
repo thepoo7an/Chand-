@@ -23,7 +23,7 @@ android {
 
     val githubRepo = System.getenv("GITHUB_REPOSITORY")?.takeIf { it.isNotBlank() }
       ?: project.findProperty("githubRepo")?.toString()?.takeIf { it.isNotBlank() }
-      ?: "thepoo7an/chand-iran-currency-gold-crypto"
+      ?: "thepoo7an/Chand-"
     buildConfigField("String", "GITHUB_REPOSITORY", "\"$githubRepo\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -49,8 +49,8 @@ android {
 
   buildTypes {
     release {
-      isMinifyEnabled = false
-      isShrinkResources = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.

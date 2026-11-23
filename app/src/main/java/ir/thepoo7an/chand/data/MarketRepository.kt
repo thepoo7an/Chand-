@@ -227,6 +227,18 @@ class MarketRepository(
     suspend fun checkForUpdate(repoSlug: String): AppUpdateState =
         updateService.checkForUpdate(repoSlug)
 
+    suspend fun downloadUpdateApk(
+        downloadUrl: String,
+        destinationFile: File,
+        expectedSizeBytes: Long = 0L,
+        onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
+    ): File = updateService.downloadApk(
+        downloadUrl = downloadUrl,
+        destinationFile = destinationFile,
+        expectedSizeBytes = expectedSizeBytes,
+        onProgress = onProgress
+    )
+
     private suspend fun updateAllWidgets() {
         WidgetSyncCoordinator.updateAllWidgets(context)
     }

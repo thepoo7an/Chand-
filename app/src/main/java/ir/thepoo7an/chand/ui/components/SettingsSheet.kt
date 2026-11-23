@@ -59,16 +59,28 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.InstallMobile
+import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import ir.thepoo7an.chand.BuildConfig
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.ThemeMode
+import ir.thepoo7an.chand.network.AppUpdateDownloadState
+import ir.thepoo7an.chand.network.AppUpdateInfo
+import ir.thepoo7an.chand.network.AppUpdateInstaller
 import ir.thepoo7an.chand.network.AppUpdateService
 import ir.thepoo7an.chand.network.AppUpdateState
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import ir.thepoo7an.chand.ui.theme.LocalMarketColors
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,6 +88,7 @@ fun SettingsSheet(
     prefs: AppPreferences,
     strings: ChandStrings,
     updateState: AppUpdateState,
+    updateDownloadState: AppUpdateDownloadState = AppUpdateDownloadState.Idle,
     availableAssets: List<MarketAsset> = emptyList(),
     onSetThemeMode: (ThemeMode) -> Unit,
     onSetLanguage: (AppLanguage) -> Unit,
@@ -87,6 +100,10 @@ fun SettingsSheet(
     onSetWidgetHeroAsset: (String) -> Unit,
     onSetGithubRepoSlug: (String) -> Unit,
     onCheckForUpdates: (String) -> Unit,
+    onStartUpdateDownload: (AppUpdateInfo) -> Unit = {},
+    onCancelUpdateDownload: () -> Unit = {},
+    onInstallUpdateApk: (File, AppUpdateInfo) -> Unit = { _, _ -> },
+    onOpenUpdateCatalog: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -765,15 +782,23 @@ fun SettingsSheet(
                         when (updateState) {
                             is AppUpdateState.UpdateAvailable -> {
                                 val info = updateState.info
-                                val sizeMb = if (info.matchedApkSizeBytes > 0L) {
-                                    String.format(
-                                        java.util.Locale.US,
-                                        " • %.1f MB",
-                                        info.matchedApkSizeBytes / (1024.0 * 1024.0)
-                                    )
-                                } else {
-                                    ""
+                                val sizeLabel = formatApkBytes(info.matchedApkSizeBytes, prefs.usePersianDigits)
+                                val parsedSections = remember(info.releaseNotes) {
+                                    AppUpdateService.parseReleaseNotes(info.releaseNotes)
                                 }
+                                val previewItems = remember(parsedSections) {
+                                    parsedSections.flatMap { it.items }.take(4)
+                                }
+                                val isDownloadingThis = updateDownloadState is AppUpdateDownloadState.Downloading &&
+                                    updateDownloadState.info.latestVersionName == info.latestVersionName
+                                val readyThis = (updateDownloadState as? AppUpdateDownloadState.ReadyToInstall)?.takeIf {
+                                    it.info.latestVersionName == info.latestVersionName
+                                }
+                                val errorThis = (updateDownloadState as? AppUpdateDownloadState.Error)?.takeIf {
+                                    it.info.latestVersionName == info.latestVersionName
+                                }
+                                val canInstallApps = AppUpdateInstaller.canRequestPackageInstalls(context)
+
                                 Text(
                                     text = "${strings.updateAvailableTitle}: v${info.latestVersionName}" +
                                         (info.latestVersionCode?.let { " (Build $it)" } ?: ""),
@@ -782,54 +807,160 @@ fun SettingsSheet(
                                     color = marketColors.gain
                                 )
                                 Text(
-                                    text = "${info.matchedApkName}$sizeMb",
+                                    text = if (sizeLabel.isNotBlank()) "${info.matchedApkName} • $sizeLabel" else info.matchedApkName,
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                if (info.releaseNotes.isNotBlank()) {
-                                    Text(
-                                        text = info.releaseNotes.take(260),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Button(
-                                        onClick = {
-                                            runCatching {
-                                                context.startActivity(
-                                                    Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+
+                                if (previewItems.isNotEmpty()) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            text = strings.changelogTitle,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        previewItems.forEach { item ->
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.Top
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .padding(top = 6.dp)
+                                                        .size(5.dp)
+                                                        .clip(CircleShape)
+                                                        .background(marketColors.gain)
+                                                )
+                                                Text(
+                                                    text = item,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 2
                                                 )
                                             }
-                                        },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("download_update_button")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Outlined.Download,
-                                            contentDescription = null,
-                                            modifier = Modifier
-                                                .width(16.dp)
-                                                .height(16.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(strings.downloadUpdateButton, fontSize = 12.sp, maxLines = 1)
+                                        }
                                     }
-                                    if (info.releasePageUrl.isNotBlank()) {
-                                        OutlinedButton(
-                                            onClick = {
-                                                runCatching {
-                                                    context.startActivity(
-                                                        Intent(Intent.ACTION_VIEW, Uri.parse(info.releasePageUrl))
-                                                    )
-                                                }
-                                            }
+                                }
+
+                                if (isDownloadingThis) {
+                                    val downloading = updateDownloadState as AppUpdateDownloadState.Downloading
+                                    val fraction = downloading.progressFraction
+                                    if (fraction != null) {
+                                        LinearProgressIndicator(
+                                            progress = { fraction },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(6.dp)
+                                                .clip(RoundedCornerShape(99.dp))
+                                        )
+                                    } else {
+                                        LinearProgressIndicator(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(6.dp)
+                                                .clip(RoundedCornerShape(99.dp))
+                                        )
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val pctLabel = downloading.progressPercent?.let {
+                                            NumberFormatters.applyDigits("$it%", prefs.usePersianDigits)
+                                        } ?: strings.downloadingUpdateLabel
+                                        Text(
+                                            text = pctLabel,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        TextButton(onClick = onCancelUpdateDownload) {
+                                            Text(strings.cancelDownloadButton, fontSize = 12.sp)
+                                        }
+                                    }
+                                } else {
+                                    if (errorThis != null) {
+                                        Text(
+                                            text = strings.downloadFailedLabel,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = marketColors.loss
+                                        )
+                                    } else if (readyThis != null) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            Text(strings.viewReleaseButton, fontSize = 12.sp, maxLines = 1)
+                                            Icon(
+                                                imageVector = Icons.Outlined.CheckCircle,
+                                                contentDescription = null,
+                                                tint = marketColors.gain,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Text(
+                                                text = strings.downloadCompleteLabel,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = marketColors.gain
+                                            )
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                when {
+                                                    readyThis != null -> {
+                                                        onInstallUpdateApk(File(readyThis.apkFilePath), info)
+                                                    }
+                                                    info.hasDirectApkAsset -> {
+                                                        onStartUpdateDownload(info)
+                                                    }
+                                                    else -> {
+                                                        runCatching {
+                                                            context.startActivity(
+                                                                Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .minimumInteractiveComponentSize()
+                                                .testTag("download_update_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = when {
+                                                    readyThis != null && canInstallApps -> Icons.Outlined.InstallMobile
+                                                    readyThis != null -> Icons.Outlined.Security
+                                                    else -> Icons.Outlined.Download
+                                                },
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = when {
+                                                    readyThis != null && canInstallApps -> strings.installUpdateButton
+                                                    readyThis != null -> strings.grantInstallPermissionButton
+                                                    errorThis != null -> strings.retryDownloadButton
+                                                    info.hasDirectApkAsset -> strings.downloadUpdateButton
+                                                    else -> strings.openInBrowserFallback
+                                                },
+                                                fontSize = 12.sp,
+                                                maxLines = 1
+                                            )
+                                        }
+                                        OutlinedButton(
+                                            onClick = onOpenUpdateCatalog,
+                                            modifier = Modifier.minimumInteractiveComponentSize()
+                                        ) {
+                                            Text(strings.updateCatalogTitle, fontSize = 12.sp, maxLines = 1)
                                         }
                                     }
                                 }

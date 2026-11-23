@@ -55,9 +55,19 @@
 
 # Glance AppWidgets, Receivers, Actions & JobService
 -keep class ir.thepoo7an.chand.ChandApplication { *; }
--keep class * extends androidx.glance.appwidget.GlanceAppWidget
--keep class * extends androidx.glance.appwidget.GlanceAppWidgetReceiver
+-keep class * extends androidx.glance.appwidget.GlanceAppWidget {
+    public <init>();
+}
+-keep class * extends androidx.glance.appwidget.GlanceAppWidgetReceiver {
+    public <init>();
+}
 -keep class * implements androidx.glance.appwidget.action.ActionCallback {
+    public <init>();
+}
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class * extends androidx.room.RoomDatabase {
     public <init>();
 }
 -keep class ir.thepoo7an.chand.widget.WidgetConnectivityJobService { *; }

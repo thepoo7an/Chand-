@@ -1,18 +1,27 @@
 package ir.thepoo7an.chand.network
 
 import android.os.Build
-import ir.thepoo7an.chand.BuildConfig
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
+import ir.thepoo7an.chand.BuildConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Path
 import retrofit2.http.Query
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.io.RandomAccessFile
+import java.util.concurrent.TimeUnit
 
 @JsonClass(generateAdapter = true)
 data class GitHubReleaseAssetDto(
@@ -48,6 +57,11 @@ interface GitHubReleaseApi {
     ): List<GitHubReleaseDto>
 }
 
+data class ChangelogSection(
+    val title: String?,
+    val items: List<String>
+)
+
 data class AppUpdateInfo(
     val currentVersionName: String,
     val currentVersionCode: Int,
@@ -58,7 +72,9 @@ data class AppUpdateInfo(
     val releasePageUrl: String,
     val downloadUrl: String,
     val matchedApkName: String,
-    val matchedApkSizeBytes: Long
+    val matchedApkSizeBytes: Long,
+    val publishedAtIso: String = "",
+    val hasDirectApkAsset: Boolean = downloadUrl.endsWith(".apk", ignoreCase = true)
 )
 
 sealed interface AppUpdateState {
@@ -76,12 +92,13 @@ sealed interface AppUpdateState {
 }
 
 /**
- * Zero-permission GitHub Releases update checker (Google Play Creator Program compliant).
- * Automatically matches the device's CPU ABI (arm64-v8a / armeabi-v7a / universal) and exposes
- * direct release download URLs to open cleanly in the system browser via Intent.ACTION_VIEW.
+ * GitHub Releases update checker & streaming in-app APK downloader.
+ * Automatically matches the device's CPU ABI (`arm64-v8a` / `armeabi-v7a` / `universal`),
+ * parses release changelog markdown into clean structured sections, and streams verified APK
+ * binaries into the app cache directory for direct installation.
  */
 class AppUpdateService(
-    client: OkHttpClient = NetworkConfig.sharedClient
+    private val client: OkHttpClient = NetworkConfig.sharedClient
 ) {
     private val moshi: Moshi = Moshi.Builder().build()
 
@@ -92,6 +109,17 @@ class AppUpdateService(
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
             .create(GitHubReleaseApi::class.java)
+    }
+
+    private val downloadClient: OkHttpClient by lazy {
+        client.newBuilder()
+            .connectTimeout(15L, TimeUnit.SECONDS)
+            .readTimeout(30L, TimeUnit.SECONDS)
+            .writeTimeout(15L, TimeUnit.SECONDS)
+            .callTimeout(0L, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
     }
 
     private val checkDeduplicator = InFlightRequestDeduplicator<String, AppUpdateState>()
@@ -117,7 +145,7 @@ class AppUpdateService(
                 ) {
                     api.getLatestRelease(owner, repo)
                 }.takeUnless { it.draft || it.prerelease }
-            } catch (ce: kotlinx.coroutines.CancellationException) {
+            } catch (ce: CancellationException) {
                 throw ce
             } catch (_: Throwable) {
                 try {
@@ -130,7 +158,7 @@ class AppUpdateService(
                     }
                     releaseListSucceeded = true
                     selectLatestStableRelease(list)
-                } catch (ce: kotlinx.coroutines.CancellationException) {
+                } catch (ce: CancellationException) {
                     throw ce
                 } catch (_: Throwable) {
                     null
@@ -168,6 +196,7 @@ class AppUpdateService(
             }
 
             val apkAsset = pickBestApkAsset(release.assets, supportedAbis)
+            val hasDirectApk = !apkAsset?.browserDownloadUrl.isNullOrBlank()
             val downloadUrl = apkAsset?.browserDownloadUrl?.takeIf { it.isNotBlank() }
                 ?: release.htmlUrl
 
@@ -182,13 +211,206 @@ class AppUpdateService(
                     releasePageUrl = release.htmlUrl,
                     downloadUrl = downloadUrl,
                     matchedApkName = apkAsset?.name ?: "Chand-release.apk",
-                    matchedApkSizeBytes = apkAsset?.size ?: 0L
+                    matchedApkSizeBytes = apkAsset?.size ?: 0L,
+                    publishedAtIso = release.publishedAt,
+                    hasDirectApkAsset = hasDirectApk
                 )
             )
         }
     }
 
+    /**
+     * Streams the APK file at [downloadUrl] into [destinationFile] via a temporary `.part` file,
+     * reporting byte-level progress via [onProgress] and verifying ZIP/APK integrity before
+     * committing to [destinationFile].
+     */
+    suspend fun downloadApk(
+        downloadUrl: String,
+        destinationFile: File,
+        expectedSizeBytes: Long = 0L,
+        onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
+    ): File = withContext(Dispatchers.IO) {
+        require(
+            downloadUrl.startsWith("https://", ignoreCase = true) ||
+                downloadUrl.startsWith("http://", ignoreCase = true)
+        ) {
+            "Unsupported download URL scheme"
+        }
+
+        destinationFile.parentFile?.mkdirs()
+        val tempFile = File(destinationFile.parentFile, "${destinationFile.name}.part")
+        if (tempFile.exists()) tempFile.delete()
+
+        val request = Request.Builder()
+            .url(downloadUrl)
+            .header("Accept", "application/vnd.android.package-archive, application/octet-stream, */*")
+            .build()
+
+        val call = downloadClient.newCall(request)
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("HTTP ${response.code} downloading update")
+                }
+                val body = response.body ?: throw IOException("Empty response body")
+                val headerLen = body.contentLength().takeIf { it > 0L } ?: 0L
+                val totalBytes = if (headerLen > 0L) headerLen else expectedSizeBytes.coerceAtLeast(0L)
+
+                var downloadedBytes = 0L
+                var lastReportedBytes = 0L
+                onProgress(0L, totalBytes)
+
+                body.byteStream().use { input ->
+                    FileOutputStream(tempFile).use { output ->
+                        val buffer = ByteArray(DEFAULT_DOWNLOAD_BUFFER_SIZE)
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            if (read > 0) {
+                                output.write(buffer, 0, read)
+                                downloadedBytes += read
+                                if (downloadedBytes - lastReportedBytes >= PROGRESS_REPORT_STEP_BYTES) {
+                                    lastReportedBytes = downloadedBytes
+                                    onProgress(downloadedBytes, totalBytes)
+                                }
+                            }
+                        }
+                        output.flush()
+                    }
+                }
+
+                if (downloadedBytes <= 4L) {
+                    throw IOException("Downloaded file is empty or truncated")
+                }
+                if (headerLen > 0L && downloadedBytes != headerLen) {
+                    throw IOException("Incomplete download ($downloadedBytes / $headerLen bytes)")
+                }
+                if (!hasApkZipMagicHeader(tempFile)) {
+                    throw IOException("Downloaded payload is not a valid APK archive")
+                }
+
+                onProgress(downloadedBytes, if (totalBytes > 0L) totalBytes else downloadedBytes)
+
+                if (destinationFile.exists()) {
+                    destinationFile.delete()
+                }
+                if (!tempFile.renameTo(destinationFile)) {
+                    tempFile.copyTo(destinationFile, overwrite = true)
+                    tempFile.delete()
+                }
+                destinationFile
+            }
+        } catch (ce: CancellationException) {
+            call.cancel()
+            tempFile.delete()
+            throw ce
+        } catch (t: Throwable) {
+            tempFile.delete()
+            throw t
+        }
+    }
+
     companion object {
+        private const val DEFAULT_DOWNLOAD_BUFFER_SIZE = 16 * 1024
+        private const val PROGRESS_REPORT_STEP_BYTES = 48 * 1024L
+
+        fun hasApkZipMagicHeader(file: File): Boolean {
+            if (!file.exists() || !file.isFile || file.length() < 4L) return false
+            return runCatching {
+                RandomAccessFile(file, "r").use { raf ->
+                    val magic = ByteArray(4)
+                    val read = raf.read(magic)
+                    read == 4 &&
+                        magic[0] == 0x50.toByte() &&
+                        magic[1] == 0x4B.toByte() &&
+                        magic[2] == 0x03.toByte() &&
+                        magic[3] == 0x04.toByte()
+                }
+            }.getOrDefault(false)
+        }
+
+        /**
+         * Parses GitHub Release markdown notes into structured changelog sections, filtering out
+         * redundant APK file-list boilerplate and Full Changelog URL lines while keeping clean
+         * bilingual release bullets.
+         */
+        fun parseReleaseNotes(rawBody: String): List<ChangelogSection> {
+            val normalized = rawBody.replace("\r\n", "\n").trim()
+            if (normalized.isBlank()) return emptyList()
+
+            val lines = normalized.lines()
+            val sections = mutableListOf<ChangelogSection>()
+            var currentTitle: String? = null
+            var currentItems = mutableListOf<String>()
+            var skippingDownloadBoilerplate = false
+
+            fun flushSection() {
+                if (currentItems.isNotEmpty()) {
+                    sections.add(ChangelogSection(title = currentTitle, items = currentItems.toList()))
+                }
+                currentItems = mutableListOf()
+            }
+
+            for (rawLine in lines) {
+                val trimmed = rawLine.trim()
+                if (trimmed.isEmpty()) continue
+
+                if (trimmed.startsWith("#")) {
+                    flushSection()
+                    val headingText = trimmed.trimStart('#').trim()
+                    val lower = headingText.lowercase()
+                    skippingDownloadBoilerplate = "download" in lower &&
+                        ("فایل نصب" in headingText || "📲" in headingText || headingText.equals("Download", ignoreCase = true))
+                    currentTitle = headingText.takeIf { it.isNotBlank() && !skippingDownloadBoilerplate }
+                    continue
+                }
+
+                if (skippingDownloadBoilerplate) {
+                    continue
+                }
+
+                // Skip redundant GitHub auto-generated Full Changelog link lines
+                if (trimmed.startsWith("**Full Changelog**", ignoreCase = true) ||
+                    trimmed.startsWith("Full Changelog:", ignoreCase = true)
+                ) {
+                    continue
+                }
+
+                val isBullet = trimmed.startsWith("- ") ||
+                    trimmed.startsWith("* ") ||
+                    trimmed.startsWith("• ") ||
+                    Regex("""^\d+\.\s+""").containsMatchIn(trimmed)
+
+                val content = if (isBullet) {
+                    trimmed
+                        .replaceFirst(Regex("""^(?:[-*•]|\d+\.)\s+"""), "")
+                        .trim()
+                } else {
+                    trimmed
+                }
+
+                val cleaned = cleanMarkdownInline(content)
+                if (cleaned.isNotBlank()) {
+                    currentItems.add(cleaned)
+                }
+            }
+            flushSection()
+            return sections
+        }
+
+        private fun cleanMarkdownInline(text: String): String {
+            var out = text
+            // Convert markdown links [label](url) -> label
+            out = out.replace(Regex("""\[([^\]]+)]\([^)]+\)"""), "$1")
+            // Strip PR/commit noise suffix generated by GitHub release notes: " by @user in https://..."
+            out = out.replace(Regex("""\s+by\s+@\S+\s+in\s+https?://\S+$""", RegexOption.IGNORE_CASE), "")
+            out = out.replace(Regex("""\s+in\s+https?://github\.com/\S+$""", RegexOption.IGNORE_CASE), "")
+            // Strip inline bold/italic/code markers
+            out = out.replace("**", "").replace("__", "").replace("`", "")
+            return out.trim()
+        }
+
         fun selectLatestStableRelease(releases: List<GitHubReleaseDto>): GitHubReleaseDto? =
             releases.firstOrNull { !it.draft && !it.prerelease }
 
