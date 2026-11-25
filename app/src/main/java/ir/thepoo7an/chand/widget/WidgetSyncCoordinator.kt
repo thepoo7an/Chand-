@@ -2,14 +2,17 @@ package ir.thepoo7an.chand.widget
 
 import android.app.job.JobInfo
 import android.app.job.JobScheduler
+import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.os.Build
 import android.os.SystemClock
+import androidx.glance.GlanceId
+import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetManager
+import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.updateAll
 import ir.thepoo7an.chand.data.PreferencesRepository
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
@@ -39,6 +42,40 @@ object WidgetSyncCoordinator {
     private const val PERIODIC_SYNC_INTERVAL_MS = 30L * 60L * 1000L
     private const val MIN_SYNC_GAP_MS = 8_000L
 
+    private data class WidgetBinding(
+        val receiverClass: Class<out GlanceAppWidgetReceiver>,
+        val widgetClass: Class<out GlanceAppWidget>,
+        val createWidget: () -> GlanceAppWidget
+    )
+
+    private val widgetBindings = listOf(
+        WidgetBinding(
+            ChandSingleWidgetReceiver::class.java,
+            ChandSingleAssetWidget::class.java,
+            ::ChandSingleAssetWidget
+        ),
+        WidgetBinding(
+            ChandWidgetReceiver::class.java,
+            ChandWideListWidget::class.java,
+            ::ChandWideListWidget
+        ),
+        WidgetBinding(
+            ChandCryptoWidgetReceiver::class.java,
+            ChandCompactCryptoWidget::class.java,
+            ::ChandCompactCryptoWidget
+        ),
+        WidgetBinding(
+            ChandCompact2x1WidgetReceiver::class.java,
+            ChandCompact2x1Widget::class.java,
+            ::ChandCompact2x1Widget
+        ),
+        WidgetBinding(
+            ChandLockScreenWidgetReceiver::class.java,
+            ChandLockScreenWidget::class.java,
+            ::ChandLockScreenWidget
+        )
+    )
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val syncDeduplicator = InFlightRequestDeduplicator<String, Boolean>()
     private val lastSyncElapsedMs = AtomicLong(0L)
@@ -53,12 +90,7 @@ object WidgetSyncCoordinator {
             ?: return false
         val activeNetwork = cm.activeNetwork ?: return false
         val caps = cm.getNetworkCapabilities(activeNetwork) ?: return false
-        val hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            hasInternet && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-        } else {
-            hasInternet
-        }
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     fun registerConnectivityMonitor(context: Context) {
@@ -78,13 +110,7 @@ object WidgetSyncCoordinator {
                     network: Network,
                     networkCapabilities: NetworkCapabilities
                 ) {
-                    val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                    val validated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-                    } else {
-                        true
-                    }
-                    if (hasInternet && validated) {
+                    if (networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
                         handleNetworkConnected(appContext)
                     }
                 }
@@ -122,9 +148,32 @@ object WidgetSyncCoordinator {
         }
     }
 
+    fun hydrateLiveConfigAsync(context: Context) {
+        val appContext = context.applicationContext
+        scope.launch {
+            runCatching { PreferencesRepository(appContext).hydrateLiveConfig() }
+        }
+    }
+
+    fun refreshWidgetsOnStartupIfNeeded(context: Context) {
+        val appContext = context.applicationContext
+        scope.launch {
+            val prefsRepo = PreferencesRepository(appContext)
+            runCatching { prefsRepo.hydrateLiveConfig() }
+            if (!hasAnyActiveWidgets(appContext)) return@launch
+            updateAllWidgets(appContext)
+            val snapshotAgeMs = prefsRepo.loadCachedSnapshot()?.let {
+                System.currentTimeMillis() - it.updatedAtMillis
+            } ?: Long.MAX_VALUE
+            if (snapshotAgeMs > 30_000L) {
+                syncWidgetsNow(appContext, force = false)
+            }
+        }
+    }
+
     suspend fun syncWidgetsNow(context: Context, force: Boolean = false): Boolean {
         val appContext = context.applicationContext
-        if (!isOnline(appContext)) {
+        if (!force && !isOnline(appContext)) {
             wasOffline.set(true)
             schedulePendingConnectivitySync(appContext)
             return false
@@ -139,6 +188,7 @@ object WidgetSyncCoordinator {
             try {
                 val remote = MarketRemoteDataSource()
                 val prefsRepo = PreferencesRepository(appContext)
+                prefsRepo.hydrateLiveConfig()
                 val cached = prefsRepo.loadCachedSnapshot()
                 val cachedById = cached?.assets?.associateBy { it.id }.orEmpty()
                 val lastUsd = cachedById["USD"]?.priceToman?.takeIf { it > 1_000.0 }
@@ -173,13 +223,22 @@ object WidgetSyncCoordinator {
     }
 
     suspend fun hasAnyActiveWidgets(context: Context): Boolean {
-        val manager = GlanceAppWidgetManager(context)
+        val appContext = context.applicationContext
+        val appWidgetManager = runCatching { AppWidgetManager.getInstance(appContext) }.getOrNull()
+        if (appWidgetManager != null) {
+            val hasBound = runCatching {
+                widgetBindings.any { binding ->
+                    appWidgetManager.getAppWidgetIds(ComponentName(appContext, binding.receiverClass)).isNotEmpty()
+                }
+            }.getOrDefault(false)
+            if (hasBound) return true
+        }
+
+        val manager = GlanceAppWidgetManager(appContext)
         return runCatching {
-            manager.getGlanceIds(ChandSingleAssetWidget::class.java).isNotEmpty() ||
-                manager.getGlanceIds(ChandWideListWidget::class.java).isNotEmpty() ||
-                manager.getGlanceIds(ChandCompactCryptoWidget::class.java).isNotEmpty() ||
-                manager.getGlanceIds(ChandCompact2x1Widget::class.java).isNotEmpty() ||
-                manager.getGlanceIds(ChandLockScreenWidget::class.java).isNotEmpty()
+            widgetBindings.any { binding ->
+                manager.getGlanceIds(binding.widgetClass).isNotEmpty()
+            }
         }.getOrDefault(false)
     }
 
@@ -243,10 +302,60 @@ object WidgetSyncCoordinator {
 
     suspend fun updateAllWidgets(context: Context) {
         val appContext = context.applicationContext
-        runCatching { ChandSingleAssetWidget().updateAll(appContext) }
-        runCatching { ChandWideListWidget().updateAll(appContext) }
-        runCatching { ChandCompactCryptoWidget().updateAll(appContext) }
-        runCatching { ChandCompact2x1Widget().updateAll(appContext) }
-        runCatching { ChandLockScreenWidget().updateAll(appContext) }
+        val appWidgetManager = runCatching { AppWidgetManager.getInstance(appContext) }.getOrNull()
+        val glanceManager = GlanceAppWidgetManager(appContext)
+
+        widgetBindings.forEach { binding ->
+            val widget = binding.createWidget()
+            val updatedIds = linkedSetOf<GlanceId>()
+
+            if (appWidgetManager != null) {
+                val boundIds = runCatching {
+                    appWidgetManager.getAppWidgetIds(ComponentName(appContext, binding.receiverClass))
+                }.getOrDefault(IntArray(0))
+
+                for (appWidgetId in boundIds) {
+                    if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) continue
+                    val glanceId = runCatching { glanceManager.getGlanceIdBy(appWidgetId) }.getOrNull()
+                        ?: continue
+                    updatedIds += glanceId
+                    try {
+                        widget.update(appContext, glanceId)
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (_: Throwable) {
+                        // Guard against uninitialized WorkManager in isolated unit tests
+                    }
+                }
+            }
+
+            val knownGlanceIds = try {
+                glanceManager.getGlanceIds(binding.widgetClass)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                emptyList()
+            }
+
+            if (knownGlanceIds.isEmpty() && updatedIds.isEmpty()) {
+                try {
+                    widget.updateAll(appContext)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Throwable) {
+                }
+            } else {
+                for (glanceId in knownGlanceIds) {
+                    if (glanceId !in updatedIds) {
+                        try {
+                            widget.update(appContext, glanceId)
+                        } catch (ce: CancellationException) {
+                            throw ce
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            }
+        }
     }
 }

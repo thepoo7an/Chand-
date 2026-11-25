@@ -71,7 +71,7 @@ internal object CryptoPriceMapper {
 
             val consensus = MarketValidationHelpers.validateCrossSourcePrices(
                 candidates = usdtCandidates,
-                thresholdPct = MarketValidationConfig.CRYPTO_DISAGREEMENT_THRESHOLD_PCT,
+                thresholdPct = MarketValidationConfig.effectiveCryptoDisagreementThresholdPct(),
                 nowMillis = nowMillis
             )
 
@@ -178,7 +178,7 @@ internal object CryptoPriceMapper {
 
         val consensus = MarketValidationHelpers.validateCrossSourcePrices(
             candidates = candidates,
-            thresholdPct = MarketValidationConfig.CRYPTO_DISAGREEMENT_THRESHOLD_PCT,
+            thresholdPct = MarketValidationConfig.effectiveCryptoDisagreementThresholdPct(),
             nowMillis = nowMillis
         ) ?: return null
 

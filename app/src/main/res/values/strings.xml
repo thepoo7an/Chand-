@@ -5,4 +5,5 @@
     <string name="widget_crypto_description">Chand?! — Crypto Rates (BTC, ETH, USDT)</string>
     <string name="widget_2x1_description">Chand?! — Compact 2×1 (USD, EUR, Gold)</string>
     <string name="widget_lockscreen_description">Chand?! — Lock Screen (Transparent)</string>
+    <string name="widget_tap_to_open">Tap to open Chand?!</string>
 </resources>

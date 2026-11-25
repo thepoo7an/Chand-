@@ -82,6 +82,7 @@ fun ConverterScreen(
     inputAmountText: String,
     prefs: AppPreferences,
     strings: ChandStrings,
+    showEquivalents: Boolean = true,
     onSetFromAsset: (String) -> Unit,
     onSetToAsset: (String) -> Unit,
     onSwapAssets: () -> Unit,
@@ -173,6 +174,7 @@ fun ConverterScreen(
                         tomanValue = tomanValue,
                         unitCrossRate = unitCrossRate,
                         assets = assets,
+                        showEquivalents = showEquivalents,
                         swapRotation = swapRotation,
                         isFa = isFa,
                         prefs = prefs,
@@ -211,6 +213,7 @@ fun ConverterScreen(
                         tomanValue = tomanValue,
                         unitCrossRate = unitCrossRate,
                         assets = assets,
+                        showEquivalents = showEquivalents,
                         swapRotation = swapRotation,
                         isFa = isFa,
                         prefs = prefs,
@@ -264,6 +267,7 @@ private fun ConverterCardsColumn(
     tomanValue: Double,
     unitCrossRate: Double,
     assets: List<MarketAsset>,
+    showEquivalents: Boolean,
     swapRotation: Float,
     isFa: Boolean,
     prefs: AppPreferences,
@@ -298,7 +302,7 @@ private fun ConverterCardsColumn(
                 ConverterSideCard(
                     roleLabel = strings.toLabel,
                     asset = toAsset,
-                    displayValue = NumberFormatters.formatToman(outputValue, prefs.usePersianDigits),
+                    displayValue = NumberFormatters.formatConverterAmount(outputValue, prefs.usePersianDigits),
                     isInput = false,
                     isFa = isFa,
                     onSelectAssetClick = { onOpenPicker(PickerTarget.TO) },
@@ -346,7 +350,7 @@ private fun ConverterCardsColumn(
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Text(
                     text = "1 ${fromAsset.symbol} = ${
-                        NumberFormatters.formatToman(unitCrossRate, prefs.usePersianDigits)
+                        NumberFormatters.formatConverterAmount(unitCrossRate, prefs.usePersianDigits)
                     } ${toAsset.symbol}",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary
@@ -398,7 +402,7 @@ private fun ConverterCardsColumn(
                     it.id != toAsset.id
             }
         }
-        if (benchmarkAssets.isNotEmpty() && tomanValue > 0.0) {
+        if (showEquivalents && benchmarkAssets.isNotEmpty() && tomanValue > 0.0) {
             Text(
                 text = strings.quickEquivalentTitle,
                 style = MaterialTheme.typography.labelMedium,
@@ -424,7 +428,7 @@ private fun ConverterCardsColumn(
                             )
                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                 Text(
-                                    text = NumberFormatters.formatToman(eqVal, prefs.usePersianDigits),
+                                    text = NumberFormatters.formatConverterAmount(eqVal, prefs.usePersianDigits),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
@@ -702,13 +706,23 @@ private fun AssetPickerSheet(
     }
 }
 
-private fun formatRawInput(raw: String): String {
+internal fun formatRawInput(raw: String): String {
     val parts = raw.split(".")
-    val intPart = parts.getOrNull(0)?.toLongOrNull()
-    val formattedInt = if (intPart != null) {
-        NumberFormatters.formatToman(intPart.toDouble(), false)
+    val intPart = parts.getOrNull(0).orEmpty()
+    val groupedInt = if (intPart.isEmpty()) {
+        ""
     } else {
-        parts.getOrNull(0).orEmpty()
+        buildString(intPart.length + intPart.length / 3) {
+            val len = intPart.length
+            for (i in 0 until len) {
+                val ch = intPart[i]
+                append(ch)
+                val remaining = len - 1 - i
+                if (ch.isDigit() && remaining > 0 && remaining % 3 == 0) {
+                    append(',')
+                }
+            }
+        }
     }
-    return if (parts.size > 1) "$formattedInt.${parts[1]}" else formattedInt
+    return if (parts.size > 1) "$groupedInt.${parts[1]}" else groupedInt
 }

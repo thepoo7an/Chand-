@@ -34,8 +34,12 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.Campaign
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.GridView
@@ -52,6 +56,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -68,6 +73,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -83,6 +89,7 @@ import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.MarketUiState
+import ir.thepoo7an.chand.model.RemoteLiveNotice
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.network.TomanRateBasis
 import ir.thepoo7an.chand.ui.components.AssetBadge
@@ -102,6 +109,9 @@ fun MarketFeedScreen(
     strings: ChandStrings,
     selectedCategory: AssetCategory,
     searchQuery: String,
+    liveNotice: RemoteLiveNotice? = null,
+    dismissedNoticeId: String = "",
+    onDismissLiveNotice: (String) -> Unit = {},
     onSelectCategory: (AssetCategory) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onTogglePin: (String) -> Unit,
@@ -110,6 +120,7 @@ fun MarketFeedScreen(
     onRefreshClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val marketColors = LocalMarketColors.current
     val isFa = prefs.language == AppLanguage.FA
     val readyState = uiState as? MarketUiState.Ready
@@ -164,12 +175,26 @@ fun MarketFeedScreen(
                         color = MaterialTheme.colorScheme.onBackground,
                         letterSpacing = (-0.6).sp
                     )
+                    val isLivePulse = readyState?.freshness == DataFreshness.LIVE
+                    val isDelayedPulse = readyState?.freshness == DataFreshness.DELAYED
                     Box(
                         modifier = Modifier
                             .size(8.dp)
-                            .alpha(if (readyState?.errorBanner == null) pulseAlpha else 0.45f)
+                            .alpha(
+                                when {
+                                    isLivePulse -> pulseAlpha
+                                    isDelayedPulse -> 0.85f
+                                    else -> 0.55f
+                                }
+                            )
                             .clip(CircleShape)
-                            .background(if (readyState?.errorBanner == null) marketColors.gain else marketColors.gold)
+                            .background(
+                                when {
+                                    isLivePulse -> marketColors.gain
+                                    isDelayedPulse -> marketColors.gold
+                                    else -> marketColors.loss
+                                }
+                            )
                     )
                 }
 
@@ -315,6 +340,102 @@ fun MarketFeedScreen(
                 }
             }
 
+            // Online Live Notice Banner (no APK download needed)
+            val showLiveNotice = liveNotice != null &&
+                liveNotice.id.isNotBlank() &&
+                liveNotice.id != dismissedNoticeId
+            AnimatedVisibility(visible = showLiveNotice) {
+                liveNotice?.let { notice ->
+                    val noticeBg = when (notice.severity) {
+                        "WARNING" -> marketColors.gold.copy(alpha = 0.14f)
+                        "SUCCESS" -> marketColors.gainContainer
+                        else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                    }
+                    val noticeFg = when (notice.severity) {
+                        "WARNING" -> marketColors.gold
+                        "SUCCESS" -> marketColors.gain
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                    val noticeTitle = if (isFa) notice.titleFa.ifBlank { notice.titleEn } else notice.titleEn.ifBlank { notice.titleFa }
+                    val noticeBody = if (isFa) notice.bodyFa.ifBlank { notice.bodyEn } else notice.bodyEn.ifBlank { notice.bodyFa }
+                    val actionLabel = if (isFa) notice.actionLabelFa.ifBlank { notice.actionLabelEn } else notice.actionLabelEn.ifBlank { notice.actionLabelFa }
+
+                    Surface(
+                        color = noticeBg,
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, noticeFg.copy(alpha = 0.28f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .testTag("live_notice_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (notice.severity == "SUCCESS") Icons.Outlined.CheckCircle else Icons.Outlined.Campaign,
+                                contentDescription = null,
+                                tint = noticeFg,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                if (noticeTitle.isNotBlank()) {
+                                    Text(
+                                        text = noticeTitle,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                if (noticeBody.isNotBlank()) {
+                                    Text(
+                                        text = noticeBody,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (notice.actionUrl.isNotBlank() && actionLabel.isNotBlank()) {
+                                    TextButton(
+                                        onClick = {
+                                            runCatching {
+                                                context.startActivity(
+                                                    Intent(Intent.ACTION_VIEW, Uri.parse(notice.actionUrl))
+                                                )
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                        modifier = Modifier.minimumInteractiveComponentSize()
+                                    ) {
+                                        Text(text = actionLabel, style = MaterialTheme.typography.labelMedium)
+                                    }
+                                }
+                            }
+                            if (notice.dismissible) {
+                                IconButton(
+                                    onClick = { onDismissLiveNotice(notice.id) },
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("dismiss_live_notice_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Close,
+                                        contentDescription = strings.laterButton,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Category Filter Pills
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
@@ -408,9 +529,10 @@ fun MarketFeedScreen(
                                 modifier = Modifier.size(48.dp)
                             )
                             Text(
-                                text = strings.offlineCachedBanner,
+                                text = strings.networkUnavailableBanner,
                                 style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center
                             )
                             Button(
                                 onClick = onRefreshClick,
@@ -722,6 +844,14 @@ private fun MarketAssetListRow(
 
             Spacer(modifier = Modifier.width(12.dp))
 
+            val rowStatusText = when {
+                asset.disputed -> strings.disputedLabel
+                asset.freshness == DataFreshness.DELAYED -> strings.delayedBadge
+                asset.freshness == DataFreshness.CACHED -> strings.cachedBadge
+                asset.freshness == DataFreshness.UNAVAILABLE -> strings.unavailableBadge
+                else -> null
+            }
+
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = if (isFa) asset.nameFa else asset.nameEn,
@@ -747,6 +877,14 @@ private fun MarketAssetListRow(
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
+                    }
+                    if (rowStatusText != null) {
+                        Text(
+                            text = rowStatusText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (asset.disputed) marketColors.gold else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
                     }
                 }
             }

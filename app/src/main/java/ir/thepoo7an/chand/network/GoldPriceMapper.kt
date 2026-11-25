@@ -69,7 +69,7 @@ internal object GoldPriceMapper {
 
         val onsConsensus = MarketValidationHelpers.validateCrossSourcePrices(
             candidates = allSpotCandidates,
-            thresholdPct = MarketValidationConfig.FIAT_DISAGREEMENT_THRESHOLD_PCT,
+            thresholdPct = MarketValidationConfig.effectiveFiatDisagreementThresholdPct(),
             nowMillis = nowMillis
         )
         val hasRealOns = onsConsensus != null

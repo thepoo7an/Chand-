@@ -75,17 +75,14 @@ interface FinancialRetrofitApi {
         @Query("to") to: String
     ): FrankfurterTimeSeriesResponse
 
-    @GET("https://open.er-api.com/v6/latest/USD")
-    suspend fun getOpenExchangeRatesLatest(): OpenErLatestResponse
-
-    @GET("https://api.gold-api.com/price/XAU")
-    suspend fun getGoldSpotXau(): GoldSpotResponse
-
-    @GET("https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{date}/v1/currencies/usd.json")
-    suspend fun getCurrencyCdnSnapshot(@Path("date") date: String): CurrencyCdnResponse
+    @GET
+    suspend fun getOpenExchangeRatesLatest(@Url url: String): OpenErLatestResponse
 
     @GET
-    suspend fun getCurrencyCdnFallback(@Url url: String): CurrencyCdnResponse
+    suspend fun getGoldSpotXau(@Url url: String): GoldSpotResponse
+
+    @GET
+    suspend fun getCurrencyCdnSnapshot(@Url url: String): CurrencyCdnResponse
 }
 
 /**
@@ -153,17 +150,21 @@ class FinancialApiService(
     suspend fun fetchLiveUsdRateSnapshot(nowMillis: Long = System.currentTimeMillis()): SourcedFxSnapshot =
         withContext(Dispatchers.IO) {
             liveUsdDeduplicator.execute("live") {
+                val ep = LiveConfigRegistry.currentConfig().endpoints
+                val openErUrl = ep.openErLatestUrl.ifBlank { DEFAULT_OPEN_ER_URL }
+                val frankfurterUrls = ep.frankfurterLatestUrls.ifEmpty { DEFAULT_FRANKFURTER_LATEST_URLS }
                 coroutineScope {
                     val openErDeferred = async {
-                        safeRetry(RequestProfile.FAST_QUOTE) { quoteApi.getOpenExchangeRatesLatest() }
+                        safeRetry(RequestProfile.FAST_QUOTE) { quoteApi.getOpenExchangeRatesLatest(openErUrl) }
                     }
                     val cdnDeferred = async { fetchCdnResponse("latest") }
                     val frankfurterDeferred = async {
-                        safeRetry(RequestProfile.FAST_QUOTE) {
-                            quoteApi.getFrankfurterLatest("https://api.frankfurter.dev/v1/latest?base=USD")
-                        } ?: safeRetry(RequestProfile.FAST_QUOTE) {
-                            quoteApi.getFrankfurterLatest("https://api.frankfurter.app/latest?from=USD")
+                        var res: FrankfurterLatestResponse? = null
+                        for (url in frankfurterUrls) {
+                            res = safeRetry(RequestProfile.FAST_QUOTE) { quoteApi.getFrankfurterLatest(url) }
+                            if (res != null && res.rates.isNotEmpty()) break
                         }
+                        res
                     }
 
                     val openEr = openErDeferred.await()
@@ -225,7 +226,7 @@ class FinancialApiService(
                     if (sym != "XAU") {
                         MarketPriceMapper.validateCrossSourcePrices(
                             candidates = list,
-                            thresholdPct = MarketValidationConfig.FIAT_DISAGREEMENT_THRESHOLD_PCT,
+                            thresholdPct = MarketValidationConfig.effectiveFiatDisagreementThresholdPct(),
                             nowMillis = nowMillis
                         )?.let { consensusMap[sym] = it }
                     }
@@ -269,7 +270,9 @@ class FinancialApiService(
     suspend fun fetchLiveGoldSpotCandidate(nowMillis: Long = System.currentTimeMillis()): MarketPriceMapper.PriceCandidate? =
         withContext(Dispatchers.IO) {
             liveGoldSpotDeduplicator.execute("xau") {
-                val resp = safeRetry(RequestProfile.FAST_QUOTE) { quoteApi.getGoldSpotXau() }
+                val goldUrl = LiveConfigRegistry.currentConfig().endpoints.goldSpotXauUrl
+                    .ifBlank { DEFAULT_GOLD_SPOT_URL }
+                val resp = safeRetry(RequestProfile.FAST_QUOTE) { quoteApi.getGoldSpotXau(goldUrl) }
                 if (resp != null && resp.price in 1000.0..10_000.0) {
                     val ts = parseIsoTimestampMillis(resp.updatedAt) ?: nowMillis
                     MarketPriceMapper.PriceCandidate(
@@ -391,11 +394,17 @@ class FinancialApiService(
             val startStr = sdf.format(Date(fromSec * 1000L))
             val endStr = sdf.format(Date(toSec * 1000L))
 
-            val resp = safeRetry(RequestProfile.HISTORY) {
-                historyApi.getFrankfurterSeries("https://api.frankfurter.dev/v1/$startStr..$endStr", "USD", toParam)
-            } ?: safeRetry(RequestProfile.HISTORY) {
-                historyApi.getFrankfurterSeries("https://api.frankfurter.app/$startStr..$endStr", "USD", toParam)
-            } ?: return@execute emptyMap()
+            val seriesTemplates = LiveConfigRegistry.currentConfig().endpoints.frankfurterSeriesUrlTemplates
+                .ifEmpty { DEFAULT_FRANKFURTER_SERIES_TEMPLATES }
+            var resp: FrankfurterTimeSeriesResponse? = null
+            for (tmpl in seriesTemplates) {
+                val url = tmpl.replace("{start}", startStr).replace("{end}", endStr)
+                resp = safeRetry(RequestProfile.HISTORY) {
+                    historyApi.getFrankfurterSeries(url, "USD", toParam)
+                }
+                if (resp != null && resp.rates.isNotEmpty()) break
+            }
+            if (resp == null) return@execute emptyMap()
 
             val result = LinkedHashMap<String, MutableList<Pair<Long, Double>>>()
             resp.rates.entries
@@ -425,11 +434,17 @@ class FinancialApiService(
         val startStr = sdf.format(Date(fromSec * 1000L))
         val endStr = sdf.format(Date(toSec * 1000L))
 
-        val resp = safeRetry(RequestProfile.HISTORY) {
-            historyApi.getFrankfurterSeries("https://api.frankfurter.dev/v1/$startStr..$endStr", "USD", targetSymbol)
-        } ?: safeRetry(RequestProfile.HISTORY) {
-            historyApi.getFrankfurterSeries("https://api.frankfurter.app/$startStr..$endStr", "USD", targetSymbol)
-        } ?: return emptyList()
+        val seriesTemplates = LiveConfigRegistry.currentConfig().endpoints.frankfurterSeriesUrlTemplates
+            .ifEmpty { DEFAULT_FRANKFURTER_SERIES_TEMPLATES }
+        var resp: FrankfurterTimeSeriesResponse? = null
+        for (tmpl in seriesTemplates) {
+            val url = tmpl.replace("{start}", startStr).replace("{end}", endStr)
+            resp = safeRetry(RequestProfile.HISTORY) {
+                historyApi.getFrankfurterSeries(url, "USD", targetSymbol)
+            }
+            if (resp != null && resp.rates.isNotEmpty()) break
+        }
+        if (resp == null) return emptyList()
 
         val rawPairs = resp.rates.entries
             .sortedBy { it.key }
@@ -478,12 +493,14 @@ class FinancialApiService(
         cdnResponseDeduplicator.execute(dateTag) {
             val profile = if (dateTag == "latest") RequestProfile.FAST_QUOTE else RequestProfile.HISTORY
             val clientApi = if (dateTag == "latest") quoteApi else historyApi
-            val primary = safeRetry(profile) { clientApi.getCurrencyCdnSnapshot(dateTag) }
-            if (primary != null && primary.usd.isNotEmpty()) return@execute primary
-            val fallback = safeRetry(profile) {
-                clientApi.getCurrencyCdnFallback("https://$dateTag.currency-api.pages.dev/v1/currencies/usd.json")
+            val templates = LiveConfigRegistry.currentConfig().endpoints.currencyCdnUrlTemplates
+                .ifEmpty { DEFAULT_CURRENCY_CDN_TEMPLATES }
+            for (tmpl in templates) {
+                val url = tmpl.replace("{date}", dateTag)
+                val resp = safeRetry(profile) { clientApi.getCurrencyCdnSnapshot(url) }
+                if (resp != null && resp.usd.isNotEmpty()) return@execute resp
             }
-            fallback?.takeIf { it.usd.isNotEmpty() }
+            null
         }
 
     private suspend fun fetchCdnRates(dateTag: String): Map<String, Double> =
@@ -515,6 +532,21 @@ class FinancialApiService(
     }
 
     companion object {
+        internal const val DEFAULT_OPEN_ER_URL = "https://open.er-api.com/v6/latest/USD"
+        internal const val DEFAULT_GOLD_SPOT_URL = "https://api.gold-api.com/price/XAU"
+        internal val DEFAULT_FRANKFURTER_LATEST_URLS = listOf(
+            "https://api.frankfurter.dev/v1/latest?base=USD",
+            "https://api.frankfurter.app/latest?from=USD"
+        )
+        internal val DEFAULT_FRANKFURTER_SERIES_TEMPLATES = listOf(
+            "https://api.frankfurter.dev/v1/{start}..{end}",
+            "https://api.frankfurter.app/{start}..{end}"
+        )
+        internal val DEFAULT_CURRENCY_CDN_TEMPLATES = listOf(
+            "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@{date}/v1/currencies/usd.json",
+            "https://{date}.currency-api.pages.dev/v1/currencies/usd.json"
+        )
+
         private val ECB_SUPPORTED_CURRENCIES = setOf(
             "EUR", "GBP", "TRY", "CAD", "CHF", "CNY", "AUD", "JPY",
             "BGN", "BRL", "CZK", "DKK", "HKD", "HUF", "IDR", "ILS",

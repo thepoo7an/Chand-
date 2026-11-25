@@ -89,6 +89,14 @@
                 android:resource="@xml/chand_widget_lockscreen_info" />
         </receiver>
 
+        <receiver
+            android:name=".widget.ChandPackageReplacedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name=".widget.WidgetConnectivityJobService"
             android:exported="false"

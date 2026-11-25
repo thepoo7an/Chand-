@@ -110,7 +110,26 @@ data class ChandStrings(
     val retryDownloadButton: String,
     val openUpdateCatalogButton: String,
     val openInBrowserFallback: String,
-    val publishedAtPrefix: String
+    val publishedAtPrefix: String,
+    val networkUnavailableBanner: String,
+    val liveConfigSection: String,
+    val liveConfigSubtitle: String,
+    val liveConfigSyncButton: String,
+    val liveConfigSyncingLabel: String,
+    val liveConfigResetButton: String,
+    val liveConfigBuiltInLabel: String,
+    val liveConfigVersionPrefix: String,
+    val liveConfigLastSyncPrefix: String,
+    val liveConfigUrlLabel: String,
+    val liveConfigUrlPlaceholder: String,
+    val liveConfigSyncedToast: String,
+    val liveConfigNoRemoteLabel: String,
+    val liveConfigIncompatibleLabel: String,
+    val liveConfigErrorLabel: String,
+    val liveConfigChangesTitle: String,
+    val liveConfigOverridesActiveLabel: String,
+    val liveConfigDefaultSummary: String,
+    val chartsDisabledNotice: String
 ) {
     fun categoryLabel(category: AssetCategory): String = when (category) {
         AssetCategory.ALL -> categoryAll
@@ -221,7 +240,26 @@ val FaStrings = ChandStrings(
     retryDownloadButton = "تلاش مجدد دانلود",
     openUpdateCatalogButton = "مشاهده کاتالوگ تغییرات و آپدیت",
     openInBrowserFallback = "دانلود از مرورگر",
-    publishedAtPrefix = "انتشار:"
+    publishedAtPrefix = "انتشار:",
+    networkUnavailableBanner = "اتصال اینترنت برقرار نیست و نرخ ذخیره‌شده‌ای وجود ندارد",
+    liveConfigSection = "بروزرسانی آنلاین قوانین و منابع (بدون نصب APK)",
+    liveConfigSubtitle = "دریافت خودکار آدرس سرورها، ارزهای جدید، آستانه اعتبارسنجی و اصلاحات فوری بدون دانلود نسخه جدید",
+    liveConfigSyncButton = "همگام‌سازی آنلاین",
+    liveConfigSyncingLabel = "در حال دریافت...",
+    liveConfigResetButton = "بازگشت به تنظیم پایه",
+    liveConfigBuiltInLabel = "تنظیمات پایه داخلی فعال است",
+    liveConfigVersionPrefix = "نسخه پیکربندی آنلاین:",
+    liveConfigLastSyncPrefix = "آخرین همگام‌سازی:",
+    liveConfigUrlLabel = "آدرس مستقیم پیکربندی آنلاین (HTTPS اختیاری)",
+    liveConfigUrlPlaceholder = "خالی = دریافت خودکار از مخزن گیت‌هاب / CDN",
+    liveConfigSyncedToast = "اصلاحات و تنظیمات آنلاین با موفقیت اعمال شد",
+    liveConfigNoRemoteLabel = "فایل پیکربندی آنلاین در مخزن پیدا نشد — تنظیم پایه فعال است",
+    liveConfigIncompatibleLabel = "این پیکربندی آنلاین برای نسخه جدیدتر برنامه است",
+    liveConfigErrorLabel = "خطا در دریافت تنظیمات آنلاین",
+    liveConfigChangesTitle = "تغییرات اعمال‌شده روی این نسخه",
+    liveConfigOverridesActiveLabel = "قانون فعال",
+    liveConfigDefaultSummary = "تنظیمات لحظه‌ای منابع و دارایی‌ها به‌روز است",
+    chartsDisabledNotice = "نمایش نمودار تاریخی موقتاً توسط تنظیمات آنلاین غیرفعال شده است"
 )
 
 val EnStrings = ChandStrings(
@@ -324,7 +362,26 @@ val EnStrings = ChandStrings(
     retryDownloadButton = "Retry Download",
     openUpdateCatalogButton = "View Changelog & Update",
     openInBrowserFallback = "Download in Browser",
-    publishedAtPrefix = "Published:"
+    publishedAtPrefix = "Published:",
+    networkUnavailableBanner = "No internet connection and no cached rates available",
+    liveConfigSection = "Online Live Patch & Rules (No APK Install)",
+    liveConfigSubtitle = "Apply API mirror fixes, new currencies, validation thresholds, and feature flags live without downloading a new APK",
+    liveConfigSyncButton = "Sync Online Rules",
+    liveConfigSyncingLabel = "Syncing...",
+    liveConfigResetButton = "Reset Built-in",
+    liveConfigBuiltInLabel = "Using built-in default rules",
+    liveConfigVersionPrefix = "Live Config v",
+    liveConfigLastSyncPrefix = "Last synced:",
+    liveConfigUrlLabel = "Custom Live Config URL (Optional HTTPS)",
+    liveConfigUrlPlaceholder = "Blank = auto-fetch from GitHub / jsDelivr CDN",
+    liveConfigSyncedToast = "Online rules applied cleanly to current version",
+    liveConfigNoRemoteLabel = "No remote chand-live-config.json published yet — using built-in rules",
+    liveConfigIncompatibleLabel = "Remote config targets a newer app version",
+    liveConfigErrorLabel = "Could not fetch online configuration",
+    liveConfigChangesTitle = "Live Changes Applied Now",
+    liveConfigOverridesActiveLabel = "active rule(s)",
+    liveConfigDefaultSummary = "Online endpoints and market rules are up to date",
+    chartsDisabledNotice = "Historical charts are temporarily paused via online configuration"
 )
 
 fun stringsFor(language: AppLanguage): ChandStrings =
@@ -335,6 +392,7 @@ object NumberFormatters {
     private val integerFmt = DecimalFormat("#,##0", usSymbols)
     private val twoDecimalFmt = DecimalFormat("#,##0.##", usSymbols)
     private val fourDecimalFmt = DecimalFormat("#,##0.####", usSymbols)
+    private val eightDecimalFmt = DecimalFormat("#,##0.########", usSymbols)
 
     fun toPersianDigits(input: String): String {
         val sb = StringBuilder(input.length)
@@ -363,9 +421,26 @@ object NumberFormatters {
 
     fun formatToman(amount: Double, usePersianDigits: Boolean): String {
         val formatted = when {
+            !amount.isFinite() -> "0"
             abs(amount) >= 100.0 -> integerFmt.format(amount)
             abs(amount) >= 1.0 -> twoDecimalFmt.format(amount)
             else -> fourDecimalFmt.format(amount)
+        }
+        return applyDigits(formatted, usePersianDigits)
+    }
+
+    /**
+     * High-precision formatter for Converter outputs (supports small fractional crypto units
+     * like Toman -> 0.00001425 BTC while keeping clean grouping for large values).
+     */
+    fun formatConverterAmount(amount: Double, usePersianDigits: Boolean): String {
+        val absAmt = abs(amount)
+        val formatted = when {
+            !amount.isFinite() || absAmt == 0.0 -> "0"
+            absAmt >= 100.0 -> integerFmt.format(amount)
+            absAmt >= 1.0 -> twoDecimalFmt.format(amount)
+            absAmt >= 0.01 -> fourDecimalFmt.format(amount)
+            else -> eightDecimalFmt.format(amount)
         }
         return applyDigits(formatted, usePersianDigits)
     }

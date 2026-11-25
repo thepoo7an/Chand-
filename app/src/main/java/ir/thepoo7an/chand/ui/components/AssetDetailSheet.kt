@@ -52,6 +52,7 @@ import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.AssetHistoryPoint
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.model.RemoteFeaturesConfig
 import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
@@ -68,6 +69,7 @@ fun AssetDetailSheet(
     selectedRange: TimeRange,
     prefs: AppPreferences,
     strings: ChandStrings,
+    features: RemoteFeaturesConfig = RemoteFeaturesConfig(),
     onSelectRange: (TimeRange) -> Unit,
     onRetryHistory: () -> Unit,
     onTogglePin: () -> Unit,
@@ -264,6 +266,14 @@ fun AssetDetailSheet(
                         contentAlignment = Alignment.Center
                     ) {
                         when {
+                            !features.enableHistoricalCharts -> {
+                                Text(
+                                    text = strings.chartsDisabledNotice,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(16.dp)
+                                )
+                            }
                             isHistoryLoading && historyPoints.isEmpty() -> {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(28.dp),
@@ -433,7 +443,7 @@ fun AssetDetailSheet(
                 )
             }
 
-            if (asset.intrinsicValueToman != null) {
+            if (features.enableCoinBubbleEstimate && asset.intrinsicValueToman != null) {
                 Spacer(modifier = Modifier.height(10.dp))
                 val bubbleDisplay = if (asset.bubbleToman != null && asset.bubblePercent != null) {
                     val amt = NumberFormatters.formatToman(asset.bubbleToman, prefs.usePersianDigits)

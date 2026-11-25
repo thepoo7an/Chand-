@@ -8,6 +8,7 @@ import ir.thepoo7an.chand.model.AssetHistoryResult
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.model.RemoteAppConfig
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.network.AppUpdateService
@@ -17,6 +18,8 @@ import ir.thepoo7an.chand.network.InFlightRequestDeduplicator
 import ir.thepoo7an.chand.network.MarketDataSource
 import ir.thepoo7an.chand.network.MarketPriceMapper
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
+import ir.thepoo7an.chand.network.RemoteConfigService
+import ir.thepoo7an.chand.network.RemoteConfigSyncResult
 import ir.thepoo7an.chand.widget.WidgetSyncCoordinator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -40,6 +43,7 @@ class MarketRepository(
     private val prefsRepo: PreferencesRepository,
     private val remote: MarketDataSource = MarketRemoteDataSource(),
     private val updateService: AppUpdateService = AppUpdateService(),
+    private val remoteConfigService: RemoteConfigService = RemoteConfigService(),
     private val clockMillis: () -> Long = { System.currentTimeMillis() }
 ) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -48,10 +52,14 @@ class MarketRepository(
     private val historyDeduplicator = InFlightRequestDeduplicator<String, AssetHistoryResult>()
 
     val preferencesFlow: Flow<AppPreferences> = prefsRepo.preferencesFlow
+    val remoteConfigFlow: Flow<RemoteAppConfig> = prefsRepo.remoteConfigFlow
 
     suspend fun loadCached(): CachedMarketSnapshot? = prefsRepo.loadCachedSnapshot()
 
+    suspend fun hydrateLiveConfig(): RemoteAppConfig = prefsRepo.hydrateLiveConfig()
+
     suspend fun refreshMarket(): MarketSyncResult = refreshDeduplicator.execute("refresh") {
+        prefsRepo.hydrateLiveConfig()
         val cached = prefsRepo.loadCachedSnapshot()
         val cachedAssetsById = cached?.assets?.associateBy { it.id }.orEmpty()
         val lastKnownUsd = cachedAssetsById["USD"]?.priceToman?.takeIf { it > 1_000.0 }
@@ -222,6 +230,39 @@ class MarketRepository(
 
     suspend fun setGithubRepoSlug(slug: String) {
         prefsRepo.setGithubRepoSlug(slug)
+    }
+
+    suspend fun setLiveConfigUrl(url: String) {
+        prefsRepo.setLiveConfigUrl(url)
+    }
+
+    suspend fun setDismissedLiveNoticeId(id: String) {
+        prefsRepo.setDismissedLiveNoticeId(id)
+    }
+
+    suspend fun setDismissedUpdateTag(tag: String) {
+        prefsRepo.setDismissedUpdateTag(tag)
+    }
+
+    suspend fun syncLiveConfig(
+        repoSlug: String,
+        customUrl: String
+    ): RemoteConfigSyncResult {
+        prefsRepo.hydrateLiveConfig()
+        val result = remoteConfigService.fetchLiveConfig(
+            repoSlug = repoSlug,
+            customConfigUrl = customUrl
+        )
+        if (result is RemoteConfigSyncResult.Applied) {
+            prefsRepo.saveLiveConfig(result.config, result.syncedAtMillis)
+            updateAllWidgets()
+        }
+        return result
+    }
+
+    suspend fun resetLiveConfig() {
+        prefsRepo.resetLiveConfig()
+        updateAllWidgets()
     }
 
     suspend fun checkForUpdate(repoSlug: String): AppUpdateState =

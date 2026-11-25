@@ -114,7 +114,11 @@ data class AppPreferences(
     val widgetTranslucent: Boolean = true,
     val widgetOpacityPercent: Int = 70,
     val widgetHeroAssetId: String = "USD",
-    val githubRepoSlug: String = ir.thepoo7an.chand.BuildConfig.GITHUB_REPOSITORY
+    val githubRepoSlug: String = ir.thepoo7an.chand.BuildConfig.GITHUB_REPOSITORY,
+    val liveConfigUrl: String = "",
+    val liveConfigLastSyncMillis: Long = 0L,
+    val dismissedLiveNoticeId: String = "",
+    val dismissedUpdateTag: String = ""
 ) {
     companion object {
         val DEFAULT_PINNED_IDS = setOf("USD", "EUR", "AED", "GBP", "GOLD_18K", "COIN_QUARTER", "COIN_HALF", "USDT", "BTC", "ETH")

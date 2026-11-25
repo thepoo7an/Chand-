@@ -45,19 +45,44 @@ object MarketValidationConfig {
     const val HISTORY_CORROBORATION_DAILY_TOLERANCE_SEC: Long = 12L * 3_600L
 
     /**
-     * Returns the single-tick reverting spike threshold (%) calibrated by asset [category] and [range].
+     * Returns the single-tick reverting spike threshold (%) calibrated by asset [category] and [range],
+     * incorporating any active online [LiveConfigRegistry] override.
      * - 24H: 15% for every category.
      * - 7D / 1M / 1Y (daily or coarser buckets): 40% for crypto, 15% for fiat and gold.
      */
-    fun spikeThresholdPct(category: AssetCategory, range: TimeRange): Double = when (range) {
-        TimeRange.H24 -> HISTORY_SPIKE_THRESHOLD_24H_PCT
-        TimeRange.D7, TimeRange.M1, TimeRange.Y1 -> when (category) {
-            AssetCategory.CRYPTO -> HISTORY_SPIKE_THRESHOLD_CRYPTO_MULTI_DAY_PCT
-            AssetCategory.FIAT -> HISTORY_SPIKE_THRESHOLD_FIAT_MULTI_DAY_PCT
-            AssetCategory.GOLD -> HISTORY_SPIKE_THRESHOLD_GOLD_MULTI_DAY_PCT
-            AssetCategory.ALL, AssetCategory.PINNED -> HISTORY_SPIKE_THRESHOLD_PCT
+    fun spikeThresholdPct(category: AssetCategory, range: TimeRange): Double {
+        val overrides = LiveConfigRegistry.currentConfig().validation
+        return when (range) {
+            TimeRange.H24 -> overrides.spikeThreshold24hPct ?: HISTORY_SPIKE_THRESHOLD_24H_PCT
+            TimeRange.D7, TimeRange.M1, TimeRange.Y1 -> when (category) {
+                AssetCategory.CRYPTO -> overrides.spikeThresholdCryptoMultiDayPct
+                    ?: HISTORY_SPIKE_THRESHOLD_CRYPTO_MULTI_DAY_PCT
+                AssetCategory.FIAT -> overrides.spikeThresholdFiatMultiDayPct
+                    ?: HISTORY_SPIKE_THRESHOLD_FIAT_MULTI_DAY_PCT
+                AssetCategory.GOLD -> overrides.spikeThresholdGoldMultiDayPct
+                    ?: HISTORY_SPIKE_THRESHOLD_GOLD_MULTI_DAY_PCT
+                AssetCategory.ALL, AssetCategory.PINNED -> HISTORY_SPIKE_THRESHOLD_PCT
+            }
         }
     }
+
+    fun effectiveCryptoDisagreementThresholdPct(): Double =
+        LiveConfigRegistry.currentConfig().validation.cryptoDisagreementThresholdPct
+            ?: CRYPTO_DISAGREEMENT_THRESHOLD_PCT
+
+    fun effectiveFiatDisagreementThresholdPct(): Double =
+        LiveConfigRegistry.currentConfig().validation.fiatDisagreementThresholdPct
+            ?: FIAT_DISAGREEMENT_THRESHOLD_PCT
+
+    fun effectiveCryptoLiveMaxAgeMillis(): Long =
+        LiveConfigRegistry.currentConfig().validation.cryptoLiveMaxAgeMinutes
+            ?.let { it.toLong() * 60L * 1000L }
+            ?: CRYPTO_LIVE_MAX_AGE_MILLIS
+
+    fun effectiveFiatGoldLiveMaxAgeMillis(): Long =
+        LiveConfigRegistry.currentConfig().validation.fiatGoldLiveMaxAgeMinutes
+            ?.let { it.toLong() * 60L * 1000L }
+            ?: FIAT_GOLD_LIVE_MAX_AGE_MILLIS
 
     /**
      * Returns bucket-sized timestamp tolerance (seconds) for cross-provider spike corroboration.

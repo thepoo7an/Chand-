@@ -67,11 +67,56 @@ class MarketRemoteDataSource(
         "XAU_OZ" to "pax-gold"
     )
 
+    private fun effectiveTgjuSlugs(): Map<String, String> {
+        val cfg = LiveConfigRegistry.currentConfig()
+        val map = tgjuSlugs.toMutableMap()
+        cfg.assetOverrides.forEach { ov ->
+            if (!ov.tgjuKey.isNullOrBlank()) map[ov.id] = ov.tgjuKey
+        }
+        cfg.extraAssets.forEach { extra ->
+            if (!extra.tgjuKey.isNullOrBlank()) map[extra.id] = extra.tgjuKey
+        }
+        return map
+    }
+
+    private fun effectiveCoinGeckoIds(): Map<String, String> {
+        val cfg = LiveConfigRegistry.currentConfig()
+        val map = coinGeckoIds.toMutableMap()
+        cfg.assetOverrides.forEach { ov ->
+            if (!ov.coinGeckoId.isNullOrBlank()) map[ov.id] = ov.coinGeckoId
+        }
+        cfg.extraAssets.forEach { extra ->
+            if (!extra.coinGeckoId.isNullOrBlank()) map[extra.id] = extra.coinGeckoId
+        }
+        return map
+    }
+
+    private fun isAssetDisabled(id: String, cfg: ir.thepoo7an.chand.model.RemoteAppConfig): Boolean {
+        if (id == "USD") return false
+        if (id in cfg.disabledAssetIds) return true
+        return cfg.assetOverrides.firstOrNull { it.id == id }?.enabled == false
+    }
+
+    private fun applyAssetOverride(
+        asset: MarketAsset,
+        cfg: ir.thepoo7an.chand.model.RemoteAppConfig
+    ): MarketAsset {
+        val ov = cfg.assetOverrides.firstOrNull { it.id == asset.id } ?: return asset
+        return asset.copy(
+            symbol = ov.symbol ?: asset.symbol,
+            nameFa = ov.nameFa ?: asset.nameFa,
+            nameEn = ov.nameEn ?: asset.nameEn,
+            badgeText = ov.badgeText ?: asset.badgeText,
+            accentHex = ov.accentHex ?: asset.accentHex
+        )
+    }
+
     override suspend fun fetchLiveMarket(
         lastKnownUsdToman: Double?,
         cachedAssetsById: Map<String, MarketAsset>
     ): RemoteFetchResult = withContext(Dispatchers.IO) {
-        val dedupeKey = "${lastKnownUsdToman ?: "none"}|${cachedAssetsById.size}"
+        val liveConfig = LiveConfigRegistry.currentConfig()
+        val dedupeKey = "${lastKnownUsdToman ?: "none"}|${cachedAssetsById.size}|cfg${liveConfig.configVersion}"
         liveMarketDeduplicator.execute(dedupeKey) {
             try {
                 coroutineScope {
@@ -79,11 +124,83 @@ class MarketRemoteDataSource(
                     val nowSec = nowMillis / 1000L
                     val from24hSec = nowSec - 24L * 3600L
 
+                val effectiveFiats = buildList {
+                    MarketPriceMapper.SUPPORTED_FIATS.forEach { spec ->
+                        if (!isAssetDisabled(spec.id, liveConfig)) {
+                            val ov = liveConfig.assetOverrides.firstOrNull { it.id == spec.id }
+                            add(
+                                spec.copy(
+                                    symbol = ov?.symbol ?: spec.symbol,
+                                    nameFa = ov?.nameFa ?: spec.nameFa,
+                                    nameEn = ov?.nameEn ?: spec.nameEn,
+                                    badge = ov?.badgeText ?: spec.badge,
+                                    accentHex = ov?.accentHex ?: spec.accentHex,
+                                    tgjuKey = ov?.tgjuKey ?: spec.tgjuKey,
+                                    fxCode = ov?.fxCode ?: spec.fxCode
+                                )
+                            )
+                        }
+                    }
+                    liveConfig.extraAssets
+                        .filter { it.category == AssetCategory.FIAT && !isAssetDisabled(it.id, liveConfig) }
+                        .forEach { extra ->
+                            if (none { it.id == extra.id }) {
+                                add(
+                                    MarketPriceMapper.FiatSpec(
+                                        id = extra.id,
+                                        symbol = extra.symbol,
+                                        nameFa = extra.nameFa,
+                                        nameEn = extra.nameEn,
+                                        badge = extra.badgeText,
+                                        accentHex = extra.accentHex,
+                                        tgjuKey = extra.tgjuKey ?: "",
+                                        fxCode = extra.fxCode ?: extra.symbol
+                                    )
+                                )
+                            }
+                        }
+                }
+
+                val effectiveCryptos = buildList {
+                    MarketPriceMapper.SUPPORTED_CRYPTOS.forEach { spec ->
+                        if (!isAssetDisabled(spec.id, liveConfig)) {
+                            val ov = liveConfig.assetOverrides.firstOrNull { it.id == spec.id }
+                            add(
+                                spec.copy(
+                                    nameFa = ov?.nameFa ?: spec.nameFa,
+                                    nameEn = ov?.nameEn ?: spec.nameEn,
+                                    badge = ov?.badgeText ?: spec.badge,
+                                    accentHex = ov?.accentHex ?: spec.accentHex
+                                )
+                            )
+                        }
+                    }
+                    liveConfig.extraAssets
+                        .filter { it.category == AssetCategory.CRYPTO && !isAssetDisabled(it.id, liveConfig) }
+                        .forEach { extra ->
+                            if (none { it.id == extra.id }) {
+                                add(
+                                    MarketPriceMapper.CryptoSpec(
+                                        id = extra.id,
+                                        nameFa = extra.nameFa,
+                                        nameEn = extra.nameEn,
+                                        badge = extra.badgeText,
+                                        accentHex = extra.accentHex
+                                    )
+                                )
+                            }
+                        }
+                }
+
+                val extraBinanceSymbols = effectiveCryptos
+                    .filter { it.id != "USDT" }
+                    .map { "${it.id}USDT" }
+
                 val tgjuDeferred = async { fetchTgjuQuotes(nowMillis) }
                 val wallexDeferred = async { fetchWallexQuotes(nowMillis) }
                 val bitpinDeferred = async { fetchBitpinQuotes(nowMillis) }
                 val nobitexUsdtDeferred = async { fetchNobitexOrderbook("USDTIRT", nowMillis) }
-                val binanceDeferred = async { fetchBinanceQuotes(nowMillis) }
+                val binanceDeferred = async { fetchBinanceQuotes(nowMillis, extraBinanceSymbols) }
                 val fxSnapshotDeferred = async { financialApi.fetchLiveUsdRateSnapshot(nowMillis) }
                 val goldSpotDeferred = async { financialApi.fetchLiveGoldSpotCandidate(nowMillis) }
 
@@ -102,7 +219,7 @@ class MarketRemoteDataSource(
                 val from7dSec = nowSec - 7L * 24L * 3600L
                 val multiFxHistoryDeferred = async {
                     financialApi.fetchMultiCurrencyRange(
-                        symbols = MarketPriceMapper.SUPPORTED_FIATS.map { it.fxCode },
+                        symbols = effectiveFiats.map { it.fxCode },
                         fromSec = from7dSec,
                         toSec = nowSec,
                         range = TimeRange.D7
@@ -236,7 +353,7 @@ class MarketRemoteDataSource(
                     )
                 )
 
-                MarketPriceMapper.SUPPORTED_FIATS.forEach { spec ->
+                effectiveFiats.forEach { spec ->
                     val fxSeries = multiFxHistory[spec.fxCode].orEmpty()
                     val currencySpark = if (fxSeries.size >= 3) {
                         fxSeries.map { (ts, fx) ->
@@ -255,7 +372,7 @@ class MarketRemoteDataSource(
                         spec = spec,
                         usdToman = usdToman,
                         usdChangePct = usdChangePct,
-                        tgjuQuote = tgju[spec.tgjuKey],
+                        tgjuQuote = spec.tgjuKey.takeIf { it.isNotBlank() }?.let { tgju[it] },
                         fxPerUsd = fxConsensus?.price,
                         usdtSpark = usdtSpark,
                         nowMillis = fetchDoneMillis,
@@ -270,25 +387,66 @@ class MarketRemoteDataSource(
                 if (liveGoldSpotCandidate != null) spotCandidates.add(liveGoldSpotCandidate)
                 spotCandidates.addAll(fxSnapshot.goldSpotXauCandidates)
 
-                assets.addAll(
-                    MarketPriceMapper.mapGoldAssets(
-                        tgju = tgju,
-                        usdToman = usdToman,
-                        usdChangePct = usdChangePct,
-                        usdBasisFreshness = resolvedUsd.usdFreshness,
-                        usdSourceTimestampMillis = resolvedUsd.usdSourceTimestampMillis,
-                        goldSpotCandidates = spotCandidates,
-                        paxgQuote = binance["PAXG"],
-                        tgjuGoldRecent = tgjuGoldRecent,
-                        goldSpark = goldSpark,
-                        usdtSpark = usdtSpark,
-                        cachedAssetsById = cachedAssetsById,
-                        nowMillis = fetchDoneMillis,
-                        computeTableDelta = ::computeRecentTableDelta
-                    )
-                )
+                val mappedGolds = MarketPriceMapper.mapGoldAssets(
+                    tgju = tgju,
+                    usdToman = usdToman,
+                    usdChangePct = usdChangePct,
+                    usdBasisFreshness = resolvedUsd.usdFreshness,
+                    usdSourceTimestampMillis = resolvedUsd.usdSourceTimestampMillis,
+                    goldSpotCandidates = spotCandidates,
+                    paxgQuote = binance["PAXG"],
+                    tgjuGoldRecent = tgjuGoldRecent,
+                    goldSpark = goldSpark,
+                    usdtSpark = usdtSpark,
+                    cachedAssetsById = cachedAssetsById,
+                    nowMillis = fetchDoneMillis,
+                    computeTableDelta = ::computeRecentTableDelta
+                ).filterNot { isAssetDisabled(it.id, liveConfig) }
+                    .map { applyAssetOverride(it, liveConfig) }
+                assets.addAll(mappedGolds)
 
-                MarketPriceMapper.SUPPORTED_CRYPTOS.forEach { spec ->
+                // Support any dynamic extra Gold assets from remote config referencing TGJU
+                liveConfig.extraAssets
+                    .filter { it.category == AssetCategory.GOLD && !isAssetDisabled(it.id, liveConfig) && assets.none { existing -> existing.id == it.id } }
+                    .forEach { extra ->
+                        val q = extra.tgjuKey?.let { tgju[it] }
+                        if (q != null && q.priceToman > 0.0) {
+                            val ts = q.timestampMillis.takeIf { it > 0L } ?: fetchDoneMillis
+                            assets.add(
+                                MarketAsset(
+                                    id = extra.id,
+                                    symbol = extra.symbol,
+                                    nameFa = extra.nameFa,
+                                    nameEn = extra.nameEn,
+                                    category = AssetCategory.GOLD,
+                                    badgeText = extra.badgeText,
+                                    accentHex = extra.accentHex,
+                                    priceToman = q.priceToman,
+                                    priceUsd = if (usdToman > 0.0) q.priceToman / usdToman else null,
+                                    change24hPercent = q.changePct,
+                                    change24hToman = q.changeToman,
+                                    high24hToman = q.highToman,
+                                    low24hToman = q.lowToman,
+                                    sparkline = MarketPriceMapper.scaleSeriesToCurrent(goldSpark, q.priceToman),
+                                    sourceLabel = "TGJU",
+                                    updatedAtMillis = fetchDoneMillis,
+                                    freshness = MarketPriceMapper.deriveFreshness(
+                                        category = AssetCategory.GOLD,
+                                        fetchedThisRefresh = true,
+                                        hasUsableValue = true,
+                                        isCachedSource = false,
+                                        sourceTimestampMillis = ts,
+                                        nowMillis = fetchDoneMillis
+                                    ),
+                                    sourceTimestampMillis = ts,
+                                    fetchedAtMillis = fetchDoneMillis,
+                                    singleSource = true
+                                )
+                            )
+                        }
+                    }
+
+                effectiveCryptos.forEach { spec ->
                     val sparkInput = when (spec.id) {
                         "USDT" -> usdtSpark
                         "BTC" -> btcSpark
@@ -398,7 +556,7 @@ class MarketRemoteDataSource(
                         var usdCurve = binanceDeferred.await()
                         var src = "Binance"
                         if (usdCurve.size < 4) {
-                            val cgId = coinGeckoIds[asset.id]
+                            val cgId = effectiveCoinGeckoIds()[asset.id]
                             if (cgId != null) {
                                 usdCurve = fetchCoinGeckoHistory(cgId, range, asset.category)
                                 src = "CoinGecko"
@@ -472,7 +630,7 @@ class MarketRemoteDataSource(
                     }
 
                     // Multi-day ranges (7D, 1M, 1Y) -> TGJU official Tehran Gold & Coin history table
-                    val slug = tgjuSlugs[asset.id]
+                    val slug = effectiveTgjuSlugs()[asset.id]
                     if (range != TimeRange.H24 && slug != null) {
                         val tgjuPts = fetchTgjuTablePoints(slug, tgjuLengthFor(range), asset.category, range)
                         if (tgjuPts.size >= 3) {
@@ -546,7 +704,7 @@ class MarketRemoteDataSource(
 
                 // 3. FIAT CURRENCIES (USD, EUR, AED, GBP, KWD, TRY, SAR, IQD, ...)
                 if (asset.category == AssetCategory.FIAT) {
-                    val slug = tgjuSlugs[asset.id]
+                    val slug = effectiveTgjuSlugs()[asset.id]
 
                     // Multi-day ranges (7D, 1M, 1Y) -> TGJU official daily table first
                     if (range != TimeRange.H24 && slug != null) {
@@ -679,8 +837,11 @@ class MarketRemoteDataSource(
         }
 
     private suspend fun fetchTgjuQuotes(nowMillis: Long): Map<String, MarketPriceMapper.TgjuQuote> {
+        val url = LiveConfigRegistry.currentConfig().endpoints.tgjuAjaxUrl
+            .ifBlank { "https://call5.tgju.org/ajax.json?t=$nowMillis" }
+            .replace("{ts}", nowMillis.toString())
         val raw = executeGet(
-            url = "https://call5.tgju.org/ajax.json?t=$nowMillis",
+            url = url,
             profile = NetworkConfig.RequestProfile.FAST_QUOTE
         ) ?: return emptyMap()
         return parseTgjuQuotesPayload(raw, nowMillis)
@@ -693,7 +854,15 @@ class MarketRemoteDataSource(
         range: TimeRange = TimeRange.M1,
         spikeThresholdPct: Double = MarketValidationConfig.spikeThresholdPct(category, range)
     ): List<AssetHistoryPoint> {
-        val url = "https://api.tgju.org/v1/market/indicator/summary-table-data/$slug?length=$length&t=${System.currentTimeMillis()}"
+        val now = System.currentTimeMillis()
+        val tmpl = LiveConfigRegistry.currentConfig().endpoints.tgjuTableUrlTemplate
+        val url = if (tmpl.isNotBlank()) {
+            tmpl.replace("{slug}", slug)
+                .replace("{length}", length.toString())
+                .replace("{ts}", now.toString())
+        } else {
+            "https://api.tgju.org/v1/market/indicator/summary-table-data/$slug?length=$length&t=$now"
+        }
         val raw = executeGet(
             url = url,
             profile = NetworkConfig.RequestProfile.HISTORY
@@ -702,8 +871,10 @@ class MarketRemoteDataSource(
     }
 
     private suspend fun fetchWallexQuotes(nowMillis: Long): Map<String, ExchangeQuote> {
+        val url = LiveConfigRegistry.currentConfig().endpoints.wallexMarketsUrl
+            .ifBlank { "https://api.wallex.ir/v1/markets" }
         val raw = executeGet(
-            url = "https://api.wallex.ir/v1/markets",
+            url = url,
             profile = NetworkConfig.RequestProfile.FAST_QUOTE
         ) ?: return emptyMap()
         return parseWallexQuotesPayload(raw, nowMillis)
@@ -722,7 +893,15 @@ class MarketRemoteDataSource(
             TimeRange.D7 -> "240"
             TimeRange.M1, TimeRange.Y1 -> "1D"
         }
-        val url = "https://api.wallex.ir/v1/udf/history?symbol=$symbol&resolution=$res&from=$fromSec&to=$toSec"
+        val tmpl = LiveConfigRegistry.currentConfig().endpoints.wallexUdfUrlTemplate
+        val url = if (tmpl.isNotBlank()) {
+            tmpl.replace("{symbol}", symbol)
+                .replace("{resolution}", res)
+                .replace("{from}", fromSec.toString())
+                .replace("{to}", toSec.toString())
+        } else {
+            "https://api.wallex.ir/v1/udf/history?symbol=$symbol&resolution=$res&from=$fromSec&to=$toSec"
+        }
         val raw = executeGet(
             url = url,
             profile = NetworkConfig.RequestProfile.HISTORY
@@ -731,17 +910,31 @@ class MarketRemoteDataSource(
     }
 
     private suspend fun fetchBitpinQuotes(nowMillis: Long): Map<String, ExchangeQuote> {
+        val url = LiveConfigRegistry.currentConfig().endpoints.bitpinMarketsUrl
+            .ifBlank { "https://api.bitpin.ir/v1/mkt/markets/" }
         val raw = executeGet(
-            url = "https://api.bitpin.ir/v1/mkt/markets/",
+            url = url,
             profile = NetworkConfig.RequestProfile.FAST_QUOTE
         ) ?: return emptyMap()
         return parseBitpinQuotesPayload(raw, nowMillis)
     }
 
-    private suspend fun fetchBinanceQuotes(nowMillis: Long): Map<String, ExchangeQuote> {
-        val symbols = "[\"BTCUSDT\",\"ETHUSDT\",\"TONUSDT\",\"SOLUSDT\",\"BNBUSDT\",\"XRPUSDT\",\"DOGEUSDT\",\"PAXGUSDT\"]"
+    private suspend fun fetchBinanceQuotes(
+        nowMillis: Long,
+        extraSymbols: List<String> = emptyList()
+    ): Map<String, ExchangeQuote> {
+        val allSymbols = (listOf("BTCUSDT", "ETHUSDT", "TONUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "PAXGUSDT") + extraSymbols)
+            .distinct()
+        val symbolsJson = allSymbols.joinToString(prefix = "[", postfix = "]") { "\"$it\"" }
+        val customBase = LiveConfigRegistry.currentConfig().endpoints.binanceTickerUrl
+        val url = if (customBase.isNotBlank()) {
+            if ("{symbols}" in customBase) customBase.replace("{symbols}", symbolsJson)
+            else customBase
+        } else {
+            "https://api.binance.com/api/v3/ticker/24hr?symbols=$symbolsJson"
+        }
         val raw = executeGet(
-            url = "https://api.binance.com/api/v3/ticker/24hr?symbols=$symbols",
+            url = url,
             profile = NetworkConfig.RequestProfile.FAST_QUOTE
         ) ?: return emptyMap()
         return parseBinanceQuotesPayload(raw, nowMillis)
@@ -759,7 +952,14 @@ class MarketRemoteDataSource(
             TimeRange.M1 -> "1d" to 30
             TimeRange.Y1 -> "1d" to 365
         }
-        val url = "https://api.binance.com/api/v3/klines?symbol=$symbol&interval=$interval&limit=$limit"
+        val tmpl = LiveConfigRegistry.currentConfig().endpoints.binanceKlinesUrlTemplate
+        val url = if (tmpl.isNotBlank()) {
+            tmpl.replace("{symbol}", symbol)
+                .replace("{interval}", interval)
+                .replace("{limit}", limit.toString())
+        } else {
+            "https://api.binance.com/api/v3/klines?symbol=$symbol&interval=$interval&limit=$limit"
+        }
         val raw = executeGet(
             url = url,
             profile = NetworkConfig.RequestProfile.HISTORY
@@ -779,7 +979,13 @@ class MarketRemoteDataSource(
             TimeRange.M1 -> "30"
             TimeRange.Y1 -> "365"
         }
-        val url = "https://api.coingecko.com/api/v3/coins/$coinId/market_chart?vs_currency=usd&days=$days"
+        val tmpl = LiveConfigRegistry.currentConfig().endpoints.coinGeckoHistoryUrlTemplate
+        val url = if (tmpl.isNotBlank()) {
+            tmpl.replace("{coinId}", coinId)
+                .replace("{days}", days)
+        } else {
+            "https://api.coingecko.com/api/v3/coins/$coinId/market_chart?vs_currency=usd&days=$days"
+        }
         val raw = executeGet(
             url = url,
             profile = NetworkConfig.RequestProfile.HISTORY
@@ -788,8 +994,14 @@ class MarketRemoteDataSource(
     }
 
     private suspend fun fetchNobitexOrderbook(symbol: String, nowMillis: Long): Pair<Double, Long>? {
+        val tmpl = LiveConfigRegistry.currentConfig().endpoints.nobitexOrderbookUrlTemplate
+        val url = if (tmpl.isNotBlank()) {
+            tmpl.replace("{symbol}", symbol)
+        } else {
+            "https://api.nobitex.ir/v2/orderbook/$symbol"
+        }
         val raw = executeGet(
-            url = "https://api.nobitex.ir/v2/orderbook/$symbol",
+            url = url,
             profile = NetworkConfig.RequestProfile.FAST_QUOTE
         ) ?: return null
         return parseNobitexOrderbookPayload(raw, nowMillis)
@@ -804,7 +1016,15 @@ class MarketRemoteDataSource(
         spikeThresholdPct: Double = MarketValidationConfig.spikeThresholdPct(category, range)
     ): List<AssetHistoryPoint> {
         val resolution = range.nobitexResolution
-        val url = "https://apiv2.nobitex.ir/market/udf/history?symbol=$symbol&resolution=$resolution&from=$fromSec&to=$toSec"
+        val tmpl = LiveConfigRegistry.currentConfig().endpoints.nobitexUdfUrlTemplate
+        val url = if (tmpl.isNotBlank()) {
+            tmpl.replace("{symbol}", symbol)
+                .replace("{resolution}", resolution)
+                .replace("{from}", fromSec.toString())
+                .replace("{to}", toSec.toString())
+        } else {
+            "https://apiv2.nobitex.ir/market/udf/history?symbol=$symbol&resolution=$resolution&from=$fromSec&to=$toSec"
+        }
         val raw = executeGet(
             url = url,
             profile = NetworkConfig.RequestProfile.HISTORY

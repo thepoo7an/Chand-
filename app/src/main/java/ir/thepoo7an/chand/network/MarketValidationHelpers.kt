@@ -122,9 +122,9 @@ internal object MarketValidationHelpers {
         val effectiveTs = sourceTimestampMillis.takeIf { it > 0L } ?: nowMillis
         val ageMillis = (nowMillis - effectiveTs).coerceAtLeast(0L)
         val maxAge = when (category) {
-            AssetCategory.CRYPTO -> MarketValidationConfig.CRYPTO_LIVE_MAX_AGE_MILLIS
-            AssetCategory.FIAT, AssetCategory.GOLD -> MarketValidationConfig.FIAT_GOLD_LIVE_MAX_AGE_MILLIS
-            AssetCategory.ALL, AssetCategory.PINNED -> MarketValidationConfig.FIAT_GOLD_LIVE_MAX_AGE_MILLIS
+            AssetCategory.CRYPTO -> MarketValidationConfig.effectiveCryptoLiveMaxAgeMillis()
+            AssetCategory.FIAT, AssetCategory.GOLD -> MarketValidationConfig.effectiveFiatGoldLiveMaxAgeMillis()
+            AssetCategory.ALL, AssetCategory.PINNED -> MarketValidationConfig.effectiveFiatGoldLiveMaxAgeMillis()
         }
         return if (ageMillis <= maxAge) DataFreshness.LIVE else DataFreshness.DELAYED
     }

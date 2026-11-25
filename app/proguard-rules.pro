@@ -61,12 +61,20 @@
 -keep class * extends androidx.glance.appwidget.GlanceAppWidgetReceiver {
     public <init>();
 }
+-keep class ir.thepoo7an.chand.widget.ChandPackageReplacedReceiver { *; }
 -keep class * implements androidx.glance.appwidget.action.ActionCallback {
     public <init>();
 }
+-keep class androidx.glance.session.** { *; }
+-keep class androidx.glance.appwidget.proto.** { *; }
+-keep class * extends androidx.glance.appwidget.protobuf.GeneratedMessageLite { *; }
+-keepclassmembers class * extends androidx.glance.appwidget.protobuf.GeneratedMessageLite { *; }
+-keep class androidx.work.** { *; }
 -keep class * extends androidx.work.ListenableWorker {
     public <init>(android.content.Context, androidx.work.WorkerParameters);
 }
+-keep class androidx.startup.** { *; }
+-keep class * extends androidx.startup.Initializer { *; }
 -keep class * extends androidx.room.RoomDatabase {
     public <init>();
 }

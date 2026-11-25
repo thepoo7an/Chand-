@@ -103,6 +103,8 @@ fun ChandApp(
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val updateBannerDismissed by viewModel.updateBannerDismissed.collectAsStateWithLifecycle()
     val updateDownloadState by viewModel.updateDownloadState.collectAsStateWithLifecycle()
+    val liveConfig by viewModel.liveConfig.collectAsStateWithLifecycle()
+    val liveConfigSyncState by viewModel.liveConfigSyncState.collectAsStateWithLifecycle()
 
     val fromAssetId by viewModel.fromAssetId.collectAsStateWithLifecycle()
     val toAssetId by viewModel.toAssetId.collectAsStateWithLifecycle()
@@ -260,6 +262,9 @@ fun ChandApp(
                                         strings = strings,
                                         selectedCategory = selectedCategory,
                                         searchQuery = searchQuery,
+                                        liveNotice = liveConfig.liveNotice,
+                                        dismissedNoticeId = prefs.dismissedLiveNoticeId,
+                                        onDismissLiveNotice = viewModel::dismissLiveNotice,
                                         onSelectCategory = viewModel::selectCategory,
                                         onSearchQueryChange = viewModel::updateSearchQuery,
                                         onTogglePin = viewModel::togglePin,
@@ -283,6 +288,7 @@ fun ChandApp(
                                             inputAmountText = converterInput,
                                             prefs = prefs,
                                             strings = strings,
+                                            showEquivalents = liveConfig.features.enableConverterEquivalents,
                                             onSetFromAsset = viewModel::setFromAsset,
                                             onSetToAsset = viewModel::setToAsset,
                                             onSwapAssets = viewModel::swapConverterAssets,
@@ -328,6 +334,7 @@ fun ChandApp(
                 selectedRange = selectedTimeRange,
                 prefs = prefs,
                 strings = strings,
+                features = liveConfig.features,
                 onSelectRange = viewModel::selectTimeRange,
                 onRetryHistory = viewModel::retryHistory,
                 onTogglePin = { viewModel.togglePin(detailAsset.id) },
@@ -359,6 +366,8 @@ fun ChandApp(
                 updateState = updateState,
                 updateDownloadState = updateDownloadState,
                 availableAssets = allAssets,
+                liveConfig = liveConfig,
+                liveConfigSyncState = liveConfigSyncState,
                 onSetThemeMode = viewModel::setThemeMode,
                 onSetLanguage = viewModel::setLanguage,
                 onSetPersianDigits = viewModel::setUsePersianDigits,
@@ -369,6 +378,11 @@ fun ChandApp(
                 onSetWidgetHeroAsset = viewModel::setWidgetHeroAssetId,
                 onSetGithubRepoSlug = viewModel::setGithubRepoSlug,
                 onCheckForUpdates = viewModel::checkForUpdates,
+                onSetLiveConfigUrl = viewModel::setLiveConfigUrl,
+                onSyncLiveConfig = { url, repo ->
+                    viewModel.syncLiveConfigNow(customUrlOverride = url, repoOverride = repo)
+                },
+                onResetLiveConfig = viewModel::resetLiveConfig,
                 onStartUpdateDownload = viewModel::startInAppUpdateDownload,
                 onCancelUpdateDownload = viewModel::cancelUpdateDownload,
                 onInstallUpdateApk = ::triggerApkInstall,
@@ -380,7 +394,11 @@ fun ChandApp(
             )
         }
 
-        if (updateState is AppUpdateState.UpdateAvailable && !updateBannerDismissed && !showSettingsSheet) {
+        if (liveConfig.features.enableInAppApkUpdates &&
+            updateState is AppUpdateState.UpdateAvailable &&
+            !updateBannerDismissed &&
+            !showSettingsSheet
+        ) {
             val info = (updateState as AppUpdateState.UpdateAvailable).info
             UpdateCatalogDialog(
                 info = info,

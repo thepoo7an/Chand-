@@ -1,0 +1,53 @@
+{
+  "configVersion": 1,
+  "minAppVersionCode": 1,
+  "maxAppVersionCode": null,
+  "publishedAtIso": "2026-11-25T06:00:00Z",
+  "summaryFa": "پیکربندی آنلاین پایه فعال است؛ آماده‌ی دریافت آدرس‌های جایگزین، دارایی‌های جدید و اصلاحات لحظه‌ای بدون نیاز به نصب مجدد.",
+  "summaryEn": "Online live configuration active — ready to apply mirror endpoints, new assets, and validation patches without APK reinstall.",
+  "endpoints": {
+    "tgjuAjaxUrl": "",
+    "tgjuTableUrlTemplate": "",
+    "wallexMarketsUrl": "",
+    "wallexUdfUrlTemplate": "",
+    "bitpinMarketsUrl": "",
+    "nobitexOrderbookUrlTemplate": "",
+    "nobitexUdfUrlTemplate": "",
+    "binanceTickerUrl": "",
+    "binanceKlinesUrlTemplate": "",
+    "coinGeckoHistoryUrlTemplate": "",
+    "frankfurterLatestUrls": [],
+    "frankfurterSeriesUrlTemplates": [],
+    "openErLatestUrl": "",
+    "goldSpotXauUrl": "",
+    "currencyCdnUrlTemplates": []
+  },
+  "validation": {
+    "cryptoDisagreementThresholdPct": 4.0,
+    "fiatDisagreementThresholdPct": 3.0,
+    "cryptoLiveMaxAgeMinutes": 5,
+    "fiatGoldLiveMaxAgeMinutes": 30,
+    "spikeThreshold24hPct": 15.0,
+    "spikeThresholdCryptoMultiDayPct": 40.0,
+    "spikeThresholdFiatMultiDayPct": 15.0,
+    "spikeThresholdGoldMultiDayPct": 15.0
+  },
+  "features": {
+    "enableConverterEquivalents": true,
+    "enableCoinBubbleEstimate": true,
+    "enableHistoricalCharts": true,
+    "enableInAppApkUpdates": true,
+    "minAutoRefreshSeconds": 10
+  },
+  "disabledAssetIds": [],
+  "assetOverrides": [],
+  "extraAssets": [],
+  "liveNotice": null,
+  "appliedChanges": [
+    {
+      "titleFa": "فعال‌سازی همگام‌سازی خودکار منابع و تنظیمات اعتبارسنجی آنلاین",
+      "titleEn": "Enabled automatic online sync for API endpoints and market validation rules",
+      "category": "CONFIG"
+    }
+  ]
+}

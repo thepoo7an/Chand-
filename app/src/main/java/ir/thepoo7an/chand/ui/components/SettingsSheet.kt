@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.InstallMobile
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material3.LinearProgressIndicator
@@ -70,13 +71,17 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import ir.thepoo7an.chand.BuildConfig
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
+import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.model.RemoteAppConfig
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.network.AppUpdateDownloadState
 import ir.thepoo7an.chand.network.AppUpdateInfo
 import ir.thepoo7an.chand.network.AppUpdateInstaller
 import ir.thepoo7an.chand.network.AppUpdateService
 import ir.thepoo7an.chand.network.AppUpdateState
+import ir.thepoo7an.chand.network.LiveConfigRegistry
+import ir.thepoo7an.chand.network.RemoteConfigUiState
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import ir.thepoo7an.chand.ui.theme.LocalMarketColors
@@ -90,6 +95,8 @@ fun SettingsSheet(
     updateState: AppUpdateState,
     updateDownloadState: AppUpdateDownloadState = AppUpdateDownloadState.Idle,
     availableAssets: List<MarketAsset> = emptyList(),
+    liveConfig: RemoteAppConfig = RemoteAppConfig(),
+    liveConfigSyncState: RemoteConfigUiState = RemoteConfigUiState.Idle,
     onSetThemeMode: (ThemeMode) -> Unit,
     onSetLanguage: (AppLanguage) -> Unit,
     onSetPersianDigits: (Boolean) -> Unit,
@@ -100,6 +107,9 @@ fun SettingsSheet(
     onSetWidgetHeroAsset: (String) -> Unit,
     onSetGithubRepoSlug: (String) -> Unit,
     onCheckForUpdates: (String) -> Unit,
+    onSetLiveConfigUrl: (String) -> Unit = {},
+    onSyncLiveConfig: (String, String) -> Unit = { _, _ -> },
+    onResetLiveConfig: () -> Unit = {},
     onStartUpdateDownload: (AppUpdateInfo) -> Unit = {},
     onCancelUpdateDownload: () -> Unit = {},
     onInstallUpdateApk: (File, AppUpdateInfo) -> Unit = { _, _ -> },
@@ -109,7 +119,9 @@ fun SettingsSheet(
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val marketColors = LocalMarketColors.current
-    var repoInput by remember { mutableStateOf(prefs.githubRepoSlug) }
+    val isFa = prefs.language == AppLanguage.FA
+    var repoInput by remember(prefs.githubRepoSlug) { mutableStateOf(prefs.githubRepoSlug) }
+    var liveUrlInput by remember(prefs.liveConfigUrl) { mutableStateOf(prefs.liveConfigUrl) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -431,7 +443,11 @@ fun SettingsSheet(
                 } else {
                     Color.White.copy(alpha = if (prefs.widgetTranslucent) 0.24f else 0.12f)
                 }
-                val isFa = prefs.language == AppLanguage.FA
+
+                val previewMap = remember(availableAssets) { availableAssets.associateBy { it.id } }
+                val usdPreview = previewMap["USD"]
+                val eurPreview = previewMap["EUR"]
+                val goldPreview = previewMap["GOLD_18K"]
 
                 Box(
                     modifier = Modifier
@@ -463,12 +479,28 @@ fun SettingsSheet(
                                 modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
                                 verticalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
+                                data class PreviewRow(val flag: String, val code: String, val price: String, val isGain: Boolean)
                                 val sampleRows = listOf(
-                                    Triple("🇺🇸", if (isFa) "دلار" else "USD", "100,045"),
-                                    Triple("🇪🇺", if (isFa) "یورو" else "EUR", "109,755"),
-                                    Triple("✨", if (isFa) "طلا" else "GOLD", "7,403,000")
+                                    PreviewRow(
+                                        usdPreview?.badgeText ?: "🇺🇸",
+                                        if (isFa) "دلار" else "USD",
+                                        usdPreview?.priceToman?.takeIf { it > 0.0 }?.let { NumberFormatters.formatToman(it, false) } ?: "100,045",
+                                        (usdPreview?.change24hPercent ?: 1.0) >= 0.0
+                                    ),
+                                    PreviewRow(
+                                        eurPreview?.badgeText ?: "🇪🇺",
+                                        if (isFa) "یورو" else "EUR",
+                                        eurPreview?.priceToman?.takeIf { it > 0.0 }?.let { NumberFormatters.formatToman(it, false) } ?: "109,755",
+                                        (eurPreview?.change24hPercent ?: -1.0) >= 0.0
+                                    ),
+                                    PreviewRow(
+                                        goldPreview?.badgeText ?: "✨",
+                                        if (isFa) "طلا" else "GOLD",
+                                        goldPreview?.priceToman?.takeIf { it > 0.0 }?.let { NumberFormatters.formatToman(it, false) } ?: "7,403,000",
+                                        (goldPreview?.change24hPercent ?: 1.0) >= 0.0
+                                    )
                                 )
-                                sampleRows.forEachIndexed { idx, (flag, code, price) ->
+                                sampleRows.forEach { row ->
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -478,9 +510,9 @@ fun SettingsSheet(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
-                                            Text(text = flag, fontSize = 11.sp)
+                                            Text(text = row.flag, fontSize = 11.sp)
                                             Text(
-                                                text = code,
+                                                text = row.code,
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (isLightTheme) Color(0xFF4B5563) else Color(0xFFCBD5E1)
@@ -492,13 +524,13 @@ fun SettingsSheet(
                                                 horizontalArrangement = Arrangement.spacedBy(3.dp)
                                             ) {
                                                 Text(
-                                                    text = if (idx == 1) "↓" else "↑",
+                                                    text = if (row.isGain) "↑" else "↓",
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = if (idx == 1) marketColors.loss else marketColors.gain
+                                                    color = if (row.isGain) marketColors.gain else marketColors.loss
                                                 )
                                                 Text(
-                                                    text = NumberFormatters.applyDigits(price, prefs.usePersianDigits),
+                                                    text = NumberFormatters.applyDigits(row.price, prefs.usePersianDigits),
                                                     fontSize = 11.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     color = if (isLightTheme) Color(0xFF111317) else Color.White
@@ -518,6 +550,37 @@ fun SettingsSheet(
                 }
 
                 // Transparent Nothing-Inspired Lock Screen Widget Preview
+                val lockHero = previewMap[prefs.widgetHeroAssetId] ?: usdPreview
+                val lockStatusWord = when (lockHero?.freshness) {
+                    DataFreshness.DELAYED -> strings.delayedBadge
+                    DataFreshness.CACHED -> strings.cachedBadge
+                    DataFreshness.UNAVAILABLE -> strings.unavailableBadge
+                    else -> strings.liveBadge
+                }
+                val lockTimeStr = lockHero?.updatedAtMillis?.takeIf { it > 0L }
+                    ?.let { NumberFormatters.formatTime(it, prefs.usePersianDigits) }
+                    ?.takeIf { it.isNotBlank() }
+                    ?: NumberFormatters.applyDigits("21:45", prefs.usePersianDigits)
+                val lockStatusLabel = if (lockHero?.freshness == DataFreshness.UNAVAILABLE) {
+                    strings.unavailableBadge
+                } else {
+                    "$lockStatusWord • $lockTimeStr"
+                }
+                val lockHeroPrice = lockHero?.priceToman?.takeIf { it > 0.0 }
+                    ?.let { NumberFormatters.formatToman(it, prefs.usePersianDigits) }
+                    ?: NumberFormatters.applyDigits("269,970", prefs.usePersianDigits)
+                val lockHeroDelta = lockHero?.takeIf { it.priceToman > 0.0 }
+                    ?.let { NumberFormatters.formatPercent(it.change24hPercent, prefs.usePersianDigits) }
+                    ?: NumberFormatters.applyDigits("↑1.43%", prefs.usePersianDigits)
+                val lockPair = listOfNotNull(
+                    eurPreview?.let {
+                        it.symbol to (it.priceToman.takeIf { p -> p > 0.0 }?.let { p -> NumberFormatters.formatToman(p, prefs.usePersianDigits) } ?: "—")
+                    } ?: ("EUR" to NumberFormatters.applyDigits("297,320", prefs.usePersianDigits)),
+                    goldPreview?.let {
+                        it.symbol to (it.priceToman.takeIf { p -> p > 0.0 }?.let { p -> NumberFormatters.formatToman(p, prefs.usePersianDigits) } ?: "—")
+                    } ?: ("18K" to NumberFormatters.applyDigits("7,403,000", prefs.usePersianDigits))
+                )
+
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -559,7 +622,7 @@ fun SettingsSheet(
                                         color = Color.White
                                     ) {
                                         Text(
-                                            text = "USD",
+                                            text = lockHero?.symbol ?: "USD",
                                             fontSize = 9.sp,
                                             fontFamily = FontFamily.Monospace,
                                             fontWeight = FontWeight.Bold,
@@ -573,7 +636,7 @@ fun SettingsSheet(
                                         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.9f))
                                     ) {
                                         Text(
-                                            text = "${strings.liveBadge} • ${NumberFormatters.applyDigits("21:45", prefs.usePersianDigits)}",
+                                            text = lockStatusLabel,
                                             fontSize = 9.sp,
                                             fontFamily = FontFamily.Monospace,
                                             color = Color.White,
@@ -604,7 +667,7 @@ fun SettingsSheet(
                                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
                                     Text(
-                                        text = NumberFormatters.applyDigits("269,970", prefs.usePersianDigits),
+                                        text = lockHeroPrice,
                                         fontSize = 22.sp,
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold,
@@ -623,7 +686,7 @@ fun SettingsSheet(
                                     color = Color.White
                                 ) {
                                     Text(
-                                        text = NumberFormatters.applyDigits("↑1.43%", prefs.usePersianDigits),
+                                        text = lockHeroDelta,
                                         fontSize = 9.sp,
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold,
@@ -638,10 +701,7 @@ fun SettingsSheet(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                listOf(
-                                    "EUR" to NumberFormatters.applyDigits("297,320", prefs.usePersianDigits),
-                                    "18K" to NumberFormatters.applyDigits("7,403,000", prefs.usePersianDigits)
-                                ).forEach { (sym, valStr) ->
+                                lockPair.forEach { (sym, valStr) ->
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(5.dp)
@@ -683,7 +743,210 @@ fun SettingsSheet(
                 }
             }
 
-            // App Updates Section (Zero-permission GitHub Releases check + Browser download)
+            // Online Live Patch & Rules Section (Applied Instantly Without APK Download)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = strings.liveConfigSection,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    border = BorderStroke(1.dp, marketColors.hairline),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.CloudSync,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                val versionStatus = if (liveConfig.isBuiltInDefault) {
+                                    strings.liveConfigBuiltInLabel
+                                } else {
+                                    val overrideCount = liveConfig.activeOverrideCount()
+                                    val verStr = "${strings.liveConfigVersionPrefix}${NumberFormatters.applyDigits(liveConfig.configVersion.toString(), prefs.usePersianDigits)}"
+                                    if (overrideCount > 0) {
+                                        "$verStr • ${NumberFormatters.applyDigits(overrideCount.toString(), prefs.usePersianDigits)} ${strings.liveConfigOverridesActiveLabel}"
+                                    } else {
+                                        verStr
+                                    }
+                                }
+                                Text(
+                                    text = versionStatus,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = strings.liveConfigSubtitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        if (prefs.liveConfigLastSyncMillis > 0L) {
+                            Text(
+                                text = "${strings.liveConfigLastSyncPrefix} ${
+                                    NumberFormatters.formatJalaliDateTime(prefs.liveConfigLastSyncMillis, prefs.usePersianDigits)
+                                }",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        OutlinedTextField(
+                            value = liveUrlInput,
+                            onValueChange = { newUrl ->
+                                liveUrlInput = newUrl
+                                if (newUrl.isBlank() || LiveConfigRegistry.isSafeHttpsUrl(newUrl)) {
+                                    onSetLiveConfigUrl(newUrl)
+                                }
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(
+                                onDone = { onSyncLiveConfig(liveUrlInput, repoInput) }
+                            ),
+                            label = { Text(strings.liveConfigUrlLabel, fontSize = 12.sp) },
+                            placeholder = { Text(strings.liveConfigUrlPlaceholder, fontSize = 12.sp) },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("live_config_url_input")
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { onSyncLiveConfig(liveUrlInput, repoInput) },
+                                enabled = liveConfigSyncState !is RemoteConfigUiState.Syncing,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("sync_live_config_button")
+                            ) {
+                                if (liveConfigSyncState is RemoteConfigUiState.Syncing) {
+                                    CircularProgressIndicator(
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(strings.liveConfigSyncingLabel, fontSize = 12.sp)
+                                } else {
+                                    Text(strings.liveConfigSyncButton, fontSize = 12.sp)
+                                }
+                            }
+                            if (!liveConfig.isBuiltInDefault) {
+                                OutlinedButton(
+                                    onClick = onResetLiveConfig,
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("reset_live_config_button")
+                                ) {
+                                    Text(strings.liveConfigResetButton, fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                        when (liveConfigSyncState) {
+                            is RemoteConfigUiState.Synced -> {
+                                Text(
+                                    text = strings.liveConfigSyncedToast,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = marketColors.gain
+                                )
+                            }
+                            is RemoteConfigUiState.NoRemoteConfigYet -> {
+                                Text(
+                                    text = strings.liveConfigNoRemoteLabel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            is RemoteConfigUiState.Incompatible -> {
+                                Text(
+                                    text = strings.liveConfigIncompatibleLabel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = marketColors.gold
+                                )
+                            }
+                            is RemoteConfigUiState.Error -> {
+                                Text(
+                                    text = "${strings.liveConfigErrorLabel}: ${liveConfigSyncState.message}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = marketColors.loss
+                                )
+                            }
+                            RemoteConfigUiState.Idle, RemoteConfigUiState.Syncing -> Unit
+                        }
+
+                        if (!liveConfig.isBuiltInDefault) {
+                            val summaryText = if (isFa) {
+                                liveConfig.summaryFa.ifBlank { liveConfig.summaryEn }
+                            } else {
+                                liveConfig.summaryEn.ifBlank { liveConfig.summaryFa }
+                            }.ifBlank { strings.liveConfigDefaultSummary }
+
+                            Text(
+                                text = summaryText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+
+                            if (liveConfig.appliedChanges.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        text = strings.liveConfigChangesTitle,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    liveConfig.appliedChanges.take(6).forEach { change ->
+                                        val changeText = if (isFa) change.titleFa else change.titleEn
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.Top
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .padding(top = 6.dp)
+                                                    .size(5.dp)
+                                                    .clip(CircleShape)
+                                                    .background(MaterialTheme.colorScheme.primary)
+                                            )
+                                            Text(
+                                                text = changeText,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 2
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // App Updates Section (Zero-permission GitHub Releases check + In-app APK download)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     text = strings.updateSection,

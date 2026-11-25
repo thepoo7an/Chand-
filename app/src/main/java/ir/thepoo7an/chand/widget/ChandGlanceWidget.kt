@@ -1,11 +1,16 @@
 package ir.thepoo7an.chand.widget
 
+import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
 import android.content.Context
+import android.content.Intent
+import android.widget.RemoteViews
 import androidx.annotation.DrawableRes
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.datastore.core.DataStore
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.ImageProvider
@@ -19,8 +24,9 @@ import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
-import androidx.glance.appwidget.updateAll
 import androidx.glance.background
+import androidx.glance.currentState
+import androidx.glance.state.GlanceStateDefinition
 import androidx.glance.color.ColorProvider
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
@@ -47,10 +53,13 @@ import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
-import ir.thepoo7an.chand.network.MarketRemoteDataSource
 import ir.thepoo7an.chand.network.MarketValidationConfig
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import ir.thepoo7an.chand.ui.strings.stringsFor
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import java.io.File
 
 private object WidgetColors {
     val solidDivider = ColorProvider(day = Color(0xFFECE8E0), night = Color(0xFF1D232E))
@@ -152,29 +161,120 @@ private fun widgetBackgroundDrawableRes(prefs: AppPreferences): Int {
     }
 }
 
+data class ChandWidgetState(
+    val prefs: AppPreferences = AppPreferences(),
+    val snapshot: CachedMarketSnapshot? = null
+)
+
+/**
+ * Glance state definition backed by [PreferencesRepository] (`chand_prefs`).
+ * Using Glance's native state pipeline avoids launching infinite Flow collectors inside
+ * `provideContent` (which would block `GlanceRemoteViews.compose()`), while guaranteeing that
+ * calling `widget.update(context, glanceId)` refreshes active `SessionWorker` sessions immediately.
+ */
+object ChandWidgetStateDefinition : GlanceStateDefinition<ChandWidgetState> {
+    override fun getLocation(context: Context, fileKey: String): File =
+        File(context.applicationContext.filesDir, "datastore/chand_widget_state_$fileKey.meta")
+
+    override suspend fun getDataStore(
+        context: Context,
+        fileKey: String
+    ): DataStore<ChandWidgetState> {
+        val appContext = context.applicationContext
+        val prefsRepo = PreferencesRepository(appContext)
+        return object : DataStore<ChandWidgetState> {
+            override val data: Flow<ChandWidgetState> = combine(
+                prefsRepo.preferencesFlow,
+                prefsRepo.cachedSnapshotFlow
+            ) { prefs, snapshot ->
+                ChandWidgetState(prefs = prefs, snapshot = snapshot)
+            }
+
+            override suspend fun updateData(
+                transform: suspend (t: ChandWidgetState) -> ChandWidgetState
+            ): ChandWidgetState {
+                val current = ChandWidgetState(
+                    prefs = prefsRepo.getPreferences(),
+                    snapshot = prefsRepo.loadCachedSnapshot()
+                )
+                return transform(current)
+            }
+        }
+    }
+}
+
+/**
+ * Shared base widget that:
+ * 1) Uses [ChandWidgetStateDefinition] so active Glance `SessionWorker` sessions update cleanly
+ *    on `widget.update(...)` without blocking one-shot `GlanceRemoteViews` compositions,
+ * 2) Safely preloads initial state with fallback defaults,
+ * 3) Publishes a clickable branded fallback RemoteViews layout if composition ever throws.
+ */
+abstract class BaseChandGlanceWidget : GlanceAppWidget(
+    errorUiLayout = R.layout.widget_fallback_layout
+) {
+    override val stateDefinition: GlanceStateDefinition<ChandWidgetState> = ChandWidgetStateDefinition
+
+    final override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val appContext = context.applicationContext
+        val prefsRepo = PreferencesRepository(appContext)
+        val fallbackState = ChandWidgetState(
+            prefs = runCatching { prefsRepo.getPreferences() }.getOrDefault(AppPreferences()),
+            snapshot = runCatching { prefsRepo.loadCachedSnapshot() }.getOrNull()
+        )
+
+        provideContent {
+            val state = currentState<ChandWidgetState?>() ?: fallbackState
+            Content(prefs = state.prefs, snapshot = state.snapshot)
+        }
+    }
+
+    @Composable
+    protected abstract fun Content(prefs: AppPreferences, snapshot: CachedMarketSnapshot?)
+
+    override fun onCompositionError(
+        context: Context,
+        glanceId: GlanceId,
+        appWidgetId: Int,
+        throwable: Throwable
+    ) {
+        runCatching {
+            val launchIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                appWidgetId,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val fallback = RemoteViews(context.packageName, R.layout.widget_fallback_layout).apply {
+                setOnClickPendingIntent(R.id.widget_fallback_root, pendingIntent)
+            }
+            AppWidgetManager.getInstance(context).updateAppWidget(appWidgetId, fallback)
+        }
+    }
+}
+
 /**
  * Widget 1 (2x2 Hero Card): Single primary currency card (US Dollar or top pinned),
  * mirroring the top-left Chand?! iOS widget.
  */
-class ChandSingleAssetWidget : GlanceAppWidget() {
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val prefsRepo = PreferencesRepository(context)
-        val prefs = prefsRepo.getPreferences()
-        val snapshot = prefsRepo.loadCachedSnapshot()
+class ChandSingleAssetWidget : BaseChandGlanceWidget() {
+    @Composable
+    override fun Content(prefs: AppPreferences, snapshot: CachedMarketSnapshot?) {
         val assets = snapshot?.assets.orEmpty()
         val hero = assets.firstOrNull { it.id == prefs.widgetHeroAssetId }
             ?: assets.firstOrNull { it.id == "USD" }
             ?: assets.firstOrNull { it.id in prefs.pinnedIds }
             ?: assets.firstOrNull()
 
-        provideContent {
-            SingleHeroWidgetContent(
-                asset = hero,
-                snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
-                updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
-                prefs = prefs
-            )
-        }
+        SingleHeroWidgetContent(
+            asset = hero,
+            snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
+            updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
+            prefs = prefs
+        )
     }
 }
 
@@ -320,13 +420,10 @@ private fun SingleHeroWidgetContent(
  * Widget 2 (4x2 Wide Strip): 3-row pinned currency list (EUR, GBP, AED or pinned favorites),
  * mirroring the middle wide Chand?! iOS widget.
  */
-class ChandWideListWidget : GlanceAppWidget() {
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val prefsRepo = PreferencesRepository(context)
-        val prefs = prefsRepo.getPreferences()
-        val snapshot = prefsRepo.loadCachedSnapshot()
+class ChandWideListWidget : BaseChandGlanceWidget() {
+    @Composable
+    override fun Content(prefs: AppPreferences, snapshot: CachedMarketSnapshot?) {
         val allAssets = snapshot?.assets.orEmpty()
-
         val preferredIds = listOf("EUR", "GBP", "AED", "USD", "GOLD_18K")
         val pinnedNonCrypto = allAssets.filter {
             it.id in prefs.pinnedIds && it.category != AssetCategory.CRYPTO && it.id != "USD"
@@ -336,15 +433,13 @@ class ChandWideListWidget : GlanceAppWidget() {
             .distinctBy { it.id }
             .take(3)
 
-        provideContent {
-            MultiRowWidgetContent(
-                rows = rows,
-                snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
-                updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
-                prefs = prefs,
-                compactMode = false
-            )
-        }
+        MultiRowWidgetContent(
+            rows = rows,
+            snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
+            updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
+            prefs = prefs,
+            compactMode = false
+        )
     }
 }
 
@@ -352,54 +447,44 @@ class ChandWideListWidget : GlanceAppWidget() {
  * Widget 3 (2x2 Compact Crypto Watch): 3-row compact BTC / ETH / USDT card,
  * mirroring the bottom-right Chand?! iOS widget.
  */
-class ChandCompactCryptoWidget : GlanceAppWidget() {
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val prefsRepo = PreferencesRepository(context)
-        val prefs = prefsRepo.getPreferences()
-        val snapshot = prefsRepo.loadCachedSnapshot()
+class ChandCompactCryptoWidget : BaseChandGlanceWidget() {
+    @Composable
+    override fun Content(prefs: AppPreferences, snapshot: CachedMarketSnapshot?) {
         val allAssets = snapshot?.assets.orEmpty()
-
         val cryptoOrder = listOf("BTC", "ETH", "USDT", "TON", "SOL")
         val cryptos = cryptoOrder.mapNotNull { id -> allAssets.firstOrNull { it.id == id } }.take(3)
         val rows = cryptos.ifEmpty { allAssets.take(3) }
 
-        provideContent {
-            MultiRowWidgetContent(
-                rows = rows,
-                snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
-                updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
-                prefs = prefs,
-                compactMode = true
-            )
-        }
+        MultiRowWidgetContent(
+            rows = rows,
+            snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
+            updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
+            prefs = prefs,
+            compactMode = true
+        )
     }
 }
 
 /**
  * Widget 4 (2x1 Compact Essential Strip): US Dollar, Euro, and 18K Gold with translucent glass support.
  */
-class ChandCompact2x1Widget : GlanceAppWidget() {
+class ChandCompact2x1Widget : BaseChandGlanceWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
 
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val prefsRepo = PreferencesRepository(context)
-        val prefs = prefsRepo.getPreferences()
-        val snapshot = prefsRepo.loadCachedSnapshot()
+    @Composable
+    override fun Content(prefs: AppPreferences, snapshot: CachedMarketSnapshot?) {
         val allAssets = snapshot?.assets.orEmpty()
-
         val essentialIds = listOf("USD", "EUR", "GOLD_18K")
         val rows = essentialIds.mapNotNull { targetId ->
             allAssets.firstOrNull { it.id == targetId }
         }
 
-        provideContent {
-            Compact2x1WidgetContent(
-                rows = rows,
-                snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
-                updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
-                prefs = prefs
-            )
-        }
+        Compact2x1WidgetContent(
+            rows = rows,
+            snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
+            updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
+            prefs = prefs
+        )
     }
 }
 
@@ -740,10 +825,17 @@ class RefreshAllWidgetsAction : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters
     ) {
-        WidgetSyncCoordinator.registerConnectivityMonitor(context.applicationContext)
-        val ok = WidgetSyncCoordinator.syncWidgetsNow(context.applicationContext, force = true)
-        if (!ok) {
-            WidgetSyncCoordinator.updateAllWidgets(context.applicationContext)
+        val appContext = context.applicationContext
+        try {
+            WidgetSyncCoordinator.registerConnectivityMonitor(appContext)
+            val ok = WidgetSyncCoordinator.syncWidgetsNow(appContext, force = true)
+            if (!ok) {
+                WidgetSyncCoordinator.updateAllWidgets(appContext)
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            WidgetSyncCoordinator.updateAllWidgets(appContext)
         }
     }
 }
@@ -759,15 +851,12 @@ private object LockWidgetColors {
  * Widget 5 (Lock Screen / Transparent): Background-free monochrome pill aesthetic inspired by
  * Nothing OS lock-screen typography (high-contrast white text, solid white pills, outlined capsules).
  */
-class ChandLockScreenWidget : GlanceAppWidget() {
+class ChandLockScreenWidget : BaseChandGlanceWidget() {
     override val sizeMode: SizeMode = SizeMode.Exact
 
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val prefsRepo = PreferencesRepository(context)
-        val prefs = prefsRepo.getPreferences()
-        val snapshot = prefsRepo.loadCachedSnapshot()
+    @Composable
+    override fun Content(prefs: AppPreferences, snapshot: CachedMarketSnapshot?) {
         val allAssets = snapshot?.assets.orEmpty()
-
         val hero = allAssets.firstOrNull { it.id == "USD" }
             ?: allAssets.firstOrNull { it.id in prefs.pinnedIds }
             ?: allAssets.firstOrNull()
@@ -778,15 +867,13 @@ class ChandLockScreenWidget : GlanceAppWidget() {
             .mapNotNull { targetId -> allAssets.firstOrNull { it.id == targetId } }
             .take(2)
 
-        provideContent {
-            LockScreenWidgetContent(
-                hero = hero,
-                secondary = secondary,
-                snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
-                updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
-                prefs = prefs
-            )
-        }
+        LockScreenWidgetContent(
+            hero = hero,
+            secondary = secondary,
+            snapshotFreshness = snapshot?.freshness ?: DataFreshness.UNAVAILABLE,
+            updatedAtMillis = snapshot?.updatedAtMillis ?: 0L,
+            prefs = prefs
+        )
     }
 }
 

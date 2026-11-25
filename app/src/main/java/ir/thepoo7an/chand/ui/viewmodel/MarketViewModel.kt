@@ -12,6 +12,7 @@ import ir.thepoo7an.chand.model.AssetHistoryPoint
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.MarketUiState
+import ir.thepoo7an.chand.model.RemoteAppConfig
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.network.AppUpdateDownloadState
@@ -19,6 +20,9 @@ import ir.thepoo7an.chand.network.AppUpdateInfo
 import ir.thepoo7an.chand.network.AppUpdateInstaller
 import ir.thepoo7an.chand.network.AppUpdateState
 import ir.thepoo7an.chand.network.InstallLaunchResult
+import ir.thepoo7an.chand.network.LiveConfigRegistry
+import ir.thepoo7an.chand.network.RemoteConfigSyncResult
+import ir.thepoo7an.chand.network.RemoteConfigUiState
 import ir.thepoo7an.chand.network.TomanRateBasis
 import ir.thepoo7an.chand.widget.WidgetSyncCoordinator
 import kotlinx.coroutines.CancellationException
@@ -31,9 +35,13 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
@@ -52,6 +60,15 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
         started = SharingStarted.Eagerly,
         initialValue = AppPreferences()
     )
+
+    val liveConfig: StateFlow<RemoteAppConfig> = repository.remoteConfigFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = LiveConfigRegistry.currentConfig()
+    )
+
+    private val _liveConfigSyncState = MutableStateFlow<RemoteConfigUiState>(RemoteConfigUiState.Idle)
+    val liveConfigSyncState: StateFlow<RemoteConfigUiState> = _liveConfigSyncState.asStateFlow()
 
     private val _uiState = MutableStateFlow<MarketUiState>(MarketUiState.Loading)
     val uiState: StateFlow<MarketUiState> = _uiState.asStateFlow()
@@ -136,6 +153,7 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     init {
         loadInitialData()
         observeNetworkRestoration()
+        syncLiveConfigSilently()
         checkForUpdatesSilently()
     }
 
@@ -147,15 +165,47 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun syncLiveConfigSilently() {
+        viewModelScope.launch {
+            try {
+                val prefs = prefsRepo.preferencesFlow.first()
+                val result = repository.syncLiveConfig(
+                    repoSlug = prefs.githubRepoSlug,
+                    customUrl = prefs.liveConfigUrl
+                )
+                if (result is RemoteConfigSyncResult.Applied) {
+                    _liveConfigSyncState.value = RemoteConfigUiState.Synced(
+                        configVersion = result.config.configVersion,
+                        syncedAtMillis = result.syncedAtMillis,
+                        versionChanged = result.versionChanged
+                    )
+                    if (result.versionChanged) {
+                        refreshNow(silent = true)
+                    }
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Throwable) {
+                // Silent remote config sync must never disrupt startup
+            }
+        }
+    }
+
+    private fun updateTagFor(info: AppUpdateInfo): String =
+        "${info.latestVersionName}#${info.latestVersionCode ?: 0}"
+
     private fun checkForUpdatesSilently() {
         viewModelScope.launch {
             try {
-                val slug = prefsRepo.preferencesFlow.first().githubRepoSlug
+                val cfg = repository.hydrateLiveConfig()
+                if (!cfg.features.enableInAppApkUpdates) return@launch
+                val prefs = prefsRepo.preferencesFlow.first()
+                val slug = prefs.githubRepoSlug
                 if (slug.isNotBlank()) {
                     val res = repository.checkForUpdate(slug)
                     if (res is AppUpdateState.UpdateAvailable) {
                         _updateState.value = res
-                        _updateBannerDismissed.value = false
+                        _updateBannerDismissed.value = (updateTagFor(res.info) == prefs.dismissedUpdateTag)
                         syncCachedApkDownloadState(res.info)
                     }
                 }
@@ -170,6 +220,7 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     private fun loadInitialData() {
         viewModelScope.launch {
             try {
+                repository.hydrateLiveConfig()
                 val cached = repository.loadCached()
                 if (cached != null && cached.assets.isNotEmpty()) {
                     _uiState.value = MarketUiState.Ready(
@@ -192,15 +243,20 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     fun startAutoRefresh() {
         pollingJob?.cancel()
         pollingJob = viewModelScope.launch {
-            while (isActive) {
-                val intervalSec = preferences.value.refreshIntervalSeconds
-                if (intervalSec > 0) {
-                    delay(intervalSec * 1000L)
-                    refreshNow(silent = true)
-                } else {
-                    delay(5_000L)
-                }
+            combine(
+                preferences.map { it.refreshIntervalSeconds },
+                liveConfig.map { it.features.minAutoRefreshSeconds }
+            ) { intervalSec, minIntervalSec ->
+                if (intervalSec <= 0) 0 else maxOf(intervalSec, minIntervalSec)
             }
+                .distinctUntilChanged()
+                .collectLatest { effectiveIntervalSec ->
+                    if (effectiveIntervalSec <= 0) return@collectLatest
+                    while (isActive) {
+                        delay(effectiveIntervalSec * 1000L)
+                        refreshNow(silent = true)
+                    }
+                }
         }
     }
 
@@ -211,11 +267,14 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
 
     fun refreshNow(silent: Boolean = false) {
         viewModelScope.launch {
-            val current = _uiState.value
-            if (!silent && current is MarketUiState.Ready) {
-                _uiState.value = current.copy(isRefreshing = true)
-            } else if (!silent && current is MarketUiState.Error) {
-                _uiState.value = MarketUiState.Loading
+            if (!silent) {
+                _uiState.update { state ->
+                    when (state) {
+                        is MarketUiState.Ready -> state.copy(isRefreshing = true)
+                        is MarketUiState.Error -> MarketUiState.Loading
+                        MarketUiState.Loading -> state
+                    }
+                }
             }
 
             val sync = try {
@@ -241,15 +300,20 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 )
                 // Also refresh currently open detail asset if visible
-                _selectedAssetForDetail.value?.let { openAsset ->
-                    sync.assets.firstOrNull { it.id == openAsset.id }?.let { fresh ->
-                        _selectedAssetForDetail.value = fresh
+                _selectedAssetForDetail.update { openAsset ->
+                    openAsset?.let { asset -> sync.assets.firstOrNull { it.id == asset.id } ?: asset }
+                }
+            } else {
+                _uiState.update { state ->
+                    when (state) {
+                        is MarketUiState.Ready -> state.copy(
+                            isRefreshing = false,
+                            freshness = DataFreshness.CACHED,
+                            errorBanner = "offline"
+                        )
+                        is MarketUiState.Error, MarketUiState.Loading -> MarketUiState.Error("network_unavailable")
                     }
                 }
-            } else if (_uiState.value !is MarketUiState.Ready) {
-                _uiState.value = MarketUiState.Error("network_unavailable")
-            } else if (current is MarketUiState.Ready) {
-                _uiState.value = current.copy(isRefreshing = false, freshness = DataFreshness.CACHED, errorBanner = "offline")
             }
         }
     }
@@ -317,8 +381,79 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setGithubRepoSlug(slug: String) {
+        val trimmed = slug.trim()
+        val changed = trimmed != preferences.value.githubRepoSlug
         viewModelScope.launch {
-            repository.setGithubRepoSlug(slug)
+            repository.setGithubRepoSlug(trimmed)
+        }
+        if (changed) {
+            updateDownloadJob?.cancel()
+            updateDownloadJob = null
+            pendingInstallAfterPermission = false
+            _updateState.value = AppUpdateState.Idle
+            _updateDownloadState.value = AppUpdateDownloadState.Idle
+            _liveConfigSyncState.value = RemoteConfigUiState.Idle
+        }
+    }
+
+    fun setLiveConfigUrl(url: String) {
+        viewModelScope.launch {
+            repository.setLiveConfigUrl(url)
+        }
+    }
+
+    fun syncLiveConfigNow(customUrlOverride: String? = null, repoOverride: String? = null) {
+        viewModelScope.launch {
+            val targetRepo = (repoOverride ?: preferences.value.githubRepoSlug).trim()
+            val targetUrl = (customUrlOverride ?: preferences.value.liveConfigUrl).trim()
+            if (repoOverride != null && targetRepo != preferences.value.githubRepoSlug) {
+                repository.setGithubRepoSlug(targetRepo)
+            }
+            if (customUrlOverride != null && targetUrl != preferences.value.liveConfigUrl) {
+                repository.setLiveConfigUrl(targetUrl)
+            }
+            _liveConfigSyncState.value = RemoteConfigUiState.Syncing
+            val result = try {
+                repository.syncLiveConfig(repoSlug = targetRepo, customUrl = targetUrl)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                RemoteConfigSyncResult.Error(t.message ?: "sync_failed")
+            }
+            when (result) {
+                is RemoteConfigSyncResult.Applied -> {
+                    _liveConfigSyncState.value = RemoteConfigUiState.Synced(
+                        configVersion = result.config.configVersion,
+                        syncedAtMillis = result.syncedAtMillis,
+                        versionChanged = result.versionChanged
+                    )
+                    refreshNow(silent = true)
+                }
+                is RemoteConfigSyncResult.NotConfiguredOrMissing -> {
+                    _liveConfigSyncState.value = RemoteConfigUiState.NoRemoteConfigYet(System.currentTimeMillis())
+                }
+                is RemoteConfigSyncResult.IncompatibleVersion -> {
+                    _liveConfigSyncState.value = RemoteConfigUiState.Incompatible(result.minAppVersionCode)
+                }
+                is RemoteConfigSyncResult.Error -> {
+                    _liveConfigSyncState.value = RemoteConfigUiState.Error(result.reason)
+                }
+            }
+        }
+    }
+
+    fun resetLiveConfig() {
+        viewModelScope.launch {
+            repository.resetLiveConfig()
+            _liveConfigSyncState.value = RemoteConfigUiState.Idle
+            refreshNow(silent = true)
+        }
+    }
+
+    fun dismissLiveNotice(noticeId: String) {
+        if (noticeId.isBlank()) return
+        viewModelScope.launch {
+            repository.setDismissedLiveNoticeId(noticeId)
         }
     }
 
@@ -475,6 +610,11 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
 
     fun dismissUpdateBanner() {
         _updateBannerDismissed.value = true
+        val info = (_updateState.value as? AppUpdateState.UpdateAvailable)?.info ?: return
+        val tag = updateTagFor(info)
+        viewModelScope.launch {
+            repository.setDismissedUpdateTag(tag)
+        }
     }
 
     fun openAssetDetail(asset: MarketAsset) {

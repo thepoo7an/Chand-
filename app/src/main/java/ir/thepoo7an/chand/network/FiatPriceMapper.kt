@@ -43,7 +43,7 @@ internal object FiatPriceMapper {
         )
         return MarketValidationHelpers.validateCrossSourcePrices(
             candidates = candidates,
-            thresholdPct = MarketValidationConfig.CRYPTO_DISAGREEMENT_THRESHOLD_PCT
+            thresholdPct = MarketValidationConfig.effectiveCryptoDisagreementThresholdPct()
         )?.price
     }
 
@@ -90,7 +90,7 @@ internal object FiatPriceMapper {
 
         val usdtConsensus = MarketValidationHelpers.validateCrossSourcePrices(
             candidates = usdtCandidates,
-            thresholdPct = MarketValidationConfig.CRYPTO_DISAGREEMENT_THRESHOLD_PCT,
+            thresholdPct = MarketValidationConfig.effectiveCryptoDisagreementThresholdPct(),
             nowMillis = nowMillis
         )
 
@@ -158,7 +158,7 @@ internal object FiatPriceMapper {
                             MarketPriceMapper.PriceCandidate("TGJU", tgjuUsdQuote.priceToman, isPrimary = true, timestampMillis = usdTs),
                             MarketPriceMapper.PriceCandidate("USDT", usdtConsensus.price, isPrimary = false, timestampMillis = usdtTs)
                         ),
-                        thresholdPct = MarketValidationConfig.FIAT_DISAGREEMENT_THRESHOLD_PCT,
+                        thresholdPct = MarketValidationConfig.effectiveFiatDisagreementThresholdPct(),
                         nowMillis = nowMillis
                     )
                     usdDisputed = pair?.disputed == true
@@ -313,7 +313,7 @@ internal object FiatPriceMapper {
             val pairValidation = if (crossPriceToman != null && crossPriceToman > 0.0) {
                 MarketValidationHelpers.validateCrossSourcePrices(
                     candidates = candidates,
-                    thresholdPct = MarketValidationConfig.FIAT_DISAGREEMENT_THRESHOLD_PCT,
+                    thresholdPct = MarketValidationConfig.effectiveFiatDisagreementThresholdPct(),
                     nowMillis = nowMillis
                 )
             } else {

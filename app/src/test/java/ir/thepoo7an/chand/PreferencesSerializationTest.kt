@@ -187,4 +187,42 @@ class PreferencesSerializationTest {
         assertEquals(null, emami.low24hToman)
         assertEquals(ir.thepoo7an.chand.model.DataFreshness.CACHED, emami.freshness)
     }
+
+    @Test
+    fun `live config, dismissal flags, and resetLiveConfig round-trip cleanly in DataStore`() = runTest {
+        val repo = createIsolatedPrefsRepo()
+        try {
+            repo.setLiveConfigUrl("https://cdn.example.com/chand-live-config.json")
+            repo.setDismissedLiveNoticeId("notice_42")
+            repo.setDismissedUpdateTag("1.2.0#25")
+
+            val prefs = repo.getPreferences()
+            assertEquals("https://cdn.example.com/chand-live-config.json", prefs.liveConfigUrl)
+            assertEquals("notice_42", prefs.dismissedLiveNoticeId)
+            assertEquals("1.2.0#25", prefs.dismissedUpdateTag)
+
+            val cfg = ir.thepoo7an.chand.model.RemoteAppConfig(
+                configVersion = 7,
+                minAppVersionCode = 1,
+                summaryFa = "اصلاح مسیر تتر",
+                summaryEn = "Updated USDT mirror",
+                disabledAssetIds = listOf("DOGE"),
+                appliedChanges = listOf(
+                    ir.thepoo7an.chand.model.RemoteLiveChange("آپدیت منبع", "Updated mirror", "ENDPOINT")
+                )
+            )
+            repo.saveLiveConfig(cfg, syncedAtMillis = 1_760_000_000_000L)
+
+            val hydrated = repo.hydrateLiveConfig()
+            assertEquals(7, hydrated.configVersion)
+            assertEquals(listOf("DOGE"), hydrated.disabledAssetIds)
+            assertEquals(1_760_000_000_000L, repo.getPreferences().liveConfigLastSyncMillis)
+
+            repo.resetLiveConfig()
+            assertTrue(ir.thepoo7an.chand.network.LiveConfigRegistry.currentConfig().isBuiltInDefault)
+            assertEquals(0L, repo.getPreferences().liveConfigLastSyncMillis)
+        } finally {
+            ir.thepoo7an.chand.network.LiveConfigRegistry.resetToDefault()
+        }
+    }
 }
