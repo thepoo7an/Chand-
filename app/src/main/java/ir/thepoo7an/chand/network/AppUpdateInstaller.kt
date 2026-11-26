@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import ir.thepoo7an.chand.BuildConfig
 import java.io.File
 
 sealed interface AppUpdateDownloadState {
@@ -35,7 +36,8 @@ sealed interface AppUpdateDownloadState {
 
     data class Error(
         val info: AppUpdateInfo,
-        val errorCode: String
+        val errorCode: String,
+        val reason: UpdateErrorReason = UpdateErrorReason.fromCode(errorCode)
     ) : AppUpdateDownloadState
 }
 
@@ -43,12 +45,43 @@ enum class InstallLaunchResult {
     LAUNCHED_INSTALLER,
     NEEDS_UNKNOWN_SOURCES_PERMISSION,
     FILE_MISSING,
-    FAILED
+    CHECKSUM_MISMATCH,
+    CORRUPTED_APK,
+    WRONG_PACKAGE_NAME,
+    OLDER_OR_EQUAL_VERSION,
+    UNEXPECTED_SIGNER,
+    FAILED;
+
+    fun toUpdateErrorReason(): UpdateErrorReason? = when (this) {
+        LAUNCHED_INSTALLER, NEEDS_UNKNOWN_SOURCES_PERMISSION -> null
+        FILE_MISSING -> UpdateErrorReason.INCOMPLETE_DOWNLOAD
+        CHECKSUM_MISMATCH -> UpdateErrorReason.CHECKSUM_MISMATCH
+        CORRUPTED_APK -> UpdateErrorReason.CORRUPTED_APK
+        WRONG_PACKAGE_NAME -> UpdateErrorReason.WRONG_PACKAGE_NAME
+        OLDER_OR_EQUAL_VERSION -> UpdateErrorReason.OLDER_OR_EQUAL_VERSION
+        UNEXPECTED_SIGNER -> UpdateErrorReason.UNEXPECTED_SIGNER
+        FAILED -> UpdateErrorReason.INSTALL_FAILED
+    }
+
+    companion object {
+        fun fromErrorReason(reason: UpdateErrorReason): InstallLaunchResult = when (reason) {
+            UpdateErrorReason.CHECKSUM_MISMATCH -> CHECKSUM_MISMATCH
+            UpdateErrorReason.CORRUPTED_APK,
+            UpdateErrorReason.METADATA_INVALID,
+            UpdateErrorReason.UNREASONABLE_FILE_SIZE -> CORRUPTED_APK
+            UpdateErrorReason.INCOMPLETE_DOWNLOAD -> FILE_MISSING
+            UpdateErrorReason.WRONG_PACKAGE_NAME -> WRONG_PACKAGE_NAME
+            UpdateErrorReason.OLDER_OR_EQUAL_VERSION -> OLDER_OR_EQUAL_VERSION
+            UpdateErrorReason.UNEXPECTED_SIGNER -> UNEXPECTED_SIGNER
+            else -> FAILED
+        }
+    }
 }
 
 /**
- * Manages cached APK update storage under `cacheDir/updates/` and safely launches the
- * system Android package installer via [FileProvider].
+ * Manages cached APK update storage under `cacheDir/updates/`, runs full pre-install
+ * integrity, package, version, and signer verification, and safely launches Android's
+ * system package installer via [FileProvider].
  */
 object AppUpdateInstaller {
 
@@ -68,13 +101,34 @@ object AppUpdateInstaller {
         return File(updatesDir(context), fileName)
     }
 
-    fun findAlreadyDownloadedApk(context: Context, info: AppUpdateInfo): File? {
-        val file = targetApkFile(context, info)
-        if (!AppUpdateService.hasApkZipMagicHeader(file)) return null
-        if (info.matchedApkSizeBytes > 0L && file.length() != info.matchedApkSizeBytes) {
+    fun findAlreadyDownloadedApk(
+        context: Context,
+        info: AppUpdateInfo,
+        apkInspector: ApkPackageInspector = AndroidApkPackageInspector(context),
+        currentVersionCode: Int = BuildConfig.VERSION_CODE,
+        expectedReleaseCertSha256: String = BuildConfig.EXPECTED_RELEASE_CERT_SHA256
+    ): File? {
+        if (!info.hasVerifiedMetadata || !UpdateSecurityValidator.isValidSha256Hex(info.expectedSha256)) {
             return null
         }
-        return file
+        val file = targetApkFile(context, info)
+        if (!file.exists()) return null
+        return runCatching {
+            UpdateSecurityValidator.verifyDownloadedApkForInstall(
+                apkFile = file,
+                expectedSha256 = info.expectedSha256,
+                expectedSizeBytes = info.matchedApkSizeBytes,
+                expectedPackageName = info.expectedPackageName,
+                expectedVersionCode = info.latestVersionCode,
+                currentVersionCode = currentVersionCode,
+                expectedReleaseCertSha256 = expectedReleaseCertSha256,
+                apkInspector = apkInspector
+            )
+            file
+        }.getOrElse {
+            runCatching { file.delete() }
+            null
+        }
     }
 
     fun cleanupStaleApks(context: Context, keepFile: File? = null) {
@@ -109,11 +163,38 @@ object AppUpdateInstaller {
 
     fun launchInstallOrRequestPermission(
         context: Context,
-        apkFile: File
+        apkFile: File,
+        info: AppUpdateInfo,
+        apkInspector: ApkPackageInspector = AndroidApkPackageInspector(context),
+        currentVersionCode: Int = BuildConfig.VERSION_CODE,
+        expectedReleaseCertSha256: String = BuildConfig.EXPECTED_RELEASE_CERT_SHA256
     ): InstallLaunchResult {
-        if (!AppUpdateService.hasApkZipMagicHeader(apkFile)) {
+        if (!apkFile.exists() || !apkFile.isFile) {
             return InstallLaunchResult.FILE_MISSING
         }
+        if (!info.hasVerifiedMetadata || !UpdateSecurityValidator.isValidSha256Hex(info.expectedSha256)) {
+            runCatching { apkFile.delete() }
+            return InstallLaunchResult.CORRUPTED_APK
+        }
+        try {
+            UpdateSecurityValidator.verifyDownloadedApkForInstall(
+                apkFile = apkFile,
+                expectedSha256 = info.expectedSha256,
+                expectedSizeBytes = info.matchedApkSizeBytes,
+                expectedPackageName = info.expectedPackageName,
+                expectedVersionCode = info.latestVersionCode,
+                currentVersionCode = currentVersionCode,
+                expectedReleaseCertSha256 = expectedReleaseCertSha256,
+                apkInspector = apkInspector
+            )
+        } catch (e: AppUpdateException) {
+            runCatching { apkFile.delete() }
+            return InstallLaunchResult.fromErrorReason(e.reason)
+        } catch (_: Throwable) {
+            runCatching { apkFile.delete() }
+            return InstallLaunchResult.CORRUPTED_APK
+        }
+
         if (!canRequestPackageInstalls(context)) {
             return InstallLaunchResult.NEEDS_UNKNOWN_SOURCES_PERMISSION
         }

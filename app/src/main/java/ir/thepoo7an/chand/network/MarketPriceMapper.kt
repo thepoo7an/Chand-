@@ -3,8 +3,10 @@ package ir.thepoo7an.chand.network
 import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.AssetHistoryPoint
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
+import ir.thepoo7an.chand.model.CandidateExclusionReason
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.model.SourceCandidateRecord
 
 /**
  * Pure, deterministic price-mapping, cross-source validation, and normalization engine for Chand?!.
@@ -69,7 +71,8 @@ object MarketPriceMapper {
         val timestampMillis: Long = 0L,
         val changePct: Double = 0.0,
         val highToman: Double? = null,
-        val lowToman: Double? = null
+        val lowToman: Double? = null,
+        val unavailabilityReason: CandidateExclusionReason? = null
     )
 
     data class ConsensusResult(
@@ -79,7 +82,10 @@ object MarketPriceMapper {
         val acceptedSources: List<String>,
         val excludedSources: List<String>,
         val sourceTimestampMillis: Long,
-        val selectedCandidate: PriceCandidate
+        val selectedCandidate: PriceCandidate,
+        val isCalculated: Boolean = false,
+        val sourceAttributionLabel: String = "",
+        val candidateRecords: List<SourceCandidateRecord> = emptyList()
     )
 
     data class ResolvedUsdRate(
@@ -97,7 +103,12 @@ object MarketPriceMapper {
         val usdDisputed: Boolean = false,
         val usdSingleSource: Boolean = false,
         val usdtDisputed: Boolean = false,
-        val usdtSingleSource: Boolean = false
+        val usdtSingleSource: Boolean = false,
+        val usdIsCalculated: Boolean = false,
+        val usdtIsCalculated: Boolean = false,
+        val usdtSourceLabel: String = "",
+        val usdCandidates: List<SourceCandidateRecord> = emptyList(),
+        val usdtCandidates: List<SourceCandidateRecord> = emptyList()
     )
 
     data class FiatSpec(
@@ -134,6 +145,8 @@ object MarketPriceMapper {
 
     val SUPPORTED_GOLDS: List<GoldSpec> = GoldPriceMapper.SUPPORTED_GOLDS
 
+    val SUPPORTED_OILS: List<OilPriceMapper.OilSpec> = OilPriceMapper.SUPPORTED_OILS
+
     /**
      * Cross-source validation rule (Decisions):
      * - >= 3 valid sources: take cross-source median and exclude outliers deviating > [thresholdPct]%.
@@ -144,17 +157,19 @@ object MarketPriceMapper {
     fun validateCrossSourcePrices(
         candidates: List<PriceCandidate>,
         thresholdPct: Double,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long = System.currentTimeMillis(),
+        staleMaxAgeMillis: Long? = null
     ): ConsensusResult? = MarketValidationHelpers.validateCrossSourcePrices(
         candidates = candidates,
         thresholdPct = thresholdPct,
-        nowMillis = nowMillis
+        nowMillis = nowMillis,
+        staleMaxAgeMillis = staleMaxAgeMillis
     )
 
     /**
      * Derives [DataFreshness] per Decisions:
-     * - LIVE: fetched in current refresh and timestamp age <= 5m (crypto) or 30m (fiat/gold).
-     * - DELAYED: fetched in current refresh from a live source, but timestamp age > maxAge.
+     * - LIVE: fetched in current refresh with known source timestamp age <= 5m (crypto) or 30m (fiat/gold).
+     * - DELAYED: fetched in current refresh from a live source, but source timestamp is unknown (0L) or age > maxAge.
      * - CACHED: served from persisted cache or derived from cached anchor.
      * - UNAVAILABLE: no usable value.
      */
@@ -193,8 +208,12 @@ object MarketPriceMapper {
         tgjuTableFallbackDelta: Pair<Double, Double>?,
         lastKnownUsdToman: Double?,
         nowMillis: Long = System.currentTimeMillis(),
-        nobitexTimestampMillis: Long = nowMillis,
-        cachedUsdTimestampMillis: Long = 0L
+        nobitexTimestampMillis: Long = 0L,
+        cachedUsdTimestampMillis: Long = 0L,
+        tgjuFailed: Boolean = false,
+        wallexFailed: Boolean = false,
+        bitpinFailed: Boolean = false,
+        nobitexFailed: Boolean = false
     ): ResolvedUsdRate = FiatPriceMapper.resolveFreeMarketUsd(
         tgjuUsdQuote = tgjuUsdQuote,
         wallexUsdt = wallexUsdt,
@@ -205,7 +224,11 @@ object MarketPriceMapper {
         lastKnownUsdToman = lastKnownUsdToman,
         nowMillis = nowMillis,
         nobitexTimestampMillis = nobitexTimestampMillis,
-        cachedUsdTimestampMillis = cachedUsdTimestampMillis
+        cachedUsdTimestampMillis = cachedUsdTimestampMillis,
+        tgjuFailed = tgjuFailed,
+        wallexFailed = wallexFailed,
+        bitpinFailed = bitpinFailed,
+        nobitexFailed = nobitexFailed
     )
 
     fun mapFiatAsset(
@@ -219,7 +242,9 @@ object MarketPriceMapper {
         currencySpark: List<Double> = emptyList(),
         fxConsensus: ConsensusResult? = null,
         usdBasisFreshness: DataFreshness = DataFreshness.LIVE,
-        usdSourceTimestampMillis: Long = nowMillis
+        usdSourceTimestampMillis: Long = 0L,
+        tgjuFailed: Boolean = false,
+        fxFailedProviders: Set<String> = emptySet()
     ): MarketAsset? = FiatPriceMapper.mapFiatAsset(
         spec = spec,
         usdToman = usdToman,
@@ -231,7 +256,9 @@ object MarketPriceMapper {
         currencySpark = currencySpark,
         fxConsensus = fxConsensus,
         usdBasisFreshness = usdBasisFreshness,
-        usdSourceTimestampMillis = usdSourceTimestampMillis
+        usdSourceTimestampMillis = usdSourceTimestampMillis,
+        tgjuFailed = tgjuFailed,
+        fxFailedProviders = fxFailedProviders
     )
 
     fun mapCryptoAsset(
@@ -245,8 +272,15 @@ object MarketPriceMapper {
         sparkInput: List<Double>,
         nowMillis: Long,
         usdtBasisFreshness: DataFreshness = DataFreshness.LIVE,
-        usdtSourceTimestampMillis: Long = nowMillis,
-        nobitexTimestampMillis: Long = nowMillis
+        usdtSourceTimestampMillis: Long = 0L,
+        nobitexTimestampMillis: Long = 0L,
+        wallexFailed: Boolean = false,
+        bitpinFailed: Boolean = false,
+        binanceFailed: Boolean = false,
+        nobitexFailed: Boolean = false,
+        usdtBasisSourceLabel: String = "",
+        usdtBasisIsCalculated: Boolean = false,
+        usdtBasisCandidates: List<SourceCandidateRecord> = emptyList()
     ): MarketAsset? = CryptoPriceMapper.mapCryptoAsset(
         spec = spec,
         usdtToman = usdtToman,
@@ -259,7 +293,14 @@ object MarketPriceMapper {
         nowMillis = nowMillis,
         usdtBasisFreshness = usdtBasisFreshness,
         usdtSourceTimestampMillis = usdtSourceTimestampMillis,
-        nobitexTimestampMillis = nobitexTimestampMillis
+        nobitexTimestampMillis = nobitexTimestampMillis,
+        wallexFailed = wallexFailed,
+        bitpinFailed = bitpinFailed,
+        binanceFailed = binanceFailed,
+        nobitexFailed = nobitexFailed,
+        usdtBasisSourceLabel = usdtBasisSourceLabel,
+        usdtBasisIsCalculated = usdtBasisIsCalculated,
+        usdtBasisCandidates = usdtBasisCandidates
     )
 
     /**
@@ -283,7 +324,11 @@ object MarketPriceMapper {
         usdtSpark: List<Double>,
         cachedAssetsById: Map<String, MarketAsset>,
         nowMillis: Long,
-        computeTableDelta: (List<AssetHistoryPoint>, Double) -> Pair<Double, Double>? = { _, _ -> null }
+        computeTableDelta: (List<AssetHistoryPoint>, Double) -> Pair<Double, Double>? = { _, _ -> null },
+        tgjuFailed: Boolean = false,
+        binanceFailed: Boolean = false,
+        goldApiFailed: Boolean = false,
+        currencyApiFailed: Boolean = false
     ): List<MarketAsset> = GoldPriceMapper.mapGoldAssets(
         tgju = tgju,
         usdToman = usdToman,
@@ -297,7 +342,27 @@ object MarketPriceMapper {
         usdtSpark = usdtSpark,
         cachedAssetsById = cachedAssetsById,
         nowMillis = nowMillis,
-        computeTableDelta = computeTableDelta
+        computeTableDelta = computeTableDelta,
+        tgjuFailed = tgjuFailed,
+        binanceFailed = binanceFailed,
+        goldApiFailed = goldApiFailed,
+        currencyApiFailed = currencyApiFailed
+    )
+
+    fun mapOilAssets(
+        specs: List<OilPriceMapper.OilSpec> = SUPPORTED_OILS,
+        batch: OilApiService.OilMarketBatch,
+        usdToman: Double,
+        usdBasisFreshness: DataFreshness,
+        cachedAssetsById: Map<String, MarketAsset>,
+        nowMillis: Long
+    ): List<MarketAsset> = OilPriceMapper.mapOilAssets(
+        specs = specs,
+        batch = batch,
+        usdToman = usdToman,
+        usdBasisFreshness = usdBasisFreshness,
+        cachedAssetsById = cachedAssetsById,
+        nowMillis = nowMillis
     )
 
     /**

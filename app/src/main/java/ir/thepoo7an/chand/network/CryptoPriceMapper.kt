@@ -1,8 +1,10 @@
 package ir.thepoo7an.chand.network
 
 import ir.thepoo7an.chand.model.AssetCategory
+import ir.thepoo7an.chand.model.CandidateExclusionReason
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.model.SourceCandidateRecord
 import kotlin.math.abs
 
 /**
@@ -32,60 +34,141 @@ internal object CryptoPriceMapper {
         sparkInput: List<Double>,
         nowMillis: Long,
         usdtBasisFreshness: DataFreshness = DataFreshness.LIVE,
-        usdtSourceTimestampMillis: Long = nowMillis,
-        nobitexTimestampMillis: Long = nowMillis
+        usdtSourceTimestampMillis: Long = 0L,
+        nobitexTimestampMillis: Long = 0L,
+        wallexFailed: Boolean = false,
+        bitpinFailed: Boolean = false,
+        binanceFailed: Boolean = false,
+        nobitexFailed: Boolean = false,
+        usdtBasisSourceLabel: String = "",
+        usdtBasisIsCalculated: Boolean = false,
+        usdtBasisCandidates: List<SourceCandidateRecord> = emptyList()
     ): MarketAsset? {
         if (spec.id == "USDT") {
-            val usdtCandidates = listOfNotNull(
-                wallex?.priceToman?.takeIf { it > 1_000.0 }?.let {
-                    MarketPriceMapper.PriceCandidate(
-                        sourceName = "Wallex",
-                        price = it,
-                        isPrimary = true,
-                        timestampMillis = wallex.timestampMillis.takeIf { ts -> ts > 0L } ?: nowMillis,
-                        changePct = wallex.changePct,
-                        highToman = wallex.highToman,
-                        lowToman = wallex.lowToman
+            val wallexValid = wallex?.priceToman?.takeIf { it.isFinite() && it > 1_000.0 }
+            val bitpinValid = bitpin?.priceToman?.takeIf { it.isFinite() && it > 1_000.0 }
+            val nobitexValid = nobitexUsdtToman?.takeIf { it.isFinite() && it > 1_000.0 }
+
+            val usdtCandidates = buildList {
+                when {
+                    wallexValid != null -> add(
+                        MarketPriceMapper.PriceCandidate(
+                            sourceName = "Wallex",
+                            price = wallexValid,
+                            isPrimary = true,
+                            timestampMillis = wallex.timestampMillis.coerceAtLeast(0L),
+                            changePct = wallex.changePct,
+                            highToman = wallex.highToman,
+                            lowToman = wallex.lowToman
+                        )
                     )
-                },
-                bitpin?.priceToman?.takeIf { it > 1_000.0 }?.let {
-                    MarketPriceMapper.PriceCandidate(
-                        sourceName = "Bitpin",
-                        price = it,
-                        isPrimary = wallex?.priceToman == null,
-                        timestampMillis = bitpin.timestampMillis.takeIf { ts -> ts > 0L } ?: nowMillis,
-                        changePct = bitpin.changePct,
-                        highToman = bitpin.highToman,
-                        lowToman = bitpin.lowToman
+                    wallex?.priceToman != null -> add(
+                        MarketPriceMapper.PriceCandidate(
+                            sourceName = "Wallex",
+                            price = wallex.priceToman,
+                            isPrimary = false,
+                            timestampMillis = wallex.timestampMillis.coerceAtLeast(0L),
+                            unavailabilityReason = CandidateExclusionReason.INVALID
+                        )
                     )
-                },
-                nobitexUsdtToman?.takeIf { it > 1_000.0 }?.let {
-                    MarketPriceMapper.PriceCandidate(
-                        sourceName = "Nobitex",
-                        price = it,
-                        isPrimary = wallex?.priceToman == null && bitpin?.priceToman == null,
-                        timestampMillis = nobitexTimestampMillis.takeIf { ts -> ts > 0L } ?: nowMillis
+                    else -> add(
+                        MarketPriceMapper.PriceCandidate(
+                            sourceName = "Wallex",
+                            price = 0.0,
+                            isPrimary = false,
+                            unavailabilityReason = if (wallexFailed) {
+                                CandidateExclusionReason.PROVIDER_FAILURE
+                            } else {
+                                CandidateExclusionReason.MISSING_DATA
+                            }
+                        )
                     )
                 }
-            )
+
+                when {
+                    bitpinValid != null -> add(
+                        MarketPriceMapper.PriceCandidate(
+                            sourceName = "Bitpin",
+                            price = bitpinValid,
+                            isPrimary = wallexValid == null,
+                            timestampMillis = bitpin.timestampMillis.coerceAtLeast(0L),
+                            changePct = bitpin.changePct,
+                            highToman = bitpin.highToman,
+                            lowToman = bitpin.lowToman
+                        )
+                    )
+                    bitpin?.priceToman != null -> add(
+                        MarketPriceMapper.PriceCandidate(
+                            sourceName = "Bitpin",
+                            price = bitpin.priceToman,
+                            isPrimary = false,
+                            timestampMillis = bitpin.timestampMillis.coerceAtLeast(0L),
+                            unavailabilityReason = CandidateExclusionReason.INVALID
+                        )
+                    )
+                    else -> add(
+                        MarketPriceMapper.PriceCandidate(
+                            sourceName = "Bitpin",
+                            price = 0.0,
+                            isPrimary = false,
+                            unavailabilityReason = if (bitpinFailed) {
+                                CandidateExclusionReason.PROVIDER_FAILURE
+                            } else {
+                                CandidateExclusionReason.MISSING_DATA
+                            }
+                        )
+                    )
+                }
+
+                when {
+                    nobitexValid != null -> add(
+                        MarketPriceMapper.PriceCandidate(
+                            sourceName = "Nobitex",
+                            price = nobitexValid,
+                            isPrimary = wallexValid == null && bitpinValid == null,
+                            timestampMillis = nobitexTimestampMillis.coerceAtLeast(0L)
+                        )
+                    )
+                    nobitexUsdtToman != null -> add(
+                        MarketPriceMapper.PriceCandidate(
+                            sourceName = "Nobitex",
+                            price = nobitexUsdtToman,
+                            isPrimary = false,
+                            timestampMillis = nobitexTimestampMillis.coerceAtLeast(0L),
+                            unavailabilityReason = CandidateExclusionReason.INVALID
+                        )
+                    )
+                    else -> add(
+                        MarketPriceMapper.PriceCandidate(
+                            sourceName = "Nobitex",
+                            price = 0.0,
+                            isPrimary = false,
+                            unavailabilityReason = if (nobitexFailed) {
+                                CandidateExclusionReason.PROVIDER_FAILURE
+                            } else {
+                                CandidateExclusionReason.MISSING_DATA
+                            }
+                        )
+                    )
+                }
+            }
 
             val consensus = MarketValidationHelpers.validateCrossSourcePrices(
                 candidates = usdtCandidates,
                 thresholdPct = MarketValidationConfig.effectiveCryptoDisagreementThresholdPct(),
-                nowMillis = nowMillis
+                nowMillis = nowMillis,
+                staleMaxAgeMillis = MarketValidationConfig.effectiveCryptoLiveMaxAgeMillis()
             )
 
-            val priceToman = consensus?.price ?: usdtToman.takeIf { it > 0.0 } ?: return null
+            val priceToman = consensus?.price ?: usdtToman.takeIf { it.isFinite() && it > 0.0 } ?: return null
             val changePct = usdtChangePct
             val changeToman = priceToman * (changePct / 100.0)
-            val source = consensus?.acceptedSources?.joinToString("+")?.ifEmpty { "Live" }
-                ?: listOfNotNull(
-                    if (wallex?.priceToman != null) "Wallex" else null,
-                    if (bitpin?.priceToman != null) "Bitpin" else null,
-                    if (nobitexUsdtToman != null) "Nobitex" else null
-                ).joinToString("+").ifEmpty { "Cached" }
+            val source = consensus?.sourceAttributionLabel
+                ?: usdtBasisSourceLabel.ifBlank { "Cached" }
+            val isCalculatedPrice = consensus?.isCalculated ?: usdtBasisIsCalculated
+            val candidateRecords = consensus?.candidateRecords ?: usdtBasisCandidates
 
-            val sourceTs = consensus?.sourceTimestampMillis ?: usdtSourceTimestampMillis
+            val sourceTs = consensus?.sourceTimestampMillis ?: usdtSourceTimestampMillis.coerceAtLeast(0L)
             val directFreshness = if (consensus != null) {
                 MarketValidationHelpers.deriveFreshness(
                     category = AssetCategory.CRYPTO,
@@ -127,59 +210,134 @@ internal object CryptoPriceMapper {
                 sourceTimestampMillis = sourceTs,
                 fetchedAtMillis = nowMillis,
                 disputed = consensus?.disputed == true,
-                singleSource = consensus?.singleSource ?: true
+                singleSource = consensus?.singleSource ?: true,
+                isCalculatedPrice = isCalculatedPrice,
+                candidates = candidateRecords
             )
         }
 
         val priceUsd = binance?.priceUsd ?: wallex?.priceUsd ?: bitpin?.priceUsd
-        val candidates = mutableListOf<MarketPriceMapper.PriceCandidate>()
-        wallex?.priceToman?.takeIf { it > 0.0 }?.let {
-            candidates.add(
-                MarketPriceMapper.PriceCandidate(
-                    sourceName = "Wallex",
-                    price = it,
-                    isPrimary = true,
-                    timestampMillis = wallex.timestampMillis.takeIf { ts -> ts > 0L } ?: nowMillis,
-                    changePct = wallex.changePct,
-                    highToman = wallex.highToman,
-                    lowToman = wallex.lowToman
+        val wallexValid = wallex?.priceToman?.takeIf { it.isFinite() && it > 0.0 }
+        val bitpinValid = bitpin?.priceToman?.takeIf { it.isFinite() && it > 0.0 }
+        val binanceValidUsd = binance?.priceUsd?.takeIf { it.isFinite() && it > 0.0 }
+        val safeUsdtTs = usdtSourceTimestampMillis.coerceAtLeast(0L)
+
+        val candidates = buildList {
+            when {
+                wallexValid != null -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Wallex",
+                        price = wallexValid,
+                        isPrimary = true,
+                        timestampMillis = wallex.timestampMillis.coerceAtLeast(0L),
+                        changePct = wallex.changePct,
+                        highToman = wallex.highToman,
+                        lowToman = wallex.lowToman
+                    )
                 )
-            )
-        }
-        bitpin?.priceToman?.takeIf { it > 0.0 }?.let {
-            candidates.add(
-                MarketPriceMapper.PriceCandidate(
-                    sourceName = "Bitpin",
-                    price = it,
-                    isPrimary = wallex?.priceToman == null,
-                    timestampMillis = bitpin.timestampMillis.takeIf { ts -> ts > 0L } ?: nowMillis,
-                    changePct = bitpin.changePct,
-                    highToman = bitpin.highToman,
-                    lowToman = bitpin.lowToman
+                wallex?.priceToman != null -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Wallex",
+                        price = wallex.priceToman,
+                        isPrimary = false,
+                        timestampMillis = wallex.timestampMillis.coerceAtLeast(0L),
+                        unavailabilityReason = CandidateExclusionReason.INVALID
+                    )
                 )
-            )
-        }
-        if (binance?.priceUsd != null && binance.priceUsd > 0.0 && usdtToman > 0.0) {
-            candidates.add(
-                MarketPriceMapper.PriceCandidate(
-                    sourceName = "Binance",
-                    price = binance.priceUsd * usdtToman,
-                    isPrimary = wallex?.priceToman == null && bitpin?.priceToman == null,
-                    timestampMillis = minOf(
-                        binance.timestampMillis.takeIf { ts -> ts > 0L } ?: nowMillis,
-                        usdtSourceTimestampMillis.takeIf { ts -> ts > 0L } ?: nowMillis
-                    ),
-                    changePct = binance.changePct,
-                    highToman = binance.highUsd?.takeIf { it > 0.0 }?.let { it * usdtToman },
-                    lowToman = binance.lowUsd?.takeIf { it > 0.0 }?.let { it * usdtToman }
+                else -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Wallex",
+                        price = 0.0,
+                        isPrimary = false,
+                        unavailabilityReason = if (wallexFailed) {
+                            CandidateExclusionReason.PROVIDER_FAILURE
+                        } else {
+                            CandidateExclusionReason.MISSING_DATA
+                        }
+                    )
                 )
-            )
+            }
+
+            when {
+                bitpinValid != null -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Bitpin",
+                        price = bitpinValid,
+                        isPrimary = wallexValid == null,
+                        timestampMillis = bitpin.timestampMillis.coerceAtLeast(0L),
+                        changePct = bitpin.changePct,
+                        highToman = bitpin.highToman,
+                        lowToman = bitpin.lowToman
+                    )
+                )
+                bitpin?.priceToman != null -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Bitpin",
+                        price = bitpin.priceToman,
+                        isPrimary = false,
+                        timestampMillis = bitpin.timestampMillis.coerceAtLeast(0L),
+                        unavailabilityReason = CandidateExclusionReason.INVALID
+                    )
+                )
+                else -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Bitpin",
+                        price = 0.0,
+                        isPrimary = false,
+                        unavailabilityReason = if (bitpinFailed) {
+                            CandidateExclusionReason.PROVIDER_FAILURE
+                        } else {
+                            CandidateExclusionReason.MISSING_DATA
+                        }
+                    )
+                )
+            }
+
+            when {
+                binanceValidUsd != null && usdtToman > 0.0 -> {
+                    val binanceTs = binance.timestampMillis.coerceAtLeast(0L)
+                    val combinedTs = if (binanceTs > 0L && safeUsdtTs > 0L) minOf(binanceTs, safeUsdtTs) else 0L
+                    add(
+                        MarketPriceMapper.PriceCandidate(
+                            sourceName = "Binance",
+                            price = binanceValidUsd * usdtToman,
+                            isPrimary = wallexValid == null && bitpinValid == null,
+                            timestampMillis = combinedTs,
+                            changePct = binance.changePct,
+                            highToman = binance.highUsd?.takeIf { it > 0.0 }?.let { it * usdtToman },
+                            lowToman = binance.lowUsd?.takeIf { it > 0.0 }?.let { it * usdtToman }
+                        )
+                    )
+                }
+                binance?.priceUsd != null -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Binance",
+                        price = binance.priceUsd,
+                        isPrimary = false,
+                        timestampMillis = binance.timestampMillis.coerceAtLeast(0L),
+                        unavailabilityReason = CandidateExclusionReason.INVALID
+                    )
+                )
+                else -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Binance",
+                        price = 0.0,
+                        isPrimary = false,
+                        unavailabilityReason = if (binanceFailed) {
+                            CandidateExclusionReason.PROVIDER_FAILURE
+                        } else {
+                            CandidateExclusionReason.MISSING_DATA
+                        }
+                    )
+                )
+            }
         }
 
         val consensus = MarketValidationHelpers.validateCrossSourcePrices(
             candidates = candidates,
             thresholdPct = MarketValidationConfig.effectiveCryptoDisagreementThresholdPct(),
-            nowMillis = nowMillis
+            nowMillis = nowMillis,
+            staleMaxAgeMillis = MarketValidationConfig.effectiveCryptoLiveMaxAgeMillis()
         ) ?: return null
 
         val priceToman = consensus.price
@@ -204,7 +362,12 @@ internal object CryptoPriceMapper {
             directFreshness
         }
 
-        val source = consensus.acceptedSources.joinToString("+").ifEmpty { "Live" }
+        val source = if (usesDerivedBinance && usdtBasisIsCalculated && !consensus.isCalculated && consensus.singleSource && usdtBasisSourceLabel.isNotBlank()) {
+            "Binance * $usdtBasisSourceLabel"
+        } else {
+            consensus.sourceAttributionLabel
+        }
+        val isCalculatedPrice = consensus.isCalculated || (usesDerivedBinance && usdtBasisIsCalculated)
         val highToman = consensus.selectedCandidate.highToman?.takeIf { it > 0.0 }
         val lowToman = consensus.selectedCandidate.lowToman?.takeIf { it > 0.0 }
 
@@ -235,7 +398,10 @@ internal object CryptoPriceMapper {
             sourceTimestampMillis = consensus.sourceTimestampMillis,
             fetchedAtMillis = nowMillis,
             disputed = consensus.disputed,
-            singleSource = consensus.singleSource
+            singleSource = consensus.singleSource,
+            isCalculatedPrice = isCalculatedPrice,
+            candidates = consensus.candidateRecords
         )
     }
 }
+

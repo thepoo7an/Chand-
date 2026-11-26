@@ -22,7 +22,10 @@ data class RemoteEndpointsConfig(
     val frankfurterSeriesUrlTemplates: List<String> = emptyList(),
     val openErLatestUrl: String = "",
     val goldSpotXauUrl: String = "",
-    val currencyCdnUrlTemplates: List<String> = emptyList()
+    val currencyCdnUrlTemplates: List<String> = emptyList(),
+    val oilYahooChartUrlTemplates: List<String> = emptyList(),
+    val oilCnbcQuotesUrl: String = "",
+    val oilEiaSpotUrl: String = ""
 )
 
 /**

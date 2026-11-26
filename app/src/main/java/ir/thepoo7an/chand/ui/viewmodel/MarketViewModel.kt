@@ -16,6 +16,7 @@ import ir.thepoo7an.chand.model.RemoteAppConfig
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.network.AppUpdateDownloadState
+import ir.thepoo7an.chand.network.AppUpdateException
 import ir.thepoo7an.chand.network.AppUpdateInfo
 import ir.thepoo7an.chand.network.AppUpdateInstaller
 import ir.thepoo7an.chand.network.AppUpdateState
@@ -24,7 +25,10 @@ import ir.thepoo7an.chand.network.LiveConfigRegistry
 import ir.thepoo7an.chand.network.RemoteConfigSyncResult
 import ir.thepoo7an.chand.network.RemoteConfigUiState
 import ir.thepoo7an.chand.network.TomanRateBasis
+import ir.thepoo7an.chand.network.UpdateErrorReason
+import ir.thepoo7an.chand.network.UpdateSecurityValidator
 import ir.thepoo7an.chand.widget.WidgetSyncCoordinator
+import javax.net.ssl.SSLException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -81,6 +85,9 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _selectedAssetForDetail = MutableStateFlow<MarketAsset?>(null)
     val selectedAssetForDetail: StateFlow<MarketAsset?> = _selectedAssetForDetail.asStateFlow()
+
+    private val _selectedAssetForSourceBreakdown = MutableStateFlow<MarketAsset?>(null)
+    val selectedAssetForSourceBreakdown: StateFlow<MarketAsset?> = _selectedAssetForSourceBreakdown.asStateFlow()
 
     private val _selectedTimeRange = MutableStateFlow(TimeRange.H24)
     val selectedTimeRange: StateFlow<TimeRange> = _selectedTimeRange.asStateFlow()
@@ -224,7 +231,7 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                 val cached = repository.loadCached()
                 if (cached != null && cached.assets.isNotEmpty()) {
                     _uiState.value = MarketUiState.Ready(
-                        assets = cached.assets.map { it.copy(freshness = if (it.priceToman > 0.0) DataFreshness.CACHED else DataFreshness.UNAVAILABLE) },
+                        assets = cached.assets.map { it.copy(freshness = if (it.hasUsablePrimaryPrice) DataFreshness.CACHED else DataFreshness.UNAVAILABLE) },
                         lastUpdatedMillis = cached.updatedAtMillis,
                         isRefreshing = true,
                         sourceSummary = cached.sourceSummary,
@@ -299,8 +306,11 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                         else -> "offline"
                     }
                 )
-                // Also refresh currently open detail asset if visible
+                // Also refresh currently open detail/source breakdown asset if visible
                 _selectedAssetForDetail.update { openAsset ->
+                    openAsset?.let { asset -> sync.assets.firstOrNull { it.id == asset.id } ?: asset }
+                }
+                _selectedAssetForSourceBreakdown.update { openAsset ->
                     openAsset?.let { asset -> sync.assets.firstOrNull { it.id == asset.id } ?: asset }
                 }
             } else {
@@ -469,8 +479,13 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                 repository.checkForUpdate(targetRepo)
             } catch (ce: CancellationException) {
                 throw ce
-            } catch (_: Throwable) {
-                AppUpdateState.Error("update_check_failed")
+            } catch (t: Throwable) {
+                val reason = when (t) {
+                    is AppUpdateException -> t.reason
+                    is SSLException -> UpdateErrorReason.HTTPS_VALIDATION_FAILED
+                    else -> UpdateErrorReason.NETWORK_FAILURE
+                }
+                AppUpdateState.Error(reason.code, reason)
             }
             _updateState.value = result
             if (result is AppUpdateState.UpdateAvailable) {
@@ -501,10 +516,25 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun startInAppUpdateDownload(info: AppUpdateInfo) {
-        val existingReady = AppUpdateInstaller.findAlreadyDownloadedApk(
-            getApplication<Application>().applicationContext,
-            info
-        )
+        val currentDownloading = _updateDownloadState.value as? AppUpdateDownloadState.Downloading
+        if (updateDownloadJob?.isActive == true &&
+            currentDownloading?.info?.latestVersionName == info.latestVersionName &&
+            currentDownloading.info.latestVersionCode == info.latestVersionCode
+        ) {
+            return
+        }
+
+        if (!info.hasVerifiedMetadata || !UpdateSecurityValidator.isValidSha256Hex(info.expectedSha256)) {
+            _updateDownloadState.value = AppUpdateDownloadState.Error(
+                info = info,
+                errorCode = UpdateErrorReason.METADATA_INVALID.code,
+                reason = UpdateErrorReason.METADATA_INVALID
+            )
+            return
+        }
+
+        val appContext = getApplication<Application>().applicationContext
+        val existingReady = AppUpdateInstaller.findAlreadyDownloadedApk(appContext, info)
         if (existingReady != null) {
             _updateDownloadState.value = AppUpdateDownloadState.ReadyToInstall(
                 info = info,
@@ -516,7 +546,6 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         updateDownloadJob?.cancel()
-        val appContext = getApplication<Application>().applicationContext
         val destFile = AppUpdateInstaller.targetApkFile(appContext, info)
         _updateDownloadState.value = AppUpdateDownloadState.Downloading(
             info = info,
@@ -528,9 +557,8 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 AppUpdateInstaller.cleanupStaleApks(appContext, keepFile = destFile)
                 val downloaded = repository.downloadUpdateApk(
-                    downloadUrl = info.downloadUrl,
-                    destinationFile = destFile,
-                    expectedSizeBytes = info.matchedApkSizeBytes
+                    info = info,
+                    destinationFile = destFile
                 ) { bytes, total ->
                     _updateDownloadState.value = AppUpdateDownloadState.Downloading(
                         info = info,
@@ -546,10 +574,20 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
                 _installApkRequests.tryEmit(downloaded.absolutePath)
             } catch (ce: CancellationException) {
                 throw ce
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                val reason = when (t) {
+                    is AppUpdateException -> t.reason
+                    is SSLException -> UpdateErrorReason.HTTPS_VALIDATION_FAILED
+                    else -> if (UpdateSecurityValidator.isInsufficientStorageCause(t)) {
+                        UpdateErrorReason.INSUFFICIENT_STORAGE
+                    } else {
+                        UpdateErrorReason.NETWORK_FAILURE
+                    }
+                }
                 _updateDownloadState.value = AppUpdateDownloadState.Error(
                     info = info,
-                    errorCode = "download_failed"
+                    errorCode = reason.code,
+                    reason = reason
                 )
             }
         }
@@ -578,6 +616,12 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
             val file = File(ready.apkFilePath)
             if (file.exists()) {
                 _installApkRequests.tryEmit(ready.apkFilePath)
+            } else {
+                _updateDownloadState.value = AppUpdateDownloadState.Error(
+                    info = ready.info,
+                    errorCode = UpdateErrorReason.INCOMPLETE_DOWNLOAD.code,
+                    reason = UpdateErrorReason.INCOMPLETE_DOWNLOAD
+                )
             }
         }
     }
@@ -590,15 +634,19 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
             InstallLaunchResult.NEEDS_UNKNOWN_SOURCES_PERMISSION -> {
                 pendingInstallAfterPermission = true
             }
-            InstallLaunchResult.FILE_MISSING -> {
-                pendingInstallAfterPermission = false
-                _updateDownloadState.value = AppUpdateDownloadState.Idle
-            }
+            InstallLaunchResult.FILE_MISSING,
+            InstallLaunchResult.CHECKSUM_MISMATCH,
+            InstallLaunchResult.CORRUPTED_APK,
+            InstallLaunchResult.WRONG_PACKAGE_NAME,
+            InstallLaunchResult.OLDER_OR_EQUAL_VERSION,
+            InstallLaunchResult.UNEXPECTED_SIGNER,
             InstallLaunchResult.FAILED -> {
                 pendingInstallAfterPermission = false
+                val reason = result.toUpdateErrorReason() ?: UpdateErrorReason.INSTALL_FAILED
                 _updateDownloadState.value = AppUpdateDownloadState.Error(
                     info = info,
-                    errorCode = "install_failed"
+                    errorCode = reason.code,
+                    reason = reason
                 )
             }
         }
@@ -628,6 +676,14 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     fun closeAssetDetail() {
         _selectedAssetForDetail.value = null
         historyJob?.cancel()
+    }
+
+    fun openSourceBreakdown(asset: MarketAsset) {
+        _selectedAssetForSourceBreakdown.value = asset
+    }
+
+    fun closeSourceBreakdown() {
+        _selectedAssetForSourceBreakdown.value = null
     }
 
     fun selectTimeRange(range: TimeRange) {

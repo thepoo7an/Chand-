@@ -10,8 +10,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.GET
@@ -22,6 +24,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
 
 @JsonClass(generateAdapter = true)
 data class GitHubReleaseAssetDto(
@@ -74,7 +77,10 @@ data class AppUpdateInfo(
     val matchedApkName: String,
     val matchedApkSizeBytes: Long,
     val publishedAtIso: String = "",
-    val hasDirectApkAsset: Boolean = downloadUrl.endsWith(".apk", ignoreCase = true)
+    val hasDirectApkAsset: Boolean = downloadUrl.endsWith(".apk", ignoreCase = true),
+    val expectedPackageName: String = UpdateSecurityValidator.EXPECTED_PACKAGE_NAME,
+    val expectedSha256: String = "",
+    val hasVerifiedMetadata: Boolean = false
 )
 
 sealed interface AppUpdateState {
@@ -88,19 +94,25 @@ sealed interface AppUpdateState {
     ) : AppUpdateState
 
     data class UpdateAvailable(val info: AppUpdateInfo) : AppUpdateState
-    data class Error(val message: String) : AppUpdateState
+    data class Error(
+        val message: String,
+        val reason: UpdateErrorReason = UpdateErrorReason.fromCode(message)
+    ) : AppUpdateState
 }
 
 /**
- * GitHub Releases update checker & streaming in-app APK downloader.
- * Automatically matches the device's CPU ABI (`arm64-v8a` / `armeabi-v7a` / `universal`),
- * parses release changelog markdown into clean structured sections, and streams verified APK
- * binaries into the app cache directory for direct installation.
+ * GitHub Releases update checker & hardened in-app APK downloader.
+ * Enforces HTTPS-only transfers with redirect downgrade checks, fetches & binds trusted release
+ * metadata (package name, versionCode, download URL, size, SHA-256), verifies APK ZIP structure,
+ * and preflights the production release signing certificate prior to launching Android's installer.
  */
 class AppUpdateService(
-    private val client: OkHttpClient = NetworkConfig.sharedClient
+    private val client: OkHttpClient = NetworkConfig.sharedClient,
+    private val trustedHosts: Set<String> = UpdateSecurityValidator.DEFAULT_TRUSTED_HOSTS,
+    private val apkInspector: ApkPackageInspector? = null
 ) {
     private val moshi: Moshi = Moshi.Builder().build()
+    private val metadataAdapter by lazy { moshi.adapter(UpdateReleaseMetadataDto::class.java) }
 
     private val api: GitHubReleaseApi by lazy {
         Retrofit.Builder()
@@ -117,8 +129,8 @@ class AppUpdateService(
             .readTimeout(30L, TimeUnit.SECONDS)
             .writeTimeout(15L, TimeUnit.SECONDS)
             .callTimeout(0L, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .followSslRedirects(true)
+            .followRedirects(false)
+            .followSslRedirects(false)
             .build()
     }
 
@@ -137,6 +149,7 @@ class AppUpdateService(
 
         checkDeduplicator.execute(dedupeKey) {
             var releaseListSucceeded = false
+            var lastFailure: Throwable? = null
             val release = try {
                 NetworkConfig.retrySuspend(
                     maxAttempts = updateProfile.defaultMaxAttempts,
@@ -147,7 +160,8 @@ class AppUpdateService(
                 }.takeUnless { it.draft || it.prerelease }
             } catch (ce: CancellationException) {
                 throw ce
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                lastFailure = t
                 try {
                     val list = NetworkConfig.retrySuspend(
                         maxAttempts = updateProfile.defaultMaxAttempts,
@@ -160,7 +174,8 @@ class AppUpdateService(
                     selectLatestStableRelease(list)
                 } catch (ce: CancellationException) {
                     throw ce
-                } catch (_: Throwable) {
+                } catch (inner: Throwable) {
+                    lastFailure = inner
                     null
                 }
             }
@@ -173,7 +188,13 @@ class AppUpdateService(
                         checkedAtMillis = System.currentTimeMillis()
                     )
                 } else {
-                    AppUpdateState.Error("release_fetch_failed")
+                    val reason = mapThrowableToUpdateError(lastFailure).reason
+                    val code = if (reason == UpdateErrorReason.NETWORK_FAILURE) {
+                        "release_fetch_failed"
+                    } else {
+                        reason.code
+                    }
+                    AppUpdateState.Error(message = code, reason = reason)
                 }
             }
 
@@ -195,10 +216,72 @@ class AppUpdateService(
                 )
             }
 
+            val safeReleasePageUrl = release.htmlUrl
+                .takeIf { UpdateSecurityValidator.isSafeExternalHttpsUrl(it, trustedHosts) }
+                .orEmpty()
+
             val apkAsset = pickBestApkAsset(release.assets, supportedAbis)
-            val hasDirectApk = !apkAsset?.browserDownloadUrl.isNullOrBlank()
-            val downloadUrl = apkAsset?.browserDownloadUrl?.takeIf { it.isNotBlank() }
-                ?: release.htmlUrl
+            val metadataAsset = findMetadataAsset(release.assets)
+
+            if (metadataAsset != null) {
+                if (apkAsset == null) {
+                    return@execute AppUpdateState.Error(
+                        message = UpdateErrorReason.METADATA_INVALID.code,
+                        reason = UpdateErrorReason.METADATA_INVALID
+                    )
+                }
+                return@execute try {
+                    val rawMeta = fetchHttpsText(metadataAsset.browserDownloadUrl)
+                    val metadataDto = runCatching { metadataAdapter.fromJson(rawMeta) }.getOrNull()
+                        ?: throw AppUpdateException(
+                            UpdateErrorReason.METADATA_INVALID,
+                            "Malformed update metadata JSON"
+                        )
+                    val verifiedArtifact = UpdateSecurityValidator.validateAndBindArtifactMetadata(
+                        metadata = metadataDto,
+                        expectedApkName = apkAsset.name,
+                        expectedDownloadUrl = apkAsset.browserDownloadUrl,
+                        expectedAssetSizeBytes = apkAsset.size,
+                        expectedReleaseBuildCode = remoteBuild,
+                        currentVersionCode = currentVersionCode,
+                        trustedHosts = trustedHosts
+                    )
+                    val info = AppUpdateInfo(
+                        currentVersionName = currentVersionName,
+                        currentVersionCode = currentVersionCode,
+                        latestVersionName = metadataDto.versionName.ifBlank { remoteSemver },
+                        latestVersionCode = verifiedArtifact.versionCode,
+                        releaseTitle = release.name.ifBlank { release.tagName },
+                        releaseNotes = release.body.trim(),
+                        releasePageUrl = safeReleasePageUrl,
+                        downloadUrl = verifiedArtifact.downloadUrl,
+                        matchedApkName = apkAsset.name,
+                        matchedApkSizeBytes = verifiedArtifact.sizeBytes,
+                        publishedAtIso = release.publishedAt,
+                        hasDirectApkAsset = true,
+                        expectedPackageName = verifiedArtifact.packageName,
+                        expectedSha256 = verifiedArtifact.sha256,
+                        hasVerifiedMetadata = true
+                    )
+                    AppUpdateState.UpdateAvailable(info)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    val mapped = mapThrowableToUpdateError(t)
+                    AppUpdateState.Error(message = mapped.reason.code, reason = mapped.reason)
+                }
+            }
+
+            if (apkAsset != null && apkAsset.browserDownloadUrl.trim().startsWith("http://", ignoreCase = true)) {
+                return@execute AppUpdateState.Error(
+                    message = UpdateErrorReason.HTTPS_VALIDATION_FAILED.code,
+                    reason = UpdateErrorReason.HTTPS_VALIDATION_FAILED
+                )
+            }
+
+            val hasTrustedHttpsApk = apkAsset != null &&
+                UpdateSecurityValidator.isSafeExternalHttpsUrl(apkAsset.browserDownloadUrl, trustedHosts)
+            val fallbackUrl = apkAsset?.browserDownloadUrl?.takeIf { it.isNotBlank() } ?: safeReleasePageUrl
 
             AppUpdateState.UpdateAvailable(
                 AppUpdateInfo(
@@ -208,87 +291,246 @@ class AppUpdateService(
                     latestVersionCode = remoteBuild,
                     releaseTitle = release.name.ifBlank { release.tagName },
                     releaseNotes = release.body.trim(),
-                    releasePageUrl = release.htmlUrl,
-                    downloadUrl = downloadUrl,
+                    releasePageUrl = safeReleasePageUrl,
+                    downloadUrl = fallbackUrl,
                     matchedApkName = apkAsset?.name ?: "Chand-release.apk",
                     matchedApkSizeBytes = apkAsset?.size ?: 0L,
                     publishedAtIso = release.publishedAt,
-                    hasDirectApkAsset = hasDirectApk
+                    hasDirectApkAsset = false,
+                    expectedPackageName = UpdateSecurityValidator.EXPECTED_PACKAGE_NAME,
+                    expectedSha256 = "",
+                    hasVerifiedMetadata = hasTrustedHttpsApk && false
                 )
             )
         }
     }
 
+    private suspend fun fetchHttpsText(url: String): String {
+        val response = executeHttpsGetWithVerifiedRedirects(
+            initialUrl = url,
+            acceptHeader = "application/json, text/plain;q=0.9"
+        )
+        return response.use { resp ->
+            if (!resp.isSuccessful) {
+                throw AppUpdateException(
+                    UpdateErrorReason.NETWORK_FAILURE,
+                    "HTTP ${resp.code} fetching update metadata"
+                )
+            }
+            val body = resp.body?.string().orEmpty()
+            if (body.isBlank()) {
+                throw AppUpdateException(
+                    UpdateErrorReason.METADATA_INVALID,
+                    "Empty update metadata payload"
+                )
+            }
+            body
+        }
+    }
+
+    private suspend fun executeHttpsGetWithVerifiedRedirects(
+        initialUrl: String,
+        acceptHeader: String
+    ): Response {
+        var currentUrl: HttpUrl = UpdateSecurityValidator.validateHttpsUrl(initialUrl, trustedHosts)
+        var hops = 0
+        while (hops <= UpdateSecurityValidator.MAX_REDIRECT_HOPS) {
+            currentCoroutineContext().ensureActive()
+            val request = Request.Builder()
+                .url(currentUrl)
+                .header("Accept", acceptHeader)
+                .build()
+            val call = downloadClient.newCall(request)
+            val response = try {
+                call.execute()
+            } catch (ce: CancellationException) {
+                call.cancel()
+                throw ce
+            } catch (t: Throwable) {
+                throw mapThrowableToUpdateError(t)
+            }
+
+            if (response.code in REDIRECT_STATUS_CODES) {
+                val location = response.header("Location")
+                response.close()
+                currentUrl = UpdateSecurityValidator.resolveRedirectUrl(
+                    currentUrl = currentUrl,
+                    locationHeader = location,
+                    trustedHosts = trustedHosts
+                )
+                hops++
+                continue
+            }
+
+            // Re-validate final request URL after any transport/interceptor execution
+            return try {
+                UpdateSecurityValidator.validateHttpsUrl(response.request.url.toString(), trustedHosts)
+                response
+            } catch (t: Throwable) {
+                response.close()
+                throw t
+            }
+        }
+        throw AppUpdateException(
+            UpdateErrorReason.NETWORK_FAILURE,
+            "Exceeded maximum redirect hops (${UpdateSecurityValidator.MAX_REDIRECT_HOPS})"
+        )
+    }
+
     /**
-     * Streams the APK file at [downloadUrl] into [destinationFile] via a temporary `.part` file,
-     * reporting byte-level progress via [onProgress] and verifying ZIP/APK integrity before
-     * committing to [destinationFile].
+     * Downloads an update APK strictly over HTTPS from a trusted host (rejecting plain HTTP,
+     * HTTPS->HTTP redirect downgrades, and untrusted final URLs), verifies byte length,
+     * SHA-256 checksum, full ZIP/APK structure, package name, versionCode upgrade monotonicity,
+     * and production release signing certificate before atomically committing [destinationFile].
      */
     suspend fun downloadApk(
         downloadUrl: String,
         destinationFile: File,
         expectedSizeBytes: Long = 0L,
+        expectedSha256: String = "",
+        expectedPackageName: String = UpdateSecurityValidator.EXPECTED_PACKAGE_NAME,
+        expectedVersionCode: Int? = null,
+        currentVersionCode: Int = BuildConfig.VERSION_CODE,
+        expectedReleaseCertSha256: String = BuildConfig.EXPECTED_RELEASE_CERT_SHA256,
+        apkInspector: ApkPackageInspector? = this.apkInspector,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
     ): File = withContext(Dispatchers.IO) {
-        require(
-            downloadUrl.startsWith("https://", ignoreCase = true) ||
-                downloadUrl.startsWith("http://", ignoreCase = true)
-        ) {
-            "Unsupported download URL scheme"
+        UpdateSecurityValidator.validateHttpsUrl(downloadUrl, trustedHosts)
+
+        if (!UpdateSecurityValidator.isValidSha256Hex(expectedSha256)) {
+            throw AppUpdateException(
+                UpdateErrorReason.METADATA_INVALID,
+                "Trusted SHA-256 checksum is required before downloading APK"
+            )
         }
+        if (expectedPackageName != UpdateSecurityValidator.EXPECTED_PACKAGE_NAME) {
+            throw AppUpdateException(
+                UpdateErrorReason.WRONG_PACKAGE_NAME,
+                "Expected package name $expectedPackageName is not ${UpdateSecurityValidator.EXPECTED_PACKAGE_NAME}"
+            )
+        }
+        if (expectedVersionCode != null && expectedVersionCode <= currentVersionCode) {
+            throw AppUpdateException(
+                UpdateErrorReason.OLDER_OR_EQUAL_VERSION,
+                "Update versionCode $expectedVersionCode is not newer than $currentVersionCode"
+            )
+        }
+        if (expectedSizeBytes > UpdateSecurityValidator.MAX_APK_SIZE_BYTES ||
+            (expectedSizeBytes in 1L until UpdateSecurityValidator.MIN_APK_SIZE_BYTES)
+        ) {
+            throw AppUpdateException(
+                UpdateErrorReason.UNREASONABLE_FILE_SIZE,
+                "Expected APK size out of bounds: $expectedSizeBytes"
+            )
+        }
+        val inspector = apkInspector ?: throw AppUpdateException(
+            UpdateErrorReason.CORRUPTED_APK,
+            "APK package inspector is required for pre-install verification"
+        )
 
         destinationFile.parentFile?.mkdirs()
+        UpdateSecurityValidator.checkAvailableStorage(destinationFile.parentFile, expectedSizeBytes)
+
         val tempFile = File(destinationFile.parentFile, "${destinationFile.name}.part")
         if (tempFile.exists()) tempFile.delete()
 
-        val request = Request.Builder()
-            .url(downloadUrl)
-            .header("Accept", "application/vnd.android.package-archive, application/octet-stream, */*")
-            .build()
-
-        val call = downloadClient.newCall(request)
         try {
-            call.execute().use { response ->
+            executeHttpsGetWithVerifiedRedirects(
+                initialUrl = downloadUrl,
+                acceptHeader = "application/vnd.android.package-archive, application/octet-stream"
+            ).use { response ->
                 if (!response.isSuccessful) {
-                    throw IOException("HTTP ${response.code} downloading update")
+                    throw AppUpdateException(
+                        UpdateErrorReason.NETWORK_FAILURE,
+                        "HTTP ${response.code} downloading update"
+                    )
                 }
-                val body = response.body ?: throw IOException("Empty response body")
-                val headerLen = body.contentLength().takeIf { it > 0L } ?: 0L
+                val body = response.body ?: throw AppUpdateException(
+                    UpdateErrorReason.INCOMPLETE_DOWNLOAD,
+                    "Empty response body"
+                )
+                val rawContentLength = body.contentLength()
+                if (rawContentLength == 0L) {
+                    throw AppUpdateException(
+                        UpdateErrorReason.INCOMPLETE_DOWNLOAD,
+                        "Server returned 0-byte APK response"
+                    )
+                }
+                if (rawContentLength > UpdateSecurityValidator.MAX_APK_SIZE_BYTES) {
+                    throw AppUpdateException(
+                        UpdateErrorReason.UNREASONABLE_FILE_SIZE,
+                        "Reported Content-Length ($rawContentLength) exceeds maximum allowed APK size"
+                    )
+                }
+                if (rawContentLength in 1L until UpdateSecurityValidator.MIN_APK_SIZE_BYTES) {
+                    throw AppUpdateException(
+                        UpdateErrorReason.INCOMPLETE_DOWNLOAD,
+                        "Reported Content-Length ($rawContentLength) is smaller than valid APK minimum"
+                    )
+                }
+                val headerLen = rawContentLength.takeIf { it > 0L } ?: 0L
                 val totalBytes = if (headerLen > 0L) headerLen else expectedSizeBytes.coerceAtLeast(0L)
+                UpdateSecurityValidator.checkAvailableStorage(destinationFile.parentFile, totalBytes)
 
                 var downloadedBytes = 0L
                 var lastReportedBytes = 0L
                 onProgress(0L, totalBytes)
 
-                body.byteStream().use { input ->
-                    FileOutputStream(tempFile).use { output ->
-                        val buffer = ByteArray(DEFAULT_DOWNLOAD_BUFFER_SIZE)
-                        while (true) {
-                            currentCoroutineContext().ensureActive()
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            if (read > 0) {
-                                output.write(buffer, 0, read)
-                                downloadedBytes += read
-                                if (downloadedBytes - lastReportedBytes >= PROGRESS_REPORT_STEP_BYTES) {
-                                    lastReportedBytes = downloadedBytes
-                                    onProgress(downloadedBytes, totalBytes)
+                try {
+                    body.byteStream().use { input ->
+                        FileOutputStream(tempFile).use { output ->
+                            val buffer = ByteArray(DEFAULT_DOWNLOAD_BUFFER_SIZE)
+                            while (true) {
+                                currentCoroutineContext().ensureActive()
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                if (read > 0) {
+                                    downloadedBytes += read
+                                    if (downloadedBytes > UpdateSecurityValidator.MAX_APK_SIZE_BYTES) {
+                                        throw AppUpdateException(
+                                            UpdateErrorReason.UNREASONABLE_FILE_SIZE,
+                                            "Stream exceeded maximum allowed APK size"
+                                        )
+                                    }
+                                    output.write(buffer, 0, read)
+                                    if (downloadedBytes - lastReportedBytes >= PROGRESS_REPORT_STEP_BYTES) {
+                                        lastReportedBytes = downloadedBytes
+                                        onProgress(downloadedBytes, totalBytes)
+                                    }
                                 }
                             }
+                            output.flush()
                         }
-                        output.flush()
                     }
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    throw mapThrowableToUpdateError(t)
                 }
 
-                if (downloadedBytes <= 4L) {
-                    throw IOException("Downloaded file is empty or truncated")
+                if (downloadedBytes == 0L || downloadedBytes < UpdateSecurityValidator.MIN_APK_SIZE_BYTES) {
+                    throw AppUpdateException(
+                        UpdateErrorReason.INCOMPLETE_DOWNLOAD,
+                        "Downloaded APK is empty or truncated ($downloadedBytes bytes)"
+                    )
                 }
                 if (headerLen > 0L && downloadedBytes != headerLen) {
-                    throw IOException("Incomplete download ($downloadedBytes / $headerLen bytes)")
+                    throw AppUpdateException(
+                        UpdateErrorReason.INCOMPLETE_DOWNLOAD,
+                        "Incomplete download ($downloadedBytes / $headerLen bytes)"
+                    )
                 }
-                if (!hasApkZipMagicHeader(tempFile)) {
-                    throw IOException("Downloaded payload is not a valid APK archive")
-                }
+
+                UpdateSecurityValidator.verifyDownloadedApkForInstall(
+                    apkFile = tempFile,
+                    expectedSha256 = expectedSha256,
+                    expectedSizeBytes = expectedSizeBytes,
+                    expectedPackageName = expectedPackageName,
+                    expectedVersionCode = expectedVersionCode,
+                    currentVersionCode = currentVersionCode,
+                    expectedReleaseCertSha256 = expectedReleaseCertSha256,
+                    apkInspector = inspector
+                )
 
                 onProgress(downloadedBytes, if (totalBytes > 0L) totalBytes else downloadedBytes)
 
@@ -296,24 +538,71 @@ class AppUpdateService(
                     destinationFile.delete()
                 }
                 if (!tempFile.renameTo(destinationFile)) {
-                    tempFile.copyTo(destinationFile, overwrite = true)
-                    tempFile.delete()
+                    try {
+                        tempFile.copyTo(destinationFile, overwrite = true)
+                        tempFile.delete()
+                    } catch (t: Throwable) {
+                        destinationFile.delete()
+                        throw mapThrowableToUpdateError(t)
+                    }
                 }
                 destinationFile
             }
         } catch (ce: CancellationException) {
-            call.cancel()
             tempFile.delete()
             throw ce
         } catch (t: Throwable) {
             tempFile.delete()
-            throw t
+            throw mapThrowableToUpdateError(t)
         }
+    }
+
+    private fun findMetadataAsset(assets: List<GitHubReleaseAssetDto>): GitHubReleaseAssetDto? =
+        assets.firstOrNull {
+            it.name.trim().equals(UpdateSecurityValidator.METADATA_PRIMARY_FILENAME, ignoreCase = true)
+        } ?: assets.firstOrNull {
+            it.name.trim().equals(UpdateSecurityValidator.METADATA_FALLBACK_FILENAME, ignoreCase = true)
+        }
+
+    private fun mapThrowableToUpdateError(t: Throwable?): AppUpdateException {
+        if (t is AppUpdateException) return t
+        if (t == null) {
+            return AppUpdateException(UpdateErrorReason.NETWORK_FAILURE, "Update network failure")
+        }
+        if (hasCause<SSLException>(t)) {
+            return AppUpdateException(
+                UpdateErrorReason.HTTPS_VALIDATION_FAILED,
+                t.message ?: "TLS/HTTPS validation failed",
+                t
+            )
+        }
+        if (UpdateSecurityValidator.isInsufficientStorageCause(t)) {
+            return AppUpdateException(
+                UpdateErrorReason.INSUFFICIENT_STORAGE,
+                t.message ?: "Insufficient storage space",
+                t
+            )
+        }
+        return AppUpdateException(
+            UpdateErrorReason.NETWORK_FAILURE,
+            t.message ?: "Network failure during update",
+            t
+        )
+    }
+
+    private inline fun <reified T : Throwable> hasCause(t: Throwable): Boolean {
+        var cur: Throwable? = t
+        while (cur != null) {
+            if (cur is T) return true
+            cur = cur.cause
+        }
+        return false
     }
 
     companion object {
         private const val DEFAULT_DOWNLOAD_BUFFER_SIZE = 16 * 1024
         private const val PROGRESS_REPORT_STEP_BYTES = 48 * 1024L
+        private val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
 
         fun hasApkZipMagicHeader(file: File): Boolean {
             if (!file.exists() || !file.isFile || file.length() < 4L) return false
@@ -370,7 +659,6 @@ class AppUpdateService(
                     continue
                 }
 
-                // Skip redundant GitHub auto-generated Full Changelog link lines
                 if (trimmed.startsWith("**Full Changelog**", ignoreCase = true) ||
                     trimmed.startsWith("Full Changelog:", ignoreCase = true)
                 ) {
@@ -401,12 +689,9 @@ class AppUpdateService(
 
         private fun cleanMarkdownInline(text: String): String {
             var out = text
-            // Convert markdown links [label](url) -> label
             out = out.replace(Regex("""\[([^\]]+)]\([^)]+\)"""), "$1")
-            // Strip PR/commit noise suffix generated by GitHub release notes: " by @user in https://..."
             out = out.replace(Regex("""\s+by\s+@\S+\s+in\s+https?://\S+$""", RegexOption.IGNORE_CASE), "")
             out = out.replace(Regex("""\s+in\s+https?://github\.com/\S+$""", RegexOption.IGNORE_CASE), "")
-            // Strip inline bold/italic/code markers
             out = out.replace("**", "").replace("__", "").replace("`", "")
             return out.trim()
         }

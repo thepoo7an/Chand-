@@ -1,8 +1,11 @@
 package ir.thepoo7an.chand.network
 
 import ir.thepoo7an.chand.model.AssetCategory
+import ir.thepoo7an.chand.model.CandidateExclusionReason
+import ir.thepoo7an.chand.model.CandidateStatus
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.model.SourceCandidateRecord
 import kotlin.math.abs
 
 /**
@@ -56,52 +59,140 @@ internal object FiatPriceMapper {
         tgjuTableFallbackDelta: Pair<Double, Double>?,
         lastKnownUsdToman: Double?,
         nowMillis: Long = System.currentTimeMillis(),
-        nobitexTimestampMillis: Long = nowMillis,
-        cachedUsdTimestampMillis: Long = 0L
+        nobitexTimestampMillis: Long = 0L,
+        cachedUsdTimestampMillis: Long = 0L,
+        tgjuFailed: Boolean = false,
+        wallexFailed: Boolean = false,
+        bitpinFailed: Boolean = false,
+        nobitexFailed: Boolean = false
     ): MarketPriceMapper.ResolvedUsdRate {
-        val usdtCandidates = listOfNotNull(
-            wallexUsdt?.priceToman?.takeIf { it > 1_000.0 }?.let {
-                MarketPriceMapper.PriceCandidate(
-                    sourceName = "Wallex",
-                    price = it,
-                    isPrimary = true,
-                    timestampMillis = wallexUsdt.timestampMillis.takeIf { ts -> ts > 0L } ?: nowMillis,
-                    changePct = wallexUsdt.changePct
+        val wallexValidPrice = wallexUsdt?.priceToman?.takeIf { it.isFinite() && it > 1_000.0 }
+        val bitpinValidPrice = bitpinUsdt?.priceToman?.takeIf { it.isFinite() && it > 1_000.0 }
+        val nobitexValidPrice = nobitexUsdtToman?.takeIf { it.isFinite() && it > 1_000.0 }
+
+        val usdtCandidates = buildList {
+            when {
+                wallexValidPrice != null -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Wallex",
+                        price = wallexValidPrice,
+                        isPrimary = true,
+                        timestampMillis = wallexUsdt.timestampMillis.coerceAtLeast(0L),
+                        changePct = wallexUsdt.changePct
+                    )
                 )
-            },
-            bitpinUsdt?.priceToman?.takeIf { it > 1_000.0 }?.let {
-                MarketPriceMapper.PriceCandidate(
-                    sourceName = "Bitpin",
-                    price = it,
-                    isPrimary = wallexUsdt?.priceToman == null,
-                    timestampMillis = bitpinUsdt.timestampMillis.takeIf { ts -> ts > 0L } ?: nowMillis,
-                    changePct = bitpinUsdt.changePct
+                wallexUsdt?.priceToman != null -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Wallex",
+                        price = wallexUsdt.priceToman,
+                        isPrimary = false,
+                        timestampMillis = wallexUsdt.timestampMillis.coerceAtLeast(0L),
+                        unavailabilityReason = CandidateExclusionReason.INVALID
+                    )
                 )
-            },
-            nobitexUsdtToman?.takeIf { it > 1_000.0 }?.let {
-                MarketPriceMapper.PriceCandidate(
-                    sourceName = "Nobitex",
-                    price = it,
-                    isPrimary = wallexUsdt?.priceToman == null && bitpinUsdt?.priceToman == null,
-                    timestampMillis = nobitexTimestampMillis.takeIf { ts -> ts > 0L } ?: nowMillis
+                else -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Wallex",
+                        price = 0.0,
+                        isPrimary = false,
+                        unavailabilityReason = if (wallexFailed) {
+                            CandidateExclusionReason.PROVIDER_FAILURE
+                        } else {
+                            CandidateExclusionReason.MISSING_DATA
+                        }
+                    )
                 )
             }
-        )
+
+            when {
+                bitpinValidPrice != null -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Bitpin",
+                        price = bitpinValidPrice,
+                        isPrimary = wallexValidPrice == null,
+                        timestampMillis = bitpinUsdt.timestampMillis.coerceAtLeast(0L),
+                        changePct = bitpinUsdt.changePct
+                    )
+                )
+                bitpinUsdt?.priceToman != null -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Bitpin",
+                        price = bitpinUsdt.priceToman,
+                        isPrimary = false,
+                        timestampMillis = bitpinUsdt.timestampMillis.coerceAtLeast(0L),
+                        unavailabilityReason = CandidateExclusionReason.INVALID
+                    )
+                )
+                else -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Bitpin",
+                        price = 0.0,
+                        isPrimary = false,
+                        unavailabilityReason = if (bitpinFailed) {
+                            CandidateExclusionReason.PROVIDER_FAILURE
+                        } else {
+                            CandidateExclusionReason.MISSING_DATA
+                        }
+                    )
+                )
+            }
+
+            when {
+                nobitexValidPrice != null -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Nobitex",
+                        price = nobitexValidPrice,
+                        isPrimary = wallexValidPrice == null && bitpinValidPrice == null,
+                        timestampMillis = nobitexTimestampMillis.coerceAtLeast(0L)
+                    )
+                )
+                nobitexUsdtToman != null -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Nobitex",
+                        price = nobitexUsdtToman,
+                        isPrimary = false,
+                        timestampMillis = nobitexTimestampMillis.coerceAtLeast(0L),
+                        unavailabilityReason = CandidateExclusionReason.INVALID
+                    )
+                )
+                else -> add(
+                    MarketPriceMapper.PriceCandidate(
+                        sourceName = "Nobitex",
+                        price = 0.0,
+                        isPrimary = false,
+                        unavailabilityReason = if (nobitexFailed) {
+                            CandidateExclusionReason.PROVIDER_FAILURE
+                        } else {
+                            CandidateExclusionReason.MISSING_DATA
+                        }
+                    )
+                )
+            }
+        }
 
         val usdtConsensus = MarketValidationHelpers.validateCrossSourcePrices(
             candidates = usdtCandidates,
             thresholdPct = MarketValidationConfig.effectiveCryptoDisagreementThresholdPct(),
-            nowMillis = nowMillis
+            nowMillis = nowMillis,
+            staleMaxAgeMillis = MarketValidationConfig.effectiveCryptoLiveMaxAgeMillis()
         )
 
-        val anchorUsd = lastKnownUsdToman?.takeIf { it > 1_000.0 } ?: MarketPriceMapper.DEFAULT_OFFLINE_USD_TOMAN
+        val validTgjuUsd = tgjuUsdQuote?.takeIf { it.priceToman.isFinite() && it.priceToman > 1_000.0 }
+        val anchorUsd = lastKnownUsdToman?.takeIf { it.isFinite() && it > 1_000.0 }
+            ?: MarketPriceMapper.DEFAULT_OFFLINE_USD_TOMAN
 
-        val usdtToman = usdtConsensus?.price ?: tgjuUsdQuote?.priceToman ?: anchorUsd
+        val usdtToman = usdtConsensus?.price ?: validTgjuUsd?.priceToman ?: anchorUsd
         val usdtChangePct = wallexUsdt?.changePct?.takeIf { abs(it) > 0.001 }
             ?: bitpinUsdt?.changePct?.takeIf { abs(it) > 0.001 }
             ?: MarketValidationHelpers.computeSeriesChangePct(usdtSpark)
-            ?: tgjuUsdQuote?.changePct
+            ?: validTgjuUsd?.changePct
             ?: 0.0
+
+        val usdtTs = when {
+            usdtConsensus != null -> usdtConsensus.sourceTimestampMillis
+            validTgjuUsd != null -> validTgjuUsd.timestampMillis.coerceAtLeast(0L)
+            else -> cachedUsdTimestampMillis.coerceAtLeast(0L)
+        }
 
         val usdtFreshness = when {
             usdtConsensus != null -> MarketValidationHelpers.deriveFreshness(
@@ -109,24 +200,26 @@ internal object FiatPriceMapper {
                 fetchedThisRefresh = true,
                 hasUsableValue = true,
                 isCachedSource = false,
-                sourceTimestampMillis = usdtConsensus.sourceTimestampMillis,
+                sourceTimestampMillis = usdtTs,
                 nowMillis = nowMillis
             )
-            tgjuUsdQuote != null -> MarketValidationHelpers.deriveFreshness(
+            validTgjuUsd != null -> MarketValidationHelpers.deriveFreshness(
                 category = AssetCategory.FIAT,
                 fetchedThisRefresh = true,
                 hasUsableValue = true,
                 isCachedSource = false,
-                sourceTimestampMillis = tgjuUsdQuote.timestampMillis,
+                sourceTimestampMillis = usdtTs,
                 nowMillis = nowMillis
             )
             lastKnownUsdToman != null && lastKnownUsdToman > 1_000.0 -> DataFreshness.CACHED
             else -> DataFreshness.UNAVAILABLE
         }
-        val usdtTs = when {
-            usdtConsensus != null -> usdtConsensus.sourceTimestampMillis
-            tgjuUsdQuote != null -> tgjuUsdQuote.timestampMillis.takeIf { it > 0L } ?: nowMillis
-            else -> cachedUsdTimestampMillis
+
+        val usdtSourceLabel = when {
+            usdtConsensus != null -> usdtConsensus.sourceAttributionLabel
+            validTgjuUsd != null -> "TGJU (Free)"
+            lastKnownUsdToman != null && lastKnownUsdToman > 1_000.0 -> "Cached USD Anchor"
+            else -> "Offline Reference"
         }
 
         val usdToman: Double
@@ -136,13 +229,15 @@ internal object FiatPriceMapper {
         val usdTs: Long
         var usdDisputed = false
         var usdSingleSource = false
+        val usdIsCalculated: Boolean
+        val usdCandidates: List<SourceCandidateRecord>
 
         when {
-            tgjuUsdQuote != null -> {
-                usdToman = tgjuUsdQuote.priceToman
+            validTgjuUsd != null -> {
+                usdToman = validTgjuUsd.priceToman
                 basis = TomanRateBasis.TEHRAN_FREE_MARKET
                 sourceLabel = "TGJU (Free)"
-                usdTs = tgjuUsdQuote.timestampMillis.takeIf { it > 0L } ?: nowMillis
+                usdTs = validTgjuUsd.timestampMillis.coerceAtLeast(0L)
                 usdFreshness = MarketValidationHelpers.deriveFreshness(
                     category = AssetCategory.FIAT,
                     fetchedThisRefresh = true,
@@ -151,25 +246,66 @@ internal object FiatPriceMapper {
                     sourceTimestampMillis = usdTs,
                     nowMillis = nowMillis
                 )
-                // Cross-check TGJU cash USD against USDT free-market benchmark if available
+                usdIsCalculated = false
                 if (usdtConsensus != null) {
                     val pair = MarketValidationHelpers.validateCrossSourcePrices(
                         candidates = listOf(
-                            MarketPriceMapper.PriceCandidate("TGJU", tgjuUsdQuote.priceToman, isPrimary = true, timestampMillis = usdTs),
-                            MarketPriceMapper.PriceCandidate("USDT", usdtConsensus.price, isPrimary = false, timestampMillis = usdtTs)
+                            MarketPriceMapper.PriceCandidate(
+                                sourceName = "TGJU",
+                                price = validTgjuUsd.priceToman,
+                                isPrimary = true,
+                                timestampMillis = usdTs
+                            ),
+                            MarketPriceMapper.PriceCandidate(
+                                sourceName = "USDT (${usdtConsensus.sourceAttributionLabel})",
+                                price = usdtConsensus.price,
+                                isPrimary = false,
+                                timestampMillis = usdtTs
+                            )
                         ),
                         thresholdPct = MarketValidationConfig.effectiveFiatDisagreementThresholdPct(),
                         nowMillis = nowMillis
                     )
                     usdDisputed = pair?.disputed == true
+                    usdCandidates = pair?.candidateRecords.orEmpty()
                 } else {
                     usdSingleSource = true
+                    usdCandidates = buildList {
+                        add(
+                            SourceCandidateRecord(
+                                sourceName = "TGJU",
+                                priceToman = validTgjuUsd.priceToman,
+                                rawPrice = validTgjuUsd.priceToman,
+                                sourceTimestampMillis = usdTs,
+                                isPrimary = true,
+                                status = CandidateStatus.INCLUDED,
+                                exclusionReason = null
+                            )
+                        )
+                        usdtCandidates.forEach { cand ->
+                            add(
+                                SourceCandidateRecord(
+                                    sourceName = cand.sourceName,
+                                    priceToman = cand.price.takeIf { it.isFinite() && it > 0.0 },
+                                    rawPrice = cand.price.takeIf { it.isFinite() && it > 0.0 },
+                                    sourceTimestampMillis = cand.timestampMillis.coerceAtLeast(0L),
+                                    isPrimary = false,
+                                    status = CandidateStatus.REJECTED,
+                                    exclusionReason = cand.unavailabilityReason ?: CandidateExclusionReason.INVALID
+                                )
+                            )
+                        }
+                    }
                 }
             }
             usdtConsensus != null -> {
                 usdToman = usdtConsensus.price
                 basis = TomanRateBasis.USDT_FREE_MARKET_MEDIAN
-                sourceLabel = "USDT Median (Free)"
+                sourceLabel = if (usdtConsensus.isCalculated) {
+                    "${usdtConsensus.sourceAttributionLabel} (Free)"
+                } else {
+                    "${usdtConsensus.sourceAttributionLabel} (USDT Free)"
+                }
                 usdTs = usdtConsensus.sourceTimestampMillis
                 usdFreshness = MarketValidationHelpers.deriveFreshness(
                     category = AssetCategory.FIAT,
@@ -181,14 +317,62 @@ internal object FiatPriceMapper {
                 )
                 usdDisputed = usdtConsensus.disputed
                 usdSingleSource = usdtConsensus.singleSource
+                usdIsCalculated = usdtConsensus.isCalculated
+                usdCandidates = buildList {
+                    add(
+                        SourceCandidateRecord(
+                            sourceName = "TGJU",
+                            priceToman = tgjuUsdQuote?.priceToman?.takeIf { it.isFinite() && it > 0.0 },
+                            rawPrice = tgjuUsdQuote?.priceToman?.takeIf { it.isFinite() && it > 0.0 },
+                            sourceTimestampMillis = tgjuUsdQuote?.timestampMillis?.coerceAtLeast(0L) ?: 0L,
+                            isPrimary = false,
+                            status = CandidateStatus.REJECTED,
+                            exclusionReason = when {
+                                tgjuUsdQuote != null -> CandidateExclusionReason.INVALID
+                                tgjuFailed -> CandidateExclusionReason.PROVIDER_FAILURE
+                                else -> CandidateExclusionReason.MISSING_DATA
+                            }
+                        )
+                    )
+                    addAll(usdtConsensus.candidateRecords)
+                }
             }
             lastKnownUsdToman != null && lastKnownUsdToman > 1_000.0 -> {
                 usdToman = lastKnownUsdToman
                 basis = TomanRateBasis.CACHED_USD_ANCHOR
                 sourceLabel = "Cached USD Anchor"
-                usdTs = cachedUsdTimestampMillis
+                usdTs = cachedUsdTimestampMillis.coerceAtLeast(0L)
                 usdFreshness = DataFreshness.CACHED
                 usdSingleSource = true
+                usdIsCalculated = false
+                usdCandidates = buildList {
+                    add(
+                        SourceCandidateRecord(
+                            sourceName = "TGJU",
+                            priceToman = tgjuUsdQuote?.priceToman?.takeIf { it.isFinite() && it > 0.0 },
+                            rawPrice = tgjuUsdQuote?.priceToman?.takeIf { it.isFinite() && it > 0.0 },
+                            sourceTimestampMillis = tgjuUsdQuote?.timestampMillis?.coerceAtLeast(0L) ?: 0L,
+                            isPrimary = false,
+                            status = CandidateStatus.REJECTED,
+                            exclusionReason = when {
+                                tgjuUsdQuote != null -> CandidateExclusionReason.INVALID
+                                tgjuFailed -> CandidateExclusionReason.PROVIDER_FAILURE
+                                else -> CandidateExclusionReason.MISSING_DATA
+                            }
+                        )
+                    )
+                    add(
+                        SourceCandidateRecord(
+                            sourceName = "Cached USD Anchor",
+                            priceToman = lastKnownUsdToman,
+                            rawPrice = lastKnownUsdToman,
+                            sourceTimestampMillis = usdTs,
+                            isPrimary = true,
+                            status = CandidateStatus.INCLUDED,
+                            exclusionReason = null
+                        )
+                    )
+                }
             }
             else -> {
                 usdToman = MarketPriceMapper.DEFAULT_OFFLINE_USD_TOMAN
@@ -197,13 +381,44 @@ internal object FiatPriceMapper {
                 usdTs = 0L
                 usdFreshness = DataFreshness.UNAVAILABLE
                 usdSingleSource = true
+                usdIsCalculated = false
+                usdCandidates = buildList {
+                    add(
+                        SourceCandidateRecord(
+                            sourceName = "TGJU",
+                            priceToman = null,
+                            rawPrice = null,
+                            sourceTimestampMillis = 0L,
+                            isPrimary = false,
+                            status = CandidateStatus.REJECTED,
+                            exclusionReason = if (tgjuFailed) {
+                                CandidateExclusionReason.PROVIDER_FAILURE
+                            } else {
+                                CandidateExclusionReason.MISSING_DATA
+                            }
+                        )
+                    )
+                    usdtCandidates.forEach { cand ->
+                        add(
+                            SourceCandidateRecord(
+                                sourceName = cand.sourceName,
+                                priceToman = null,
+                                rawPrice = null,
+                                sourceTimestampMillis = 0L,
+                                isPrimary = false,
+                                status = CandidateStatus.REJECTED,
+                                exclusionReason = cand.unavailabilityReason ?: CandidateExclusionReason.MISSING_DATA
+                            )
+                        )
+                    }
+                }
             }
         }
 
-        val usdChangePct = tgjuUsdQuote?.changePct?.takeIf { abs(it) > 0.001 }
+        val usdChangePct = validTgjuUsd?.changePct?.takeIf { abs(it) > 0.001 }
             ?: tgjuTableFallbackDelta?.second
             ?: usdtChangePct
-        val usdChangeToman = tgjuUsdQuote?.changeToman?.takeIf { abs(it) > 0.1 }
+        val usdChangeToman = validTgjuUsd?.changeToman?.takeIf { abs(it) > 0.1 }
             ?: tgjuTableFallbackDelta?.first
             ?: (usdToman * usdChangePct / 100.0)
 
@@ -222,7 +437,12 @@ internal object FiatPriceMapper {
             usdDisputed = usdDisputed,
             usdSingleSource = usdSingleSource,
             usdtDisputed = usdtConsensus?.disputed ?: false,
-            usdtSingleSource = usdtConsensus?.singleSource ?: (tgjuUsdQuote != null || basis != TomanRateBasis.OFFLINE_REFERENCE)
+            usdtSingleSource = usdtConsensus?.singleSource ?: (validTgjuUsd != null || basis != TomanRateBasis.OFFLINE_REFERENCE),
+            usdIsCalculated = usdIsCalculated,
+            usdtIsCalculated = usdtConsensus?.isCalculated == true,
+            usdtSourceLabel = usdtSourceLabel,
+            usdCandidates = usdCandidates,
+            usdtCandidates = usdtConsensus?.candidateRecords.orEmpty()
         )
     }
 
@@ -237,12 +457,18 @@ internal object FiatPriceMapper {
         currencySpark: List<Double> = emptyList(),
         fxConsensus: MarketPriceMapper.ConsensusResult? = null,
         usdBasisFreshness: DataFreshness = DataFreshness.LIVE,
-        usdSourceTimestampMillis: Long = nowMillis
+        usdSourceTimestampMillis: Long = 0L,
+        tgjuFailed: Boolean = false,
+        fxFailedProviders: Set<String> = emptySet()
     ): MarketAsset? {
-        val effectiveFxRate = fxConsensus?.price ?: fxPerUsd?.takeIf { it > 0.0 }
-        val crossPriceToman = if (effectiveFxRate != null && effectiveFxRate > 0.0) usdToman / effectiveFxRate else null
+        val effectiveFxRate = fxConsensus?.price ?: fxPerUsd?.takeIf { it.isFinite() && it > 0.0 }
+        val crossPriceToman = if (effectiveFxRate != null && effectiveFxRate > 0.0 && usdToman > 0.0) {
+            usdToman / effectiveFxRate
+        } else {
+            null
+        }
 
-        var tgjuPriceToman = tgjuQuote?.priceToman
+        var tgjuPriceToman = tgjuQuote?.priceToman?.takeIf { it.isFinite() && it > 0.0 }
         var tgjuHighToman = tgjuQuote?.highToman
         var tgjuLowToman = tgjuQuote?.lowToman
         var tgjuChangeToman = tgjuQuote?.changeToman
@@ -263,8 +489,11 @@ internal object FiatPriceMapper {
             }
         }
 
-        val tgjuTs = tgjuQuote?.timestampMillis?.takeIf { it > 0L } ?: nowMillis
-        val fxTs = fxConsensus?.sourceTimestampMillis?.takeIf { it > 0L } ?: nowMillis
+        val tgjuTs = tgjuQuote?.timestampMillis?.coerceAtLeast(0L) ?: 0L
+        val fxTs = fxConsensus?.sourceTimestampMillis?.coerceAtLeast(0L) ?: 0L
+        val safeUsdTs = usdSourceTimestampMillis.coerceAtLeast(0L)
+        val combinedCrossTs = if (fxTs > 0L && safeUsdTs > 0L) minOf(fxTs, safeUsdTs) else 0L
+
         val fxRawFreshness = MarketValidationHelpers.deriveFreshness(
             category = AssetCategory.FIAT,
             fetchedThisRefresh = true,
@@ -286,13 +515,18 @@ internal object FiatPriceMapper {
                 )
             )
         }
+        val fxPairSourceName = if (fxConsensus != null && fxConsensus.sourceAttributionLabel.isNotBlank()) {
+            "${fxConsensus.sourceAttributionLabel} + USD"
+        } else {
+            "FX + USD"
+        }
         if (crossPriceToman != null && crossPriceToman > 0.0) {
             candidates.add(
                 MarketPriceMapper.PriceCandidate(
-                    sourceName = "FX + USD",
+                    sourceName = fxPairSourceName,
                     price = crossPriceToman,
                     isPrimary = tgjuPriceToman == null,
-                    timestampMillis = minOf(fxTs, usdSourceTimestampMillis.takeIf { it > 0L } ?: nowMillis)
+                    timestampMillis = combinedCrossTs
                 )
             )
         }
@@ -307,6 +541,8 @@ internal object FiatPriceMapper {
         val singleSource: Boolean
         val freshness: DataFreshness
         val sourceTs: Long
+        val isCalculatedPrice: Boolean
+        val candidateRecords: List<SourceCandidateRecord>
 
         if (tgjuPriceToman != null && tgjuPriceToman > 0.0) {
             // TGJU is primary Tehran domestic quote. Check disagreement if FX + USD exists.
@@ -327,6 +563,7 @@ internal object FiatPriceMapper {
             disputed = pairValidation?.disputed == true
             singleSource = crossPriceToman == null
             sourceTs = tgjuTs
+            isCalculatedPrice = false
             freshness = MarketValidationHelpers.deriveFreshness(
                 category = AssetCategory.FIAT,
                 fetchedThisRefresh = true,
@@ -335,20 +572,115 @@ internal object FiatPriceMapper {
                 sourceTimestampMillis = tgjuTs,
                 nowMillis = nowMillis
             )
+            candidateRecords = buildList {
+                add(
+                    SourceCandidateRecord(
+                        sourceName = "TGJU",
+                        priceToman = priceToman,
+                        rawPrice = priceToman,
+                        sourceTimestampMillis = tgjuTs,
+                        isPrimary = true,
+                        status = CandidateStatus.INCLUDED,
+                        exclusionReason = null
+                    )
+                )
+                if (crossPriceToman != null && crossPriceToman > 0.0) {
+                    add(
+                        SourceCandidateRecord(
+                            sourceName = fxPairSourceName,
+                            priceToman = crossPriceToman,
+                            rawPrice = effectiveFxRate,
+                            sourceTimestampMillis = combinedCrossTs,
+                            isPrimary = false,
+                            status = if (disputed) CandidateStatus.REJECTED else CandidateStatus.INCLUDED,
+                            exclusionReason = if (disputed) CandidateExclusionReason.EXCESSIVE_DISAGREEMENT else null
+                        )
+                    )
+                }
+                fxFailedProviders.forEach { provider ->
+                    if (none { it.sourceName == provider }) {
+                        add(
+                            SourceCandidateRecord(
+                                sourceName = provider,
+                                priceToman = null,
+                                rawPrice = null,
+                                sourceTimestampMillis = 0L,
+                                isPrimary = false,
+                                status = CandidateStatus.REJECTED,
+                                exclusionReason = CandidateExclusionReason.PROVIDER_FAILURE
+                            )
+                        )
+                    }
+                }
+            }
         } else {
             priceToman = crossPriceToman!!
             highToman = null
             lowToman = null
             changeToman = priceToman * usdChangePct / 100.0
-            src = if (fxConsensus != null && fxConsensus.acceptedSources.isNotEmpty()) {
-                "${fxConsensus.acceptedSources.joinToString("+")} + USD"
-            } else {
-                "FX + USD"
-            }
+            src = fxPairSourceName
             disputed = fxConsensus?.disputed == true
             singleSource = fxConsensus?.singleSource ?: true
-            sourceTs = minOf(fxTs, usdSourceTimestampMillis.takeIf { it > 0L } ?: nowMillis)
+            sourceTs = combinedCrossTs
             freshness = fxDerivedFreshness
+            isCalculatedPrice = fxConsensus?.isCalculated == true
+            candidateRecords = buildList {
+                if (tgjuQuote != null || tgjuFailed || spec.tgjuKey.isNotBlank()) {
+                    add(
+                        SourceCandidateRecord(
+                            sourceName = "TGJU",
+                            priceToman = tgjuQuote?.priceToman?.takeIf { it.isFinite() && it > 0.0 },
+                            rawPrice = tgjuQuote?.priceToman?.takeIf { it.isFinite() && it > 0.0 },
+                            sourceTimestampMillis = tgjuTs,
+                            isPrimary = false,
+                            status = CandidateStatus.REJECTED,
+                            exclusionReason = when {
+                                tgjuQuote != null -> CandidateExclusionReason.INVALID
+                                tgjuFailed -> CandidateExclusionReason.PROVIDER_FAILURE
+                                else -> CandidateExclusionReason.MISSING_DATA
+                            }
+                        )
+                    )
+                }
+                if (fxConsensus != null) {
+                    fxConsensus.candidateRecords.forEach { rec ->
+                        val convertedToman = rec.rawPrice?.takeIf { it > 0.0 }?.let { usdToman / it }
+                        add(
+                            rec.copy(
+                                priceToman = convertedToman,
+                                detail = rec.rawPrice?.let { "fx=$it" } ?: rec.detail
+                            )
+                        )
+                    }
+                } else {
+                    add(
+                        SourceCandidateRecord(
+                            sourceName = "FX + USD",
+                            priceToman = crossPriceToman,
+                            rawPrice = effectiveFxRate,
+                            sourceTimestampMillis = combinedCrossTs,
+                            isPrimary = true,
+                            status = CandidateStatus.INCLUDED,
+                            exclusionReason = null
+                        )
+                    )
+                }
+                fxFailedProviders.forEach { provider ->
+                    if (none { it.sourceName == provider }) {
+                        add(
+                            SourceCandidateRecord(
+                                sourceName = provider,
+                                priceToman = null,
+                                rawPrice = null,
+                                sourceTimestampMillis = 0L,
+                                isPrimary = false,
+                                status = CandidateStatus.REJECTED,
+                                exclusionReason = CandidateExclusionReason.PROVIDER_FAILURE
+                            )
+                        )
+                    }
+                }
+            }
         }
 
         val changePct = tgjuQuote?.changePct?.takeIf { abs(it) > 0.001 }
@@ -392,7 +724,10 @@ internal object FiatPriceMapper {
             sourceTimestampMillis = sourceTs,
             fetchedAtMillis = nowMillis,
             disputed = disputed,
-            singleSource = singleSource
+            singleSource = singleSource,
+            isCalculatedPrice = isCalculatedPrice,
+            candidates = candidateRecords
         )
     }
 }
+

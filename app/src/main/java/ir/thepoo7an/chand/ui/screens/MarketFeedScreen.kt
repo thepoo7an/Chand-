@@ -117,6 +117,7 @@ fun MarketFeedScreen(
     onTogglePin: (String) -> Unit,
     onToggleGridView: (Boolean) -> Unit,
     onAssetClick: (MarketAsset) -> Unit,
+    onAssetPriceClick: (MarketAsset) -> Unit = onAssetClick,
     onRefreshClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -578,6 +579,7 @@ fun MarketFeedScreen(
                                             usePersianDigits = prefs.usePersianDigits,
                                             strings = strings,
                                             onClick = { onAssetClick(asset) },
+                                            onPriceClick = { onAssetPriceClick(asset) },
                                             onLongClick = { onTogglePin(asset.id) }
                                         )
                                     }
@@ -602,6 +604,7 @@ fun MarketFeedScreen(
                                         usePersianDigits = prefs.usePersianDigits,
                                         strings = strings,
                                         onClick = { onAssetClick(asset) },
+                                        onPriceClick = { onAssetPriceClick(asset) },
                                         onTogglePin = { onTogglePin(asset.id) }
                                     )
                                 }
@@ -623,13 +626,21 @@ private fun ChandBentoCard(
     usePersianDigits: Boolean,
     strings: ChandStrings,
     onClick: () -> Unit,
+    onPriceClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
     val marketColors = LocalMarketColors.current
     val haptic = LocalHapticFeedback.current
+    val isOilUsd = asset.isUsdPerBarrel
     val isGain = asset.change24hPercent >= 0.0
-    val trendColor = if (isGain) marketColors.gain else marketColors.loss
-    val isUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || asset.priceToman <= 0.0
+    val trendColor = if (isOilUsd && !asset.isChange24hAvailable) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else if (isGain) {
+        marketColors.gain
+    } else {
+        marketColors.loss
+    }
+    val isUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
     val statusBadgeText = when {
         asset.disputed -> strings.disputedLabel
         asset.freshness == DataFreshness.DELAYED -> strings.delayedBadge
@@ -650,7 +661,7 @@ private fun ChandBentoCard(
         ),
         modifier = Modifier
             .fillMaxWidth()
-            .height(170.dp)
+            .height(if (isOilUsd) 182.dp else 170.dp)
             .clip(RoundedCornerShape(24.dp))
             .combinedClickable(
                 onClick = onClick,
@@ -732,10 +743,18 @@ private fun ChandBentoCard(
                     }
                 }
 
-                // Bottom Block: Arrow Delta + Huge Bold Tabular Price
+                // Bottom Block: Arrow Delta + Huge Bold Tabular Price (tappable for Source Breakdown)
                 Column(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(
+                            onClickLabel = strings.sourceTapHint,
+                            onClick = onPriceClick
+                        )
+                        .minimumInteractiveComponentSize()
+                        .testTag("asset_price_${asset.id}")
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -743,27 +762,41 @@ private fun ChandBentoCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            val deltaLabel = when {
+                                isUnavailable -> "—"
+                                isOilUsd && !asset.isChange24hAvailable -> strings.change24hUnavailable
+                                isOilUsd -> NumberFormatters.formatPercent(asset.change24hPercent, usePersianDigits)
+                                else -> NumberFormatters.formatDeltaWithArrow(
+                                    asset.change24hToman,
+                                    asset.change24hPercent,
+                                    usePersianDigits
+                                )
+                            }
                             Text(
-                                text = if (isUnavailable) {
-                                    "—"
-                                } else {
-                                    NumberFormatters.formatDeltaWithArrow(
-                                        asset.change24hToman,
-                                        asset.change24hPercent,
-                                        usePersianDigits
-                                    )
-                                },
+                                text = deltaLabel,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (isUnavailable) MaterialTheme.colorScheme.onSurfaceVariant else trendColor
+                                color = if (isUnavailable) MaterialTheme.colorScheme.onSurfaceVariant else trendColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
                             )
                         }
 
                         if (statusBadgeText != null) {
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = statusBadgeText,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (asset.disputed) marketColors.gold else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        } else if (isOilUsd) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = strings.liveBadge,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = marketColors.gain,
                                 maxLines = 1
                             )
                         } else if (asset.category == AssetCategory.CRYPTO && asset.priceUsd != null) {
@@ -778,20 +811,52 @@ private fun ChandBentoCard(
                     }
 
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        Text(
-                            text = if (isUnavailable) {
-                                "—"
-                            } else {
-                                NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)
-                            },
-                            fontSize = 27.sp,
-                            fontWeight = FontWeight.Bold,
-                            lineHeight = 32.sp,
-                            color = if (isUnavailable) MaterialTheme.colorScheme.onSurfaceVariant
-                            else MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = when {
+                                    isUnavailable -> "—"
+                                    isOilUsd -> NumberFormatters.formatUsd(asset.priceUsd ?: 0.0, usePersianDigits)
+                                    else -> NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)
+                                },
+                                fontSize = if (isOilUsd) 24.sp else 27.sp,
+                                fontWeight = FontWeight.Bold,
+                                lineHeight = 30.sp,
+                                color = if (isUnavailable) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (isOilUsd && !isUnavailable) {
+                                Text(
+                                    text = strings.usdPerBarrelShortUnit,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 3.dp),
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+
+                    if (isOilUsd) {
+                        val metaLine = when {
+                            !isUnavailable && asset.priceToman > 0.0 ->
+                                "${strings.oilTomanEstimatePrefix} ${NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)} ${strings.tomanUnit}"
+                            asset.sourceLabel.isNotBlank() -> asset.sourceLabel
+                            else -> ""
+                        }
+                        if (metaLine.isNotEmpty()) {
+                            Text(
+                                text = metaLine,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -807,13 +872,28 @@ private fun MarketAssetListRow(
     usePersianDigits: Boolean,
     strings: ChandStrings,
     onClick: () -> Unit,
+    onPriceClick: () -> Unit,
     onTogglePin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val marketColors = LocalMarketColors.current
+    val isOilUsd = asset.isUsdPerBarrel
     val isGain = asset.change24hPercent >= 0.0
-    val trendColor = if (isGain) marketColors.gain else marketColors.loss
-    val trendBg = if (isGain) marketColors.gainContainer else marketColors.lossContainer
+    val hasDisplayChange = !isOilUsd || asset.isChange24hAvailable
+    val trendColor = if (!hasDisplayChange) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else if (isGain) {
+        marketColors.gain
+    } else {
+        marketColors.loss
+    }
+    val trendBg = if (!hasDisplayChange) {
+        MaterialTheme.colorScheme.surfaceVariant
+    } else if (isGain) {
+        marketColors.gainContainer
+    } else {
+        marketColors.lossContainer
+    }
 
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -849,6 +929,7 @@ private fun MarketAssetListRow(
                 asset.freshness == DataFreshness.DELAYED -> strings.delayedBadge
                 asset.freshness == DataFreshness.CACHED -> strings.cachedBadge
                 asset.freshness == DataFreshness.UNAVAILABLE -> strings.unavailableBadge
+                isOilUsd -> strings.liveBadge
                 else -> null
             }
 
@@ -887,6 +968,23 @@ private fun MarketAssetListRow(
                         )
                     }
                 }
+                if (isOilUsd) {
+                    val subEstimate = when {
+                        asset.freshness != DataFreshness.UNAVAILABLE && asset.priceToman > 0.0 ->
+                            "${strings.oilTomanEstimatePrefix} ${NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)} ${strings.tomanUnit}"
+                        asset.sourceLabel.isNotBlank() -> asset.sourceLabel
+                        else -> ""
+                    }
+                    if (subEstimate.isNotEmpty()) {
+                        Text(
+                            text = subEstimate,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
 
             if (asset.sparkline.size >= 2) {
@@ -904,20 +1002,43 @@ private fun MarketAssetListRow(
                 Spacer(modifier = Modifier.width(8.dp))
             }
 
-            Column(horizontalAlignment = Alignment.End) {
-                val isUnavailableRow = asset.freshness == DataFreshness.UNAVAILABLE || asset.priceToman <= 0.0
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    Text(
-                        text = if (isUnavailableRow) {
-                            "—"
-                        } else {
-                            NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)
-                        },
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isUnavailableRow) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onSurface
+            Column(
+                horizontalAlignment = Alignment.End,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(
+                        onClickLabel = strings.sourceTapHint,
+                        onClick = onPriceClick
                     )
+                    .minimumInteractiveComponentSize()
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .testTag("asset_price_${asset.id}")
+            ) {
+                val isUnavailableRow = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    Row(
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = when {
+                                isUnavailableRow -> "—"
+                                isOilUsd -> NumberFormatters.formatUsd(asset.priceUsd ?: 0.0, usePersianDigits)
+                                else -> NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isUnavailableRow) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.onSurface
+                        )
+                        if (isOilUsd && !isUnavailableRow) {
+                            Text(
+                                text = strings.usdPerBarrelShortUnit,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(3.dp))
                 Surface(
@@ -926,10 +1047,11 @@ private fun MarketAssetListRow(
                 ) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                         Text(
-                            text = if (isUnavailableRow) {
-                                strings.unavailableBadge
-                            } else {
-                                NumberFormatters.formatDeltaWithArrow(
+                            text = when {
+                                isUnavailableRow -> strings.unavailableBadge
+                                isOilUsd && !asset.isChange24hAvailable -> strings.change24hUnavailable
+                                isOilUsd -> NumberFormatters.formatPercent(asset.change24hPercent, usePersianDigits)
+                                else -> NumberFormatters.formatDeltaWithArrow(
                                     asset.change24hToman,
                                     asset.change24hPercent,
                                     usePersianDigits

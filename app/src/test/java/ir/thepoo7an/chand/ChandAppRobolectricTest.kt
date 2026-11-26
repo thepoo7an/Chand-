@@ -1,10 +1,19 @@
 package ir.thepoo7an.chand
 
 import android.content.Context
+import androidx.activity.compose.setContent
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.test.core.app.ApplicationProvider
 import com.squareup.moshi.Moshi
+import ir.thepoo7an.chand.model.AppLanguage
+import ir.thepoo7an.chand.model.AppPreferences
+import ir.thepoo7an.chand.ui.theme.ChandTheme
+import ir.thepoo7an.chand.network.ApkPackageInspector
 import ir.thepoo7an.chand.network.AppUpdateInfo
 import ir.thepoo7an.chand.network.AppUpdateInstaller
 import ir.thepoo7an.chand.network.AppUpdateService
@@ -13,10 +22,14 @@ import ir.thepoo7an.chand.network.FrankfurterTimeSeriesResponse
 import ir.thepoo7an.chand.network.GitHubReleaseAssetDto
 import ir.thepoo7an.chand.network.GitHubReleaseDto
 import ir.thepoo7an.chand.network.GoldSpotResponse
+import ir.thepoo7an.chand.network.LiveConfigRegistry
+import ir.thepoo7an.chand.network.UpdateSecurityValidator
+import ir.thepoo7an.chand.network.VerifiedApkDetails
 import ir.thepoo7an.chand.ui.strings.EnStrings
 import ir.thepoo7an.chand.ui.strings.FaStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import java.io.File
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -34,10 +47,44 @@ class ChandAppRobolectricTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
+    @After
+    fun tearDown() {
+        LiveConfigRegistry.resetToDefault()
+    }
+
     @Test
-    fun `cold start launches ChandApplication and MainActivity cleanly`() {
+    fun `cold start launches ChandApplication and MainActivity cleanly in Persian RTL by default`() {
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Chand?!").assertExists()
+        composeRule.onNodeWithText(FaStrings.marketTab).assertExists()
+        composeRule.onNodeWithText(FaStrings.converterTab).assertExists()
+
+        // In RTL, the leading watchlist '+' button sits to the right of the trailing settings '...' button
+        val watchlistBounds = composeRule.onNodeWithTag("dock_watchlist_button").getUnclippedBoundsInRoot()
+        val settingsBounds = composeRule.onNodeWithTag("settings_button").getUnclippedBoundsInRoot()
+        assertTrue(
+            "Expected RTL dock layout with watchlist ($watchlistBounds) to the right of settings ($settingsBounds)",
+            watchlistBounds.left > settingsBounds.left
+        )
+    }
+
+    @Test
+    fun `ChandTheme applies RTL layout direction for FA and LTR for EN`() {
+        var faDirection: LayoutDirection? = null
+        var enDirection: LayoutDirection? = null
+        composeRule.activityRule.scenario.onActivity { activity ->
+            activity.setContent {
+                ChandTheme(language = AppLanguage.FA) {
+                    faDirection = LocalLayoutDirection.current
+                }
+                ChandTheme(language = AppLanguage.EN) {
+                    enDirection = LocalLayoutDirection.current
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        assertEquals(LayoutDirection.Rtl, faDirection)
+        assertEquals(LayoutDirection.Ltr, enDirection)
     }
 
     @Test
@@ -46,9 +93,14 @@ class ChandAppRobolectricTest {
         assertEquals("Chand?!", context.getString(R.string.app_name))
         val expectedAppId = if (BuildConfig.DEBUG) "ir.thepoo7an.chand.debug" else "ir.thepoo7an.chand"
         assertEquals(expectedAppId, BuildConfig.APPLICATION_ID)
-        assertTrue(
-            "BuildConfig.GITHUB_REPOSITORY should default to owner/repo",
-            BuildConfig.GITHUB_REPOSITORY.contains("/")
+        assertEquals(
+            "BuildConfig.GITHUB_REPOSITORY should default to the canonical repository",
+            "thepoo7an/chand-iran-currency-gold-crypto",
+            BuildConfig.GITHUB_REPOSITORY
+        )
+        assertEquals(
+            "thepoo7an/chand-iran-currency-gold-crypto",
+            AppPreferences().githubRepoSlug
         )
     }
 
@@ -161,6 +213,8 @@ class ChandAppRobolectricTest {
     @Test
     fun `AppUpdateInstaller builds FileProvider install URI from cache updates directory`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
+        val validApkBytes = UpdateTestFixtures.buildMinimalSignedApkBytes()
+        val sha256 = UpdateSecurityValidator.sha256Hex(validApkBytes)
         val info = AppUpdateInfo(
             currentVersionName = "1.0",
             currentVersionCode = 1,
@@ -168,21 +222,33 @@ class ChandAppRobolectricTest {
             latestVersionCode = 25,
             releaseTitle = "Chand?! v1.2.0",
             releaseNotes = "## What's Changed\n* In-app updater",
-            releasePageUrl = "https://github.com/thepoo7an/Chand-/releases/tag/v1.2.0",
-            downloadUrl = "https://example.invalid/Chand-arm64-v8a-release.apk",
+            releasePageUrl = "https://github.com/thepoo7an/chand-iran-currency-gold-crypto/releases/tag/v1.2.0",
+            downloadUrl = "https://github.com/thepoo7an/chand-iran-currency-gold-crypto/releases/download/v1.2.0/Chand-arm64-v8a-release.apk",
             matchedApkName = "Chand-arm64-v8a-release.apk",
-            matchedApkSizeBytes = 1024L,
+            matchedApkSizeBytes = validApkBytes.size.toLong(),
             publishedAtIso = "2026-11-23T10:00:00Z",
-            hasDirectApkAsset = true
+            hasDirectApkAsset = true,
+            expectedPackageName = UpdateSecurityValidator.EXPECTED_PACKAGE_NAME,
+            expectedSha256 = sha256,
+            hasVerifiedMetadata = true
         )
         val apkFile = AppUpdateInstaller.targetApkFile(context, info)
         apkFile.parentFile?.mkdirs()
-        apkFile.writeBytes(byteArrayOf(0x50, 0x4B, 0x03, 0x04, 0x00, 0x00))
+        apkFile.writeBytes(validApkBytes)
+        val inspector = ApkPackageInspector {
+            VerifiedApkDetails(
+                packageName = UpdateSecurityValidator.EXPECTED_PACKAGE_NAME,
+                versionCode = 25L,
+                signerSha256Digests = setOf(BuildConfig.EXPECTED_RELEASE_CERT_SHA256)
+            )
+        }
 
         try {
             val found = AppUpdateInstaller.findAlreadyDownloadedApk(
-                context,
-                info.copy(matchedApkSizeBytes = apkFile.length())
+                context = context,
+                info = info,
+                apkInspector = inspector,
+                currentVersionCode = 1
             )
             assertNotNull(found)
             val intent = AppUpdateInstaller.createInstallApkIntent(context, apkFile)

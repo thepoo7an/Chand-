@@ -354,11 +354,76 @@ jobs:
             exit 1
           fi
 
+      - name: Generate trusted update metadata (chand-update-metadata.json)
+        if: env.RELEASE_SIGNING_READY == 'true'
+        env:
+          REPO_SLUG: ${{ github.repository }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('build-{0}', github.run_number) }}
+          BUILD_VERSION_NAME: ${{ env.VERSION_NAME }}
+          BUILD_VERSION_CODE: ${{ env.VERSION_CODE }}
+        run: |
+          python3 - "$BUILD_TOOLS_DIR/aapt2" << 'PYEOF'
+          import hashlib, json, os, re, subprocess, sys
+
+          aapt2 = sys.argv[1]
+          repo = os.environ["REPO_SLUG"]
+          tag = os.environ["RELEASE_TAG"]
+          ver_name = os.environ["BUILD_VERSION_NAME"]
+          ver_code = int(os.environ["BUILD_VERSION_CODE"])
+          base_url = f"https://github.com/{repo}/releases/download/{tag}"
+
+          apk_names = [
+              "Chand-arm64-v8a-release.apk",
+              "Chand-armeabi-v7a-release.apk",
+              "Chand-universal-release.apk",
+          ]
+          artifacts = []
+          for name in apk_names:
+              path = os.path.join("dist", name)
+              badging = subprocess.check_output([aapt2, "dump", "badging", path], text=True)
+              m = re.search(r"package:\s+name='([^']+)'.*?\bversionCode='(\d+)'", badging)
+              if not m:
+                  raise SystemExit(f"Failed to parse badging for {path}")
+              pkg_name, apk_vcode = m.group(1), int(m.group(2))
+              if pkg_name != "ir.thepoo7an.chand":
+                  raise SystemExit(f"Unexpected package name {pkg_name} in {path}")
+              if apk_vcode != ver_code:
+                  raise SystemExit(f"APK versionCode {apk_vcode} != {ver_code} in {path}")
+
+              h = hashlib.sha256()
+              with open(path, "rb") as f:
+                  for chunk in iter(lambda: f.read(65536), b""):
+                      h.update(chunk)
+              artifacts.append({
+                  "name": name,
+                  "package_name": pkg_name,
+                  "version_code": apk_vcode,
+                  "version_name": ver_name,
+                  "download_url": f"{base_url}/{name}",
+                  "sha256": h.hexdigest(),
+                  "size_bytes": os.path.getsize(path),
+              })
+
+          payload = {
+              "schema_version": 1,
+              "package_name": "ir.thepoo7an.chand",
+              "version_code": ver_code,
+              "version_name": ver_name,
+              "artifacts": artifacts,
+          }
+          with open("dist/chand-update-metadata.json", "w", encoding="utf-8") as out:
+              json.dump(payload, out, indent=2)
+              out.write("\n")
+          print("Generated dist/chand-update-metadata.json")
+          PYEOF
+
       - name: Upload Release APKs artifact
         uses: actions/upload-artifact@v7
         with:
           name: chand-release-apks
-          path: dist/Chand-*-release.apk
+          path: |
+            dist/Chand-*-release.apk
+            dist/chand-update-metadata.json
           retention-days: 30
 
       - name: Upload Debug APK artifact
@@ -394,6 +459,7 @@ jobs:
             dist/Chand-universal-release.apk
             dist/Chand-arm64-v8a-release.apk
             dist/Chand-armeabi-v7a-release.apk
+            dist/chand-update-metadata.json
           generate_release_notes: true
 
       - name: Publish test pre-release APKs to GitHub Release (Ephemeral Signing)

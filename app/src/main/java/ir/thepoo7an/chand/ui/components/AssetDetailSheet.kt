@@ -74,50 +74,79 @@ fun AssetDetailSheet(
     onRetryHistory: () -> Unit,
     onTogglePin: () -> Unit,
     onConvertClick: () -> Unit,
+    onSourceBreakdownClick: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val marketColors = LocalMarketColors.current
     var scrubbedIndex by remember(historyPoints) { mutableStateOf<Int?>(null) }
 
+    val isOilUsd = asset.isUsdPerBarrel
     val activePoint = scrubbedIndex?.let { idx -> historyPoints.getOrNull(idx) }
-    val displayPriceToman = activePoint?.priceToman ?: asset.priceToman
+    val displayPrimaryPrice = activePoint?.priceToman ?: asset.primaryPriceValue
 
-    val (rangeChangeToman, rangeChangePct) = remember(
+    val (rangeChangePrimary, rangeChangePct, hasDisplayChange) = remember(
         historyPoints,
         asset.change24hToman,
+        asset.change24hUsd,
         asset.change24hPercent,
-        scrubbedIndex
+        asset.isChange24hAvailable,
+        scrubbedIndex,
+        isOilUsd
     ) {
         if (historyPoints.size >= 2) {
             val first = historyPoints.first().priceToman
             val target = activePoint?.priceToman ?: historyPoints.last().priceToman
             val diff = target - first
             val pct = if (first > 0.0) (diff / first) * 100.0 else asset.change24hPercent
-            diff to pct
+            Triple(diff, pct, true)
+        } else if (isOilUsd) {
+            Triple(asset.change24hUsd ?: 0.0, asset.change24hPercent, asset.isChange24hAvailable)
         } else {
-            asset.change24hToman to asset.change24hPercent
+            Triple(asset.change24hToman, asset.change24hPercent, asset.isChange24hAvailable)
         }
     }
 
-    val (rangeHigh, rangeLow) = remember(historyPoints, selectedRange, asset.high24hToman, asset.low24hToman) {
+    val (rangeHigh, rangeLow) = remember(
+        historyPoints,
+        selectedRange,
+        asset.high24hToman,
+        asset.low24hToman,
+        asset.high24hUsd,
+        asset.low24hUsd,
+        isOilUsd
+    ) {
+        val assetHigh = if (isOilUsd) asset.high24hUsd else asset.high24hToman
+        val assetLow = if (isOilUsd) asset.low24hUsd else asset.low24hToman
         if (historyPoints.size >= 2) {
             val maxHist = historyPoints.maxOf { it.priceToman }
             val minHist = historyPoints.minOf { it.priceToman }
             if (selectedRange == TimeRange.H24) {
-                listOfNotNull(maxHist, asset.high24hToman).maxOrNull() to
-                    listOfNotNull(minHist, asset.low24hToman).minOrNull()
+                listOfNotNull(maxHist, assetHigh).maxOrNull() to
+                    listOfNotNull(minHist, assetLow).minOrNull()
             } else {
                 maxHist to minHist
             }
         } else {
-            asset.high24hToman to asset.low24hToman
+            assetHigh to assetLow
         }
     }
 
     val isPositive = rangeChangePct >= 0.0
-    val trendColor = if (isPositive) marketColors.gain else marketColors.loss
-    val trendBg = if (isPositive) marketColors.gainContainer else marketColors.lossContainer
+    val trendColor = if (!hasDisplayChange) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else if (isPositive) {
+        marketColors.gain
+    } else {
+        marketColors.loss
+    }
+    val trendBg = if (!hasDisplayChange) {
+        MaterialTheme.colorScheme.surfaceVariant
+    } else if (isPositive) {
+        marketColors.gainContainer
+    } else {
+        marketColors.lossContainer
+    }
     val isFa = prefs.language == AppLanguage.FA
 
     ModalBottomSheet(
@@ -181,16 +210,26 @@ fun AssetDetailSheet(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(
+                            onClickLabel = strings.sourceTapHint,
+                            onClick = onSourceBreakdownClick
+                        )
+                        .minimumInteractiveComponentSize()
+                        .testTag("detail_hero_price_trigger")
+                ) {
                     Row(verticalAlignment = Alignment.Bottom) {
                         val isUnavailablePrice = activePoint == null &&
-                            (asset.freshness == DataFreshness.UNAVAILABLE || displayPriceToman <= 0.0)
+                            (asset.freshness == DataFreshness.UNAVAILABLE || displayPrimaryPrice <= 0.0)
                         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                             Text(
-                                text = if (isUnavailablePrice) {
-                                    "—"
-                                } else {
-                                    NumberFormatters.formatToman(displayPriceToman, prefs.usePersianDigits)
+                                text = when {
+                                    isUnavailablePrice -> "—"
+                                    isOilUsd -> NumberFormatters.formatUsd(displayPrimaryPrice, prefs.usePersianDigits)
+                                    else -> NumberFormatters.formatToman(displayPrimaryPrice, prefs.usePersianDigits)
                                 },
                                 style = MaterialTheme.typography.displaySmall,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -199,22 +238,24 @@ fun AssetDetailSheet(
                         if (!isUnavailablePrice) {
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = strings.tomanUnit,
+                                text = if (isOilUsd) strings.usdPerBarrelUnit else strings.tomanUnit,
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(bottom = 5.dp)
                             )
                         }
                     }
-                    val subtitleText = if (activePoint != null) {
-                        NumberFormatters.formatChartJalaliDate(
+                    val subtitleText = when {
+                        activePoint != null -> NumberFormatters.formatChartJalaliDate(
                             timestampSec = activePoint.timestampSec,
                             usePersianDigits = prefs.usePersianDigits,
                             includeTime = selectedRange == TimeRange.H24 || selectedRange == TimeRange.D7,
                             includeYear = true
                         )
-                    } else {
-                        asset.priceUsd?.let {
+                        isOilUsd && asset.priceToman > 0.0 ->
+                            "${strings.oilTomanEstimatePrefix} ${NumberFormatters.formatToman(asset.priceToman, prefs.usePersianDigits)} ${strings.tomanUnit}"
+                        isOilUsd -> strings.chartInteractiveHint
+                        else -> asset.priceUsd?.let {
                             NumberFormatters.formatUsd(it, prefs.usePersianDigits)
                         } ?: strings.chartInteractiveHint
                     }
@@ -233,14 +274,27 @@ fun AssetDetailSheet(
                     color = trendBg
                 ) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        val deltaStr = NumberFormatters.formatDeltaWithArrow(
-                            rangeChangeToman,
-                            rangeChangePct,
-                            prefs.usePersianDigits
-                        )
-                        val pctStr = NumberFormatters.formatPercent(rangeChangePct, prefs.usePersianDigits)
+                        val badgeText = if (!hasDisplayChange) {
+                            strings.change24hUnavailable
+                        } else if (isOilUsd) {
+                            val deltaStr = NumberFormatters.formatUsdDeltaWithArrow(
+                                rangeChangePrimary,
+                                rangeChangePct,
+                                prefs.usePersianDigits
+                            )
+                            val pctStr = NumberFormatters.formatPercent(rangeChangePct, prefs.usePersianDigits)
+                            "$deltaStr ($pctStr)"
+                        } else {
+                            val deltaStr = NumberFormatters.formatDeltaWithArrow(
+                                rangeChangePrimary,
+                                rangeChangePct,
+                                prefs.usePersianDigits
+                            )
+                            val pctStr = NumberFormatters.formatPercent(rangeChangePct, prefs.usePersianDigits)
+                            "$deltaStr ($pctStr)"
+                        }
                         Text(
-                            text = "$deltaStr ($pctStr)",
+                            text = badgeText,
                             style = MaterialTheme.typography.labelLarge,
                             color = trendColor,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
@@ -428,18 +482,27 @@ fun AssetDetailSheet(
             ) {
                 StatPillCard(
                     label = if (selectedRange == TimeRange.H24) strings.high24h else strings.rangeHighLabel,
-                    value = rangeHigh?.let { NumberFormatters.formatToman(it, prefs.usePersianDigits) } ?: "—",
+                    value = rangeHigh?.let {
+                        if (isOilUsd) "${NumberFormatters.formatUsd(it, prefs.usePersianDigits)} ${strings.usdPerBarrelShortUnit}"
+                        else NumberFormatters.formatToman(it, prefs.usePersianDigits)
+                    } ?: "—",
                     modifier = Modifier.weight(1f)
                 )
                 StatPillCard(
                     label = if (selectedRange == TimeRange.H24) strings.low24h else strings.rangeLowLabel,
-                    value = rangeLow?.let { NumberFormatters.formatToman(it, prefs.usePersianDigits) } ?: "—",
+                    value = rangeLow?.let {
+                        if (isOilUsd) "${NumberFormatters.formatUsd(it, prefs.usePersianDigits)} ${strings.usdPerBarrelShortUnit}"
+                        else NumberFormatters.formatToman(it, prefs.usePersianDigits)
+                    } ?: "—",
                     modifier = Modifier.weight(1f)
                 )
                 StatPillCard(
                     label = strings.sourceLabel,
                     value = sourceDisplay,
-                    modifier = Modifier.weight(0.95f)
+                    onClick = onSourceBreakdownClick,
+                    modifier = Modifier
+                        .weight(0.95f)
+                        .testTag("detail_source_pill_trigger")
                 )
             }
 
@@ -473,6 +536,7 @@ fun AssetDetailSheet(
 
             Button(
                 onClick = onConvertClick,
+                enabled = asset.priceToman > 0.0,
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -502,14 +566,29 @@ fun AssetDetailSheet(
 private fun StatPillCard(
     label: String,
     value: String,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val marketColors = LocalMarketColors.current
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = BorderStroke(1.dp, marketColors.hairline),
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (onClick != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+            else marketColors.hairline
+        ),
         modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .then(
+                if (onClick != null) {
+                    Modifier
+                        .clickable(onClick = onClick)
+                        .minimumInteractiveComponentSize()
+                } else {
+                    Modifier
+                }
+            )
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),

@@ -3,8 +3,11 @@ package ir.thepoo7an.chand.network
 import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.AssetHistoryPoint
 import ir.thepoo7an.chand.model.AssetHistoryResult
+import ir.thepoo7an.chand.model.CandidateExclusionReason
+import ir.thepoo7an.chand.model.CandidateStatus
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.model.SourceCandidateRecord
 import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.network.MarketPriceMapper.ExchangeQuote
 import kotlinx.coroutines.CancellationException
@@ -23,7 +26,8 @@ import kotlin.math.abs
 
 class MarketRemoteDataSource(
     private val client: OkHttpClient = NetworkConfig.sharedClient,
-    private val financialApi: FinancialApiService = FinancialApiService(client)
+    private val financialApi: FinancialApiService = FinancialApiService(client),
+    private val oilApi: OilApiService = OilApiService(client)
 ) : MarketDataSource {
 
     private val liveMarketDeduplicator = InFlightRequestDeduplicator<String, RemoteFetchResult>()
@@ -203,6 +207,7 @@ class MarketRemoteDataSource(
                 val binanceDeferred = async { fetchBinanceQuotes(nowMillis, extraBinanceSymbols) }
                 val fxSnapshotDeferred = async { financialApi.fetchLiveUsdRateSnapshot(nowMillis) }
                 val goldSpotDeferred = async { financialApi.fetchLiveGoldSpotCandidate(nowMillis) }
+                val oilBatchDeferred = async { oilApi.fetchLiveOilQuotes(nowMillis) }
 
                 val usdtSparkDeferred = async {
                     fetchWallexUdfHistory("USDTTMN", TimeRange.H24, from24hSec, nowSec, AssetCategory.CRYPTO)
@@ -236,6 +241,7 @@ class MarketRemoteDataSource(
                 val binance = binanceDeferred.await()
                 val fxSnapshot = fxSnapshotDeferred.await()
                 val liveGoldSpotCandidate = goldSpotDeferred.await()
+                val oilBatch = oilBatchDeferred.await()
                 val multiFxHistory = multiFxHistoryDeferred.await()
 
                 val usdtSpark = usdtSparkDeferred.await().map { it.priceToman }
@@ -279,6 +285,9 @@ class MarketRemoteDataSource(
                 if (fxSnapshot.consensusRates.isNotEmpty() || fxSnapshot.goldSpotXauCandidates.isNotEmpty()) {
                     activeSources.add("FinancialFX")
                 }
+                if (oilBatch.quotesByProvider.isNotEmpty()) {
+                    activeSources.addAll(oilBatch.quotesByProvider.keys)
+                }
 
                 if (activeSources.isEmpty()) {
                     return@coroutineScope RemoteFetchResult(
@@ -289,6 +298,14 @@ class MarketRemoteDataSource(
                         rateBasis = TomanRateBasis.OFFLINE_REFERENCE
                     )
                 }
+
+                val tgjuFailed = tgju.isEmpty()
+                val wallexFailed = wallex.isEmpty()
+                val bitpinFailed = bitpin.isEmpty()
+                val nobitexFailed = nobitexUsdt == null
+                val binanceFailed = binance.isEmpty()
+                val goldApiFailed = liveGoldSpotCandidate == null
+                val currencyApiFailed = "CurrencyAPI" in fxSnapshot.failedProviders
 
                 val fetchDoneMillis = System.currentTimeMillis()
                 val usdQuote = tgju["price_dollar_rl"]
@@ -309,8 +326,12 @@ class MarketRemoteDataSource(
                     tgjuTableFallbackDelta = tgjuUsdFallbackDelta,
                     lastKnownUsdToman = lastKnownUsdToman,
                     nowMillis = fetchDoneMillis,
-                    nobitexTimestampMillis = nobitexUsdt?.second ?: fetchDoneMillis,
-                    cachedUsdTimestampMillis = cachedUsdTs
+                    nobitexTimestampMillis = nobitexUsdt?.second ?: 0L,
+                    cachedUsdTimestampMillis = cachedUsdTs,
+                    tgjuFailed = tgjuFailed,
+                    wallexFailed = wallexFailed,
+                    bitpinFailed = bitpinFailed,
+                    nobitexFailed = nobitexFailed
                 )
 
                 val usdToman = resolvedUsd.usdToman
@@ -349,7 +370,9 @@ class MarketRemoteDataSource(
                         sourceTimestampMillis = resolvedUsd.usdSourceTimestampMillis,
                         fetchedAtMillis = fetchDoneMillis,
                         disputed = resolvedUsd.usdDisputed,
-                        singleSource = resolvedUsd.usdSingleSource
+                        singleSource = resolvedUsd.usdSingleSource,
+                        isCalculatedPrice = resolvedUsd.usdIsCalculated,
+                        candidates = resolvedUsd.usdCandidates
                     )
                 )
 
@@ -379,7 +402,9 @@ class MarketRemoteDataSource(
                         currencySpark = currencySpark,
                         fxConsensus = fxConsensus,
                         usdBasisFreshness = resolvedUsd.usdFreshness,
-                        usdSourceTimestampMillis = resolvedUsd.usdSourceTimestampMillis
+                        usdSourceTimestampMillis = resolvedUsd.usdSourceTimestampMillis,
+                        tgjuFailed = tgjuFailed,
+                        fxFailedProviders = fxSnapshot.failedProviders
                     )?.let { assets.add(it) }
                 }
 
@@ -400,7 +425,11 @@ class MarketRemoteDataSource(
                     usdtSpark = usdtSpark,
                     cachedAssetsById = cachedAssetsById,
                     nowMillis = fetchDoneMillis,
-                    computeTableDelta = ::computeRecentTableDelta
+                    computeTableDelta = ::computeRecentTableDelta,
+                    tgjuFailed = tgjuFailed,
+                    binanceFailed = binanceFailed,
+                    goldApiFailed = goldApiFailed,
+                    currencyApiFailed = currencyApiFailed
                 ).filterNot { isAssetDisabled(it.id, liveConfig) }
                     .map { applyAssetOverride(it, liveConfig) }
                 assets.addAll(mappedGolds)
@@ -411,7 +440,7 @@ class MarketRemoteDataSource(
                     .forEach { extra ->
                         val q = extra.tgjuKey?.let { tgju[it] }
                         if (q != null && q.priceToman > 0.0) {
-                            val ts = q.timestampMillis.takeIf { it > 0L } ?: fetchDoneMillis
+                            val ts = q.timestampMillis.coerceAtLeast(0L)
                             assets.add(
                                 MarketAsset(
                                     id = extra.id,
@@ -440,7 +469,19 @@ class MarketRemoteDataSource(
                                     ),
                                     sourceTimestampMillis = ts,
                                     fetchedAtMillis = fetchDoneMillis,
-                                    singleSource = true
+                                    singleSource = true,
+                                    isCalculatedPrice = false,
+                                    candidates = listOf(
+                                        SourceCandidateRecord(
+                                            sourceName = "TGJU",
+                                            priceToman = q.priceToman,
+                                            rawPrice = q.priceToman,
+                                            sourceTimestampMillis = ts,
+                                            isPrimary = true,
+                                            status = CandidateStatus.INCLUDED,
+                                            exclusionReason = null
+                                        )
+                                    )
                                 )
                             )
                         }
@@ -465,15 +506,36 @@ class MarketRemoteDataSource(
                         nowMillis = fetchDoneMillis,
                         usdtBasisFreshness = resolvedUsd.usdtFreshness,
                         usdtSourceTimestampMillis = resolvedUsd.usdtSourceTimestampMillis,
-                        nobitexTimestampMillis = nobitexUsdt?.second ?: fetchDoneMillis
+                        nobitexTimestampMillis = nobitexUsdt?.second ?: 0L,
+                        wallexFailed = wallexFailed,
+                        bitpinFailed = bitpinFailed,
+                        binanceFailed = binanceFailed,
+                        nobitexFailed = nobitexFailed,
+                        usdtBasisSourceLabel = resolvedUsd.usdtSourceLabel,
+                        usdtBasisIsCalculated = resolvedUsd.usdtIsCalculated,
+                        usdtBasisCandidates = resolvedUsd.usdtCandidates
                     )?.let { assets.add(it) }
                 }
 
+                val effectiveOilSpecs = MarketPriceMapper.SUPPORTED_OILS
+                    .filterNot { isAssetDisabled(it.id, liveConfig) }
+                if (effectiveOilSpecs.isNotEmpty()) {
+                    val mappedOils = MarketPriceMapper.mapOilAssets(
+                        specs = effectiveOilSpecs,
+                        batch = oilBatch,
+                        usdToman = usdToman,
+                        usdBasisFreshness = resolvedUsd.usdFreshness,
+                        cachedAssetsById = cachedAssetsById,
+                        nowMillis = fetchDoneMillis
+                    ).map { applyAssetOverride(it, liveConfig) }
+                    assets.addAll(mappedOils)
+                }
+
                 val resultFreshness = when {
-                    resolvedUsd.rateBasis == TomanRateBasis.OFFLINE_REFERENCE -> DataFreshness.UNAVAILABLE
-                    resolvedUsd.rateBasis == TomanRateBasis.CACHED_USD_ANCHOR -> DataFreshness.CACHED
                     assets.any { it.freshness == DataFreshness.LIVE } -> DataFreshness.LIVE
                     assets.any { it.freshness == DataFreshness.DELAYED } -> DataFreshness.DELAYED
+                    resolvedUsd.rateBasis == TomanRateBasis.OFFLINE_REFERENCE -> DataFreshness.UNAVAILABLE
+                    resolvedUsd.rateBasis == TomanRateBasis.CACHED_USD_ANCHOR -> DataFreshness.CACHED
                     assets.any { it.freshness == DataFreshness.CACHED } -> DataFreshness.CACHED
                     else -> DataFreshness.UNAVAILABLE
                 }
@@ -519,6 +581,30 @@ class MarketRemoteDataSource(
                     asset.priceToman
                 } else {
                     0.0
+                }
+
+                // 0. GLOBAL CRUDE OIL (Brent / WTI in USD/barrel)
+                if (asset.category == AssetCategory.OIL) {
+                    val (oilPts, oilSrc) = oilApi.fetchOilHistory(asset.id, range, System.currentTimeMillis())
+                    if (oilPts.size >= 3) {
+                        val liveUsd = if (asset.freshness != DataFreshness.UNAVAILABLE &&
+                            (asset.priceUsd ?: 0.0) > 0.0
+                        ) {
+                            asset.priceUsd!!
+                        } else {
+                            0.0
+                        }
+                        return@coroutineScope AssetHistoryResult(
+                            points = appendLivePointIfNewer(oilPts, nowSec, liveUsd, scaleToLast = false),
+                            sourceLabel = oilSrc,
+                            isRealData = true
+                        )
+                    }
+                    return@coroutineScope AssetHistoryResult(
+                        points = emptyList(),
+                        sourceLabel = "",
+                        isRealData = false
+                    )
                 }
 
                 // 1. CRYPTO ASSETS (Wallex TMN -> Nobitex IRT -> Binance USDT*USD -> CoinGecko*USD)
@@ -1198,7 +1284,7 @@ class MarketRemoteDataSource(
                     diffRial = priceRial - prev
                 }
 
-                val quoteTs = parseTgjuTimestampMillis(obj.optString("ts")) ?: nowMillis
+                val quoteTs = parseTgjuTimestampMillis(obj.optString("ts")) ?: 0L
 
                 map[k] = MarketPriceMapper.TgjuQuote(
                     priceToman = priceRial / 10.0,
@@ -1275,8 +1361,10 @@ class MarketRemoteDataSource(
             nowMillis: Long = System.currentTimeMillis()
         ): Map<String, ExchangeQuote> = runCatching {
             val root = JSONObject(raw)
-            val markets = root.optJSONObject("result")?.optJSONObject("markets") ?: return emptyMap()
-            data class WallexSide(val price: Double, val change: Double, val high: Double?, val low: Double?)
+            val resultObj = root.optJSONObject("result") ?: return emptyMap()
+            val markets = resultObj.optJSONObject("markets") ?: return emptyMap()
+            val rootTs = parseQuoteTimestampMillis(resultObj, root)
+            data class WallexSide(val price: Double, val change: Double, val high: Double?, val low: Double?, val timestampMillis: Long)
             val tmnPrices = mutableMapOf<String, WallexSide>()
             val usdtPrices = mutableMapOf<String, WallexSide>()
 
@@ -1295,10 +1383,11 @@ class MarketRemoteDataSource(
                 }
                 val high = stats?.optString("24h_highPrice")?.let { parseNumeric(it) }?.takeIf { it > 0.0 }
                 val low = stats?.optString("24h_lowPrice")?.let { parseNumeric(it) }?.takeIf { it > 0.0 }
+                val itemTs = parseQuoteTimestampMillis(item, stats).takeIf { it > 0L } ?: rootTs
                 if (quote == "TMN" && price > 0) {
-                    tmnPrices[base] = WallexSide(price, change, high, low)
+                    tmnPrices[base] = WallexSide(price, change, high, low, itemTs)
                 } else if (quote == "USDT" && price > 0) {
-                    usdtPrices[base] = WallexSide(price, change, high, low)
+                    usdtPrices[base] = WallexSide(price, change, high, low, itemTs)
                 }
             }
 
@@ -1307,6 +1396,9 @@ class MarketRemoteDataSource(
             for (base in allBases) {
                 val tmn = tmnPrices[base]
                 val usdt = usdtPrices[base]
+                val ts = tmn?.timestampMillis?.takeIf { it > 0L }
+                    ?: usdt?.timestampMillis?.takeIf { it > 0L }
+                    ?: 0L
                 result[base] = ExchangeQuote(
                     priceToman = tmn?.price,
                     priceUsd = usdt?.price,
@@ -1315,7 +1407,7 @@ class MarketRemoteDataSource(
                     lowToman = tmn?.low,
                     highUsd = usdt?.high,
                     lowUsd = usdt?.low,
-                    timestampMillis = nowMillis
+                    timestampMillis = ts
                 )
             }
             result
@@ -1327,8 +1419,10 @@ class MarketRemoteDataSource(
         ): Map<String, ExchangeQuote> = runCatching {
             val root = JSONObject(raw)
             val results = root.optJSONArray("results") ?: return emptyMap()
-            val tmnPrices = mutableMapOf<String, Pair<Double, Double>>()
-            val usdtPrices = mutableMapOf<String, Pair<Double, Double>>()
+            val rootTs = parseQuoteTimestampMillis(root)
+            data class BitpinSide(val price: Double, val change: Double, val timestampMillis: Long)
+            val tmnPrices = mutableMapOf<String, BitpinSide>()
+            val usdtPrices = mutableMapOf<String, BitpinSide>()
 
             for (i in 0 until results.length()) {
                 val item = results.optJSONObject(i) ?: continue
@@ -1343,10 +1437,11 @@ class MarketRemoteDataSource(
                     ?: parseNumeric(item.optString("price"))
                     ?: continue
                 val change = priceInfo?.optDouble("change", 0.0) ?: 0.0
+                val itemTs = parseQuoteTimestampMillis(priceInfo, item).takeIf { it > 0L } ?: rootTs
                 if (quote == "IRT" && price > 0) {
-                    tmnPrices[base] = price to change
+                    tmnPrices[base] = BitpinSide(price, change, itemTs)
                 } else if (quote == "USDT" && price > 0) {
-                    usdtPrices[base] = price to change
+                    usdtPrices[base] = BitpinSide(price, change, itemTs)
                 }
             }
 
@@ -1355,11 +1450,14 @@ class MarketRemoteDataSource(
             for (base in allBases) {
                 val tmn = tmnPrices[base]
                 val usdt = usdtPrices[base]
+                val ts = tmn?.timestampMillis?.takeIf { it > 0L }
+                    ?: usdt?.timestampMillis?.takeIf { it > 0L }
+                    ?: 0L
                 map[base] = ExchangeQuote(
-                    priceToman = tmn?.first,
-                    priceUsd = usdt?.first,
-                    changePct = tmn?.second ?: usdt?.second ?: 0.0,
-                    timestampMillis = nowMillis
+                    priceToman = tmn?.price,
+                    priceUsd = usdt?.price,
+                    changePct = tmn?.change ?: usdt?.change ?: 0.0,
+                    timestampMillis = ts
                 )
             }
             map
@@ -1380,7 +1478,7 @@ class MarketRemoteDataSource(
                 val change = parseNumeric(obj.optString("priceChangePercent")) ?: 0.0
                 val high = parseNumeric(obj.optString("highPrice"))?.takeIf { it > 0.0 }
                 val low = parseNumeric(obj.optString("lowPrice"))?.takeIf { it > 0.0 }
-                val closeTime = obj.optLong("closeTime", 0L).takeIf { it > 0L } ?: nowMillis
+                val closeTime = obj.optLong("closeTime", 0L).takeIf { it > 0L } ?: 0L
                 if (price > 0) {
                     map[base] = ExchangeQuote(
                         priceToman = null,
@@ -1402,9 +1500,39 @@ class MarketRemoteDataSource(
             val obj = JSONObject(raw)
             if (obj.optString("status") != "ok") return null
             val lastRial = parseNumeric(obj.optString("lastTradePrice")) ?: return null
-            val ts = obj.optLong("lastUpdate", 0L).takeIf { it > 0L } ?: nowMillis
+            val ts = obj.optLong("lastUpdate", 0L).takeIf { it > 0L } ?: 0L
             (lastRial / 10.0) to ts
         }.getOrNull()
+
+        private fun parseQuoteTimestampMillis(vararg objects: JSONObject?): Long {
+            val candidateKeys = listOf("updated_at", "updatedAt", "lastUpdate", "last_update", "timestamp", "ts", "time")
+            for (obj in objects) {
+                if (obj == null) continue
+                for (key in candidateKeys) {
+                    if (!obj.has(key) || obj.isNull(key)) continue
+                    val rawVal = obj.opt(key) ?: continue
+                    when (rawVal) {
+                        is Number -> {
+                            val num = rawVal.toLong()
+                            if (num > 0L) {
+                                return if (num < 10_000_000_000L) num * 1000L else num
+                            }
+                        }
+                        is String -> {
+                            val trimmed = rawVal.trim()
+                            if (trimmed.isEmpty()) continue
+                            val numeric = trimmed.toLongOrNull()
+                            if (numeric != null && numeric > 0L) {
+                                return if (numeric < 10_000_000_000L) numeric * 1000L else numeric
+                            }
+                            FinancialApiService.parseIsoTimestampMillis(trimmed)?.let { return it }
+                            parseTgjuTimestampMillis(trimmed)?.let { return it }
+                        }
+                    }
+                }
+            }
+            return 0L
+        }
 
         internal fun parseWallexUdfPayload(
             raw: String,

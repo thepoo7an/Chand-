@@ -88,7 +88,7 @@ internal object WidgetStatusHelper {
     ): DataFreshness {
         if (updatedAtMillis <= 0L) return DataFreshness.UNAVAILABLE
         val validAssets = displayedAssets.filter {
-            it.priceToman > 0.0 && it.freshness != DataFreshness.UNAVAILABLE
+            it.hasUsablePrimaryPrice && it.freshness != DataFreshness.UNAVAILABLE
         }
         if (validAssets.isEmpty()) return DataFreshness.UNAVAILABLE
 
@@ -384,26 +384,38 @@ private fun SingleHeroWidgetContent(
 
                 Spacer(modifier = GlanceModifier.defaultWeight())
 
-                val isUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || asset.priceToman <= 0.0
+                val isUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
+                val deltaText = when {
+                    isUnavailable -> "—"
+                    asset.isUsdPerBarrel && !asset.isChange24hAvailable -> "—"
+                    asset.isUsdPerBarrel -> NumberFormatters.formatPercent(asset.change24hPercent, prefs.usePersianDigits)
+                    else -> NumberFormatters.formatDeltaWithArrow(
+                        asset.change24hToman,
+                        asset.change24hPercent,
+                        prefs.usePersianDigits
+                    )
+                }
                 Text(
-                    text = if (isUnavailable) {
-                        "—"
-                    } else {
-                        NumberFormatters.formatDeltaWithArrow(
-                            asset.change24hToman,
-                            asset.change24hPercent,
-                            prefs.usePersianDigits
-                        )
-                    },
+                    text = deltaText,
                     style = TextStyle(
-                        color = if (isUnavailable) WidgetColors.sub else if (isGain) WidgetColors.gain else WidgetColors.loss,
+                        color = if (isUnavailable || (asset.isUsdPerBarrel && !asset.isChange24hAvailable)) {
+                            WidgetColors.sub
+                        } else if (isGain) {
+                            WidgetColors.gain
+                        } else {
+                            WidgetColors.loss
+                        },
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
                     )
                 )
                 Spacer(modifier = GlanceModifier.height(2.dp))
                 Text(
-                    text = if (isUnavailable) "—" else NumberFormatters.formatCardPrice(asset.priceToman, prefs.usePersianDigits),
+                    text = when {
+                        isUnavailable -> "—"
+                        asset.isUsdPerBarrel -> NumberFormatters.formatUsd(asset.priceUsd ?: 0.0, prefs.usePersianDigits)
+                        else -> NumberFormatters.formatCardPrice(asset.priceToman, prefs.usePersianDigits)
+                    },
                     style = TextStyle(
                         color = WidgetColors.title,
                         fontSize = 24.sp,
@@ -718,7 +730,7 @@ private fun MultiRowWidgetContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 rows.forEachIndexed { idx, asset ->
-                    val rowUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || asset.priceToman <= 0.0
+                    val rowUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
                     val isGain = asset.change24hPercent >= 0.0
                     Row(
                         modifier = GlanceModifier
@@ -752,27 +764,28 @@ private fun MultiRowWidgetContent(
                         Spacer(modifier = GlanceModifier.defaultWeight())
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = if (rowUnavailable) {
-                                    "—"
-                                } else {
-                                    NumberFormatters.formatDeltaWithArrow(
+                                text = when {
+                                    rowUnavailable -> "—"
+                                    asset.isUsdPerBarrel && !asset.isChange24hAvailable -> "—"
+                                    asset.isUsdPerBarrel -> NumberFormatters.formatPercent(asset.change24hPercent, prefs.usePersianDigits)
+                                    else -> NumberFormatters.formatDeltaWithArrow(
                                         asset.change24hToman,
                                         asset.change24hPercent,
                                         prefs.usePersianDigits
                                     )
                                 },
                                 style = TextStyle(
-                                    color = if (rowUnavailable) WidgetColors.sub else if (isGain) WidgetColors.gain else WidgetColors.loss,
+                                    color = if (rowUnavailable || (asset.isUsdPerBarrel && !asset.isChange24hAvailable)) WidgetColors.sub else if (isGain) WidgetColors.gain else WidgetColors.loss,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Medium
                                 ),
                                 maxLines = 1
                             )
                             Text(
-                                text = if (rowUnavailable) {
-                                    "—"
-                                } else {
-                                    NumberFormatters.formatCardPrice(
+                                text = when {
+                                    rowUnavailable -> "—"
+                                    asset.isUsdPerBarrel -> NumberFormatters.formatUsd(asset.priceUsd ?: 0.0, prefs.usePersianDigits)
+                                    else -> NumberFormatters.formatCardPrice(
                                         asset.priceToman,
                                         prefs.usePersianDigits
                                     )

@@ -82,6 +82,8 @@ import ir.thepoo7an.chand.network.AppUpdateService
 import ir.thepoo7an.chand.network.AppUpdateState
 import ir.thepoo7an.chand.network.LiveConfigRegistry
 import ir.thepoo7an.chand.network.RemoteConfigUiState
+import ir.thepoo7an.chand.network.UpdateErrorReason
+import ir.thepoo7an.chand.network.UpdateSecurityValidator
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import ir.thepoo7an.chand.ui.theme.LocalMarketColors
@@ -1146,9 +1148,10 @@ fun SettingsSheet(
                                 } else {
                                     if (errorThis != null) {
                                         Text(
-                                            text = strings.downloadFailedLabel,
+                                            text = strings.updateErrorMessage(errorThis.reason),
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = marketColors.loss
+                                            color = marketColors.loss,
+                                            modifier = Modifier.testTag("settings_update_download_error")
                                         )
                                     } else if (readyThis != null) {
                                         Row(
@@ -1174,6 +1177,9 @@ fun SettingsSheet(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
+                                        val safeFallbackUrl = info.releasePageUrl
+                                            .takeIf { UpdateSecurityValidator.isSafeExternalHttpsUrl(it) }
+                                            ?: info.downloadUrl.takeIf { UpdateSecurityValidator.isSafeExternalHttpsUrl(it) }
                                         Button(
                                             onClick = {
                                                 when {
@@ -1183,10 +1189,10 @@ fun SettingsSheet(
                                                     info.hasDirectApkAsset -> {
                                                         onStartUpdateDownload(info)
                                                     }
-                                                    else -> {
+                                                    !safeFallbackUrl.isNullOrBlank() -> {
                                                         runCatching {
                                                             context.startActivity(
-                                                                Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+                                                                Intent(Intent.ACTION_VIEW, Uri.parse(safeFallbackUrl))
                                                             )
                                                         }
                                                     }
@@ -1211,7 +1217,7 @@ fun SettingsSheet(
                                                 text = when {
                                                     readyThis != null && canInstallApps -> strings.installUpdateButton
                                                     readyThis != null -> strings.grantInstallPermissionButton
-                                                    errorThis != null -> strings.retryDownloadButton
+                                                    errorThis != null && info.hasDirectApkAsset -> strings.retryDownloadButton
                                                     info.hasDirectApkAsset -> strings.downloadUpdateButton
                                                     else -> strings.openInBrowserFallback
                                                 },
@@ -1246,10 +1252,16 @@ fun SettingsSheet(
                             }
 
                             is AppUpdateState.Error -> {
+                                val errMsg = if (updateState.reason == UpdateErrorReason.NETWORK_FAILURE) {
+                                    strings.updateCheckErrorLabel
+                                } else {
+                                    strings.updateErrorMessage(updateState.reason)
+                                }
                                 Text(
-                                    text = strings.updateCheckErrorLabel,
+                                    text = errMsg,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = marketColors.loss
+                                    color = marketColors.loss,
+                                    modifier = Modifier.testTag("settings_update_check_error")
                                 )
                             }
 

@@ -2,6 +2,8 @@ package ir.thepoo7an.chand
 
 import android.content.Context
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.core.app.ApplicationProvider
 import ir.thepoo7an.chand.data.PreferencesRepository
 import ir.thepoo7an.chand.model.AppLanguage
@@ -11,6 +13,11 @@ import ir.thepoo7an.chand.model.AssetHistoryResult
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.ThemeMode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -45,34 +52,94 @@ class PreferencesSerializationTest {
 
         val initial = repo.getPreferences()
         assertEquals(ThemeMode.AMOLED, initial.themeMode)
-        assertEquals(AppLanguage.EN, initial.language)
+        assertEquals(AppLanguage.FA, initial.language)
+        assertTrue(initial.usePersianDigits)
         assertTrue(initial.widgetTranslucent)
         assertEquals("USD", initial.widgetHeroAssetId)
         assertEquals(BuildConfig.GITHUB_REPOSITORY, initial.githubRepoSlug)
 
         repo.setThemeMode(ThemeMode.DARK)
-        repo.setLanguage(AppLanguage.FA)
+        repo.setLanguage(AppLanguage.EN)
         repo.setIsGridView(false)
         repo.setRefreshInterval(60)
         repo.setWidgetTranslucent(false)
         repo.setWidgetOpacityPercent(45)
         repo.setWidgetHeroAssetId("COIN_EMAMI")
-        repo.setGithubRepoSlug("  thepoo7an/Chand  ")
+        repo.setGithubRepoSlug("  thepoo7an/chand-iran-currency-gold-crypto  ")
         repo.togglePin("USD")
         repo.togglePin("SOL")
 
         val updated = repo.getPreferences()
         assertEquals(ThemeMode.DARK, updated.themeMode)
-        assertEquals(AppLanguage.FA, updated.language)
-        assertTrue(updated.usePersianDigits)
+        assertEquals(AppLanguage.EN, updated.language)
+        assertFalse(updated.usePersianDigits)
         assertFalse(updated.isGridView)
         assertEquals(60, updated.refreshIntervalSeconds)
         assertFalse(updated.widgetTranslucent)
         assertEquals(45, updated.widgetOpacityPercent)
         assertEquals("COIN_EMAMI", updated.widgetHeroAssetId)
-        assertEquals("thepoo7an/Chand", updated.githubRepoSlug)
+        assertEquals("thepoo7an/chand-iran-currency-gold-crypto", updated.githubRepoSlug)
         assertFalse("USD" in updated.pinnedIds)
         assertTrue("SOL" in updated.pinnedIds)
+    }
+
+    @Test
+    fun `language defaults to FA, honors saved EN and FA across restarts, falls back on invalid value, and keeps digits separate`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. Fresh install defaults to FA + AMOLED, with EN unaffected once saved across DataStore restart
+        val fileEn = tmpDir.newFile("lang_en_${System.nanoTime()}.preferences_pb")
+        val scopeEn1 = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val repoEn1 = PreferencesRepository(context, PreferenceDataStoreFactory.create(scope = scopeEn1) { fileEn })
+        val fresh = repoEn1.getPreferences()
+        assertEquals(AppLanguage.FA, fresh.language)
+        assertEquals(ThemeMode.AMOLED, fresh.themeMode)
+        assertTrue(fresh.usePersianDigits)
+
+        repoEn1.setLanguage(AppLanguage.EN)
+        assertEquals(AppLanguage.EN, repoEn1.getPreferences().language)
+        scopeEn1.coroutineContext[Job]?.cancelAndJoin()
+
+        // Simulate app restart with a new DataStore & repository pointing to the same file
+        val scopeEn2 = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val repoEn2 = PreferencesRepository(context, PreferenceDataStoreFactory.create(scope = scopeEn2) { fileEn })
+        val afterRestartEn = repoEn2.getPreferences()
+        assertEquals(AppLanguage.EN, afterRestartEn.language)
+        assertFalse(afterRestartEn.usePersianDigits)
+
+        // Separate digits toggle survives restart in EN
+        repoEn2.setUsePersianDigits(true)
+        scopeEn2.coroutineContext[Job]?.cancelAndJoin()
+
+        val scopeEn3 = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val repoEn3 = PreferencesRepository(context, PreferenceDataStoreFactory.create(scope = scopeEn3) { fileEn })
+        assertEquals(AppLanguage.EN, repoEn3.getPreferences().language)
+        assertTrue(repoEn3.getPreferences().usePersianDigits)
+        scopeEn3.coroutineContext[Job]?.cancelAndJoin()
+
+        // 2. Explicitly saved FA + separate Persian digits OFF survives restart
+        val fileFa = tmpDir.newFile("lang_fa_${System.nanoTime()}.preferences_pb")
+        val scopeFa1 = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val repoFa1 = PreferencesRepository(context, PreferenceDataStoreFactory.create(scope = scopeFa1) { fileFa })
+        repoFa1.setLanguage(AppLanguage.FA)
+        repoFa1.setUsePersianDigits(false)
+        scopeFa1.coroutineContext[Job]?.cancelAndJoin()
+
+        val scopeFa2 = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val repoFa2 = PreferencesRepository(context, PreferenceDataStoreFactory.create(scope = scopeFa2) { fileFa })
+        val afterRestartFa = repoFa2.getPreferences()
+        assertEquals(AppLanguage.FA, afterRestartFa.language)
+        assertFalse(afterRestartFa.usePersianDigits)
+        scopeFa2.coroutineContext[Job]?.cancelAndJoin()
+
+        // 3. Invalid persisted language string falls back safely to FA
+        val fileInvalid = tmpDir.newFile("lang_invalid_${System.nanoTime()}.preferences_pb")
+        val scopeInvalid = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val dsInvalid = PreferenceDataStoreFactory.create(scope = scopeInvalid) { fileInvalid }
+        dsInvalid.edit { it[stringPreferencesKey("language")] = "UNSUPPORTED_LOCALE" }
+        val repoInvalid = PreferencesRepository(context, dsInvalid)
+        assertEquals(AppLanguage.FA, repoInvalid.getPreferences().language)
+        scopeInvalid.coroutineContext[Job]?.cancelAndJoin()
     }
 
     @Test

@@ -82,7 +82,10 @@ object LiveConfigRegistry {
             frankfurterSeriesUrlTemplates = cleanUrlList(ep.frankfurterSeriesUrlTemplates),
             openErLatestUrl = cleanUrl(ep.openErLatestUrl),
             goldSpotXauUrl = cleanUrl(ep.goldSpotXauUrl),
-            currencyCdnUrlTemplates = cleanUrlList(ep.currencyCdnUrlTemplates)
+            currencyCdnUrlTemplates = cleanUrlList(ep.currencyCdnUrlTemplates),
+            oilYahooChartUrlTemplates = cleanUrlList(ep.oilYahooChartUrlTemplates),
+            oilCnbcQuotesUrl = cleanUrl(ep.oilCnbcQuotesUrl),
+            oilEiaSpotUrl = cleanUrl(ep.oilEiaSpotUrl)
         )
 
         val v = raw.validation
@@ -140,7 +143,7 @@ object LiveConfigRegistry {
                     null
                 } else {
                     val safeCategory = when (extra.category) {
-                        AssetCategory.FIAT, AssetCategory.GOLD, AssetCategory.CRYPTO -> extra.category
+                        AssetCategory.FIAT, AssetCategory.GOLD, AssetCategory.CRYPTO, AssetCategory.OIL -> extra.category
                         AssetCategory.ALL, AssetCategory.PINNED -> AssetCategory.CRYPTO
                     }
                     RemoteExtraAsset(

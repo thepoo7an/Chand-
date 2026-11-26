@@ -11,6 +11,8 @@ import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.RemoteAppConfig
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.model.TimeRange
+import ir.thepoo7an.chand.network.AndroidApkPackageInspector
+import ir.thepoo7an.chand.network.AppUpdateInfo
 import ir.thepoo7an.chand.network.AppUpdateService
 import ir.thepoo7an.chand.network.AppUpdateState
 import ir.thepoo7an.chand.network.HistoryNormalizer
@@ -42,7 +44,9 @@ class MarketRepository(
     private val context: Context,
     private val prefsRepo: PreferencesRepository,
     private val remote: MarketDataSource = MarketRemoteDataSource(),
-    private val updateService: AppUpdateService = AppUpdateService(),
+    private val updateService: AppUpdateService = AppUpdateService(
+        apkInspector = AndroidApkPackageInspector(context)
+    ),
     private val remoteConfigService: RemoteConfigService = RemoteConfigService(),
     private val clockMillis: () -> Long = { System.currentTimeMillis() }
 ) {
@@ -95,7 +99,7 @@ class MarketRepository(
 
         if (cached != null && cached.assets.isNotEmpty()) {
             val cachedMarked = cached.assets.map { asset ->
-                if (asset.priceToman <= 0.0 || asset.freshness == DataFreshness.UNAVAILABLE) {
+                if (!asset.hasUsablePrimaryPrice || asset.freshness == DataFreshness.UNAVAILABLE) {
                     asset.copy(freshness = DataFreshness.UNAVAILABLE)
                 } else {
                     asset.copy(freshness = DataFreshness.CACHED)
@@ -269,14 +273,17 @@ class MarketRepository(
         updateService.checkForUpdate(repoSlug)
 
     suspend fun downloadUpdateApk(
-        downloadUrl: String,
+        info: AppUpdateInfo,
         destinationFile: File,
-        expectedSizeBytes: Long = 0L,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
     ): File = updateService.downloadApk(
-        downloadUrl = downloadUrl,
+        downloadUrl = info.downloadUrl,
         destinationFile = destinationFile,
-        expectedSizeBytes = expectedSizeBytes,
+        expectedSizeBytes = info.matchedApkSizeBytes,
+        expectedSha256 = info.expectedSha256,
+        expectedPackageName = info.expectedPackageName,
+        expectedVersionCode = info.latestVersionCode,
+        currentVersionCode = info.currentVersionCode,
         onProgress = onProgress
     )
 

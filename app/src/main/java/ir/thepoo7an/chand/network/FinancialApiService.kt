@@ -144,7 +144,8 @@ class FinancialApiService(
     data class SourcedFxSnapshot(
         val candidatesBySymbol: Map<String, List<MarketPriceMapper.PriceCandidate>>,
         val consensusRates: Map<String, MarketPriceMapper.ConsensusResult>,
-        val goldSpotXauCandidates: List<MarketPriceMapper.PriceCandidate>
+        val goldSpotXauCandidates: List<MarketPriceMapper.PriceCandidate>,
+        val failedProviders: Set<String> = emptySet()
     )
 
     suspend fun fetchLiveUsdRateSnapshot(nowMillis: Long = System.currentTimeMillis()): SourcedFxSnapshot =
@@ -171,6 +172,11 @@ class FinancialApiService(
                     val cdn = cdnDeferred.await()
                     val frankfurter = frankfurterDeferred.await()
 
+                val failedProviders = LinkedHashSet<String>()
+                if (frankfurter == null || frankfurter.rates.isEmpty()) failedProviders.add("Frankfurter")
+                if (cdn == null || cdn.usd.isEmpty()) failedProviders.add("CurrencyAPI")
+                if (openEr == null || openEr.rates.isEmpty()) failedProviders.add("OpenER")
+
                 val candidates = LinkedHashMap<String, MutableList<MarketPriceMapper.PriceCandidate>>()
 
                 if (frankfurter != null && frankfurter.rates.isNotEmpty()) {
@@ -190,7 +196,7 @@ class FinancialApiService(
                 }
 
                 if (cdn != null && cdn.usd.isNotEmpty()) {
-                    val ts = parseDailyUtcTimestampMillis(cdn.date, hourUtc = 12, nowMillis = nowMillis)
+                    val ts = parseDailyUtcTimestampMillis(cdn.date, hourUtc = 0, nowMillis = nowMillis)
                     cdn.usd.forEach { (k, v) ->
                         if (v > 0.0 && v.isFinite()) {
                             candidates.getOrPut(k.uppercase(Locale.US)) { mutableListOf() }.add(
@@ -206,7 +212,7 @@ class FinancialApiService(
                 }
 
                 if (openEr != null && openEr.rates.isNotEmpty()) {
-                    val ts = if (openEr.timeLastUpdateUnix > 0L) openEr.timeLastUpdateUnix * 1000L else nowMillis
+                    val ts = if (openEr.timeLastUpdateUnix > 0L) openEr.timeLastUpdateUnix * 1000L else 0L
                     openEr.rates.forEach { (k, v) ->
                         if (v > 0.0 && v.isFinite()) {
                             candidates.getOrPut(k.uppercase(Locale.US)) { mutableListOf() }.add(
@@ -227,7 +233,8 @@ class FinancialApiService(
                         MarketPriceMapper.validateCrossSourcePrices(
                             candidates = list,
                             thresholdPct = MarketValidationConfig.effectiveFiatDisagreementThresholdPct(),
-                            nowMillis = nowMillis
+                            nowMillis = nowMillis,
+                            staleMaxAgeMillis = MarketValidationConfig.effectiveFiatGoldLiveMaxAgeMillis()
                         )?.let { consensusMap[sym] = it }
                     }
                 }
@@ -237,7 +244,7 @@ class FinancialApiService(
                 if (xauPerUsd != null && xauPerUsd > 0.0) {
                     val usdPerOz = 1.0 / xauPerUsd
                     if (usdPerOz in 1000.0..10_000.0) {
-                        val cdnTs = parseDailyUtcTimestampMillis(cdn?.date.orEmpty(), hourUtc = 12, nowMillis = nowMillis)
+                        val cdnTs = parseDailyUtcTimestampMillis(cdn?.date.orEmpty(), hourUtc = 0, nowMillis = nowMillis)
                         xauCandidates.add(
                             MarketPriceMapper.PriceCandidate(
                                 sourceName = "CurrencyAPI",
@@ -252,7 +259,8 @@ class FinancialApiService(
                 SourcedFxSnapshot(
                     candidatesBySymbol = candidates,
                     consensusRates = consensusMap,
-                    goldSpotXauCandidates = xauCandidates
+                    goldSpotXauCandidates = xauCandidates,
+                    failedProviders = failedProviders
                 )
             }
             }
@@ -274,7 +282,7 @@ class FinancialApiService(
                     .ifBlank { DEFAULT_GOLD_SPOT_URL }
                 val resp = safeRetry(RequestProfile.FAST_QUOTE) { quoteApi.getGoldSpotXau(goldUrl) }
                 if (resp != null && resp.price in 1000.0..10_000.0) {
-                    val ts = parseIsoTimestampMillis(resp.updatedAt) ?: nowMillis
+                    val ts = parseIsoTimestampMillis(resp.updatedAt) ?: 0L
                     MarketPriceMapper.PriceCandidate(
                         sourceName = "GoldAPI",
                         price = resp.price,
@@ -560,18 +568,20 @@ class FinancialApiService(
             nowMillis: Long
         ): Long {
             val clean = dateStr.trim().take(10)
-            if (clean.length < 10) return nowMillis
+            if (clean.length < 10) return 0L
             val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
                 timeZone = TimeZone.getTimeZone("UTC")
+                isLenient = false
             }
-            val parsedMidnight = runCatching { sdf.parse(clean)?.time }.getOrNull() ?: return nowMillis
-            val todayMidnight = runCatching {
-                sdf.parse(sdf.format(Date(nowMillis)))?.time
-            }.getOrNull()
-            return if (todayMidnight != null && parsedMidnight >= todayMidnight) {
-                nowMillis
-            } else {
-                minOf(parsedMidnight + hourUtc.toLong() * 3600_000L, nowMillis)
+            val parsedMidnight = runCatching { sdf.parse(clean)?.time }.getOrNull() ?: return 0L
+            if (parsedMidnight > nowMillis + MarketValidationConfig.FUTURE_TIMESTAMP_REJECT_TOLERANCE_MILLIS) {
+                return 0L
+            }
+            val target = parsedMidnight + hourUtc.coerceIn(0, 23).toLong() * 3600_000L
+            return when {
+                target <= nowMillis -> target
+                parsedMidnight <= nowMillis -> parsedMidnight
+                else -> 0L
             }
         }
 

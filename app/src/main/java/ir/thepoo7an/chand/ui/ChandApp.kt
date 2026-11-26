@@ -73,6 +73,7 @@ import ir.thepoo7an.chand.network.AppUpdateInstaller
 import ir.thepoo7an.chand.network.AppUpdateState
 import ir.thepoo7an.chand.network.InstallLaunchResult
 import ir.thepoo7an.chand.ui.components.AssetDetailSheet
+import ir.thepoo7an.chand.ui.components.MarketSourceBreakdownSheet
 import ir.thepoo7an.chand.ui.components.SettingsSheet
 import ir.thepoo7an.chand.ui.components.UpdateCatalogDialog
 import ir.thepoo7an.chand.ui.components.WatchlistSheet
@@ -96,6 +97,7 @@ fun ChandApp(
     val selectedCategory by viewModel.selectedCategory.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedDetailAsset by viewModel.selectedAssetForDetail.collectAsStateWithLifecycle()
+    val selectedSourceBreakdownAsset by viewModel.selectedAssetForSourceBreakdown.collectAsStateWithLifecycle()
     val selectedTimeRange by viewModel.selectedTimeRange.collectAsStateWithLifecycle()
     val historyPoints by viewModel.historyPoints.collectAsStateWithLifecycle()
     val historySourceLabel by viewModel.historySourceLabel.collectAsStateWithLifecycle()
@@ -115,7 +117,7 @@ fun ChandApp(
     var showWatchlistSheet by remember { mutableStateOf(false) }
 
     fun triggerApkInstall(apkFile: File, info: AppUpdateInfo) {
-        val result = AppUpdateInstaller.launchInstallOrRequestPermission(context, apkFile)
+        val result = AppUpdateInstaller.launchInstallOrRequestPermission(context, apkFile, info)
         viewModel.handleInstallLaunchResult(result, info)
         if (result == InstallLaunchResult.NEEDS_UNKNOWN_SOURCES_PERMISSION) {
             viewModel.markAwaitingInstallPermission()
@@ -270,6 +272,7 @@ fun ChandApp(
                                         onTogglePin = viewModel::togglePin,
                                         onToggleGridView = viewModel::setIsGridView,
                                         onAssetClick = viewModel::openAssetDetail,
+                                        onAssetPriceClick = viewModel::openSourceBreakdown,
                                         onRefreshClick = { viewModel.refreshNow(silent = false) }
                                     )
                                 }
@@ -343,7 +346,17 @@ fun ChandApp(
                     viewModel.closeAssetDetail()
                     navigateTo(ChandRoute.Converter)
                 },
+                onSourceBreakdownClick = { viewModel.openSourceBreakdown(detailAsset) },
                 onDismiss = viewModel::closeAssetDetail
+            )
+        }
+
+        selectedSourceBreakdownAsset?.let { breakdownAsset ->
+            MarketSourceBreakdownSheet(
+                asset = breakdownAsset,
+                prefs = prefs,
+                strings = strings,
+                onDismiss = viewModel::closeSourceBreakdown
             )
         }
 

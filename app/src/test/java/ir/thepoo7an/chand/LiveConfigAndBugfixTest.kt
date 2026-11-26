@@ -114,14 +114,14 @@ class LiveConfigAndBugfixTest {
     @Test
     fun `RemoteConfigService orders candidates custom HTTPS then jsDelivr then GitHub Raw and rejects older APK incompatibility`() = runTest {
         val candidates = RemoteConfigService.buildCandidateUrls(
-            repoSlug = "thepoo7an/Chand-",
+            repoSlug = "thepoo7an/chand-iran-currency-gold-crypto",
             customConfigUrl = "https://custom.example.com/live.json"
         )
         assertEquals(
             listOf(
                 "https://custom.example.com/live.json",
-                "https://cdn.jsdelivr.net/gh/thepoo7an/Chand-@main/chand-live-config.json",
-                "https://raw.githubusercontent.com/thepoo7an/Chand-/main/chand-live-config.json"
+                "https://cdn.jsdelivr.net/gh/thepoo7an/chand-iran-currency-gold-crypto@main/chand-live-config.json",
+                "https://raw.githubusercontent.com/thepoo7an/chand-iran-currency-gold-crypto/main/chand-live-config.json"
             ),
             candidates
         )
@@ -141,7 +141,7 @@ class LiveConfigAndBugfixTest {
             .build()
         val service = RemoteConfigService(client)
         val res = service.fetchLiveConfig(
-            repoSlug = "thepoo7an/Chand-",
+            repoSlug = "thepoo7an/chand-iran-currency-gold-crypto",
             customConfigUrl = "https://custom.example.com/live.json",
             appVersionCode = 10
         )
@@ -200,7 +200,7 @@ class LiveConfigAndBugfixTest {
             remoteConfigService = RemoteConfigService(client)
         )
 
-        val syncResult = repo.syncLiveConfig("thepoo7an/Chand-", "https://cdn.example.com/live.json")
+        val syncResult = repo.syncLiveConfig("thepoo7an/chand-iran-currency-gold-crypto", "https://cdn.example.com/live.json")
         assertTrue(syncResult is RemoteConfigSyncResult.Applied)
         val applied = syncResult as RemoteConfigSyncResult.Applied
         assertEquals(3, applied.config.configVersion)

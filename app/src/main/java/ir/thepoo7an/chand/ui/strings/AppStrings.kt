@@ -2,6 +2,7 @@ package ir.thepoo7an.chand.ui.strings
 
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AssetCategory
+import ir.thepoo7an.chand.network.UpdateErrorReason
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.text.SimpleDateFormat
@@ -72,6 +73,7 @@ data class ChandStrings(
     val categoryFiat: String,
     val categoryGold: String,
     val categoryCrypto: String,
+    val categoryOil: String,
     val tomanAssetName: String,
     val chartInteractiveHint: String,
     val widgetSection: String,
@@ -129,7 +131,51 @@ data class ChandStrings(
     val liveConfigChangesTitle: String,
     val liveConfigOverridesActiveLabel: String,
     val liveConfigDefaultSummary: String,
-    val chartsDisabledNotice: String
+    val chartsDisabledNotice: String,
+    val updateErrorNetwork: String,
+    val updateErrorInvalidUrl: String,
+    val updateErrorHttpsFailed: String,
+    val updateErrorChecksumMismatch: String,
+    val updateErrorMetadataInvalid: String,
+    val updateErrorCorruptedApk: String,
+    val updateErrorWrongPackage: String,
+    val updateErrorOlderVersion: String,
+    val updateErrorUnexpectedSigner: String,
+    val updateErrorInsufficientStorage: String,
+    val updateErrorUnreasonableSize: String,
+    val updateErrorIncompleteDownload: String,
+    val updateErrorInstallFailed: String,
+    val sourceBreakdownTitle: String,
+    val sourceBreakdownSubtitle: String,
+    val calculatedMainPriceLabel: String,
+    val primaryMainPriceLabel: String,
+    val lastSuccessfulUpdateLabel: String,
+    val configuredSourcesCountPrefix: String,
+    val sourceTimestampLabel: String,
+    val sourceTimestampUnavailable: String,
+    val sourceContributedYes: String,
+    val sourceContributedNo: String,
+    val sourcePrimaryTag: String,
+    val sourceRawQuotePrefix: String,
+    val sourceUnitCurrencyToman: String,
+    val sourceStatusIncluded: String,
+    val sourceStatusRejected: String,
+    val sourceStatusDelayed: String,
+    val sourceStatusUnavailable: String,
+    val sourceStatusInvalid: String,
+    val exclusionReasonValidationFailure: String,
+    val exclusionReasonDisagreement: String,
+    val exclusionReasonStale: String,
+    val exclusionReasonInvalid: String,
+    val exclusionReasonMissingData: String,
+    val exclusionReasonProviderFailure: String,
+    val sourceNoRecordsNotice: String,
+    val sourceTapHint: String,
+    val usdPerBarrelUnit: String,
+    val usdPerBarrelShortUnit: String,
+    val oilTomanEstimatePrefix: String,
+    val change24hUnavailable: String,
+    val sourceUnitCurrencyUsdPerBarrel: String
 ) {
     fun categoryLabel(category: AssetCategory): String = when (category) {
         AssetCategory.ALL -> categoryAll
@@ -137,6 +183,23 @@ data class ChandStrings(
         AssetCategory.FIAT -> categoryFiat
         AssetCategory.GOLD -> categoryGold
         AssetCategory.CRYPTO -> categoryCrypto
+        AssetCategory.OIL -> categoryOil
+    }
+
+    fun updateErrorMessage(reason: UpdateErrorReason): String = when (reason) {
+        UpdateErrorReason.NETWORK_FAILURE -> updateErrorNetwork
+        UpdateErrorReason.INVALID_URL -> updateErrorInvalidUrl
+        UpdateErrorReason.HTTPS_VALIDATION_FAILED -> updateErrorHttpsFailed
+        UpdateErrorReason.CHECKSUM_MISMATCH -> updateErrorChecksumMismatch
+        UpdateErrorReason.METADATA_INVALID -> updateErrorMetadataInvalid
+        UpdateErrorReason.CORRUPTED_APK -> updateErrorCorruptedApk
+        UpdateErrorReason.WRONG_PACKAGE_NAME -> updateErrorWrongPackage
+        UpdateErrorReason.OLDER_OR_EQUAL_VERSION -> updateErrorOlderVersion
+        UpdateErrorReason.UNEXPECTED_SIGNER -> updateErrorUnexpectedSigner
+        UpdateErrorReason.INSUFFICIENT_STORAGE -> updateErrorInsufficientStorage
+        UpdateErrorReason.UNREASONABLE_FILE_SIZE -> updateErrorUnreasonableSize
+        UpdateErrorReason.INCOMPLETE_DOWNLOAD -> updateErrorIncompleteDownload
+        UpdateErrorReason.INSTALL_FAILED -> updateErrorInstallFailed
     }
 }
 
@@ -202,6 +265,7 @@ val FaStrings = ChandStrings(
     categoryFiat = "ارزها",
     categoryGold = "طلا و سکه",
     categoryCrypto = "رمزارز",
+    categoryOil = "نفت خام",
     tomanAssetName = "تومان ایران",
     chartInteractiveHint = "برای مشاهده قیمت دقیق روی نمودار بکشید",
     widgetSection = "ویجت صفحه اصلی",
@@ -259,7 +323,51 @@ val FaStrings = ChandStrings(
     liveConfigChangesTitle = "تغییرات اعمال‌شده روی این نسخه",
     liveConfigOverridesActiveLabel = "قانون فعال",
     liveConfigDefaultSummary = "تنظیمات لحظه‌ای منابع و دارایی‌ها به‌روز است",
-    chartsDisabledNotice = "نمایش نمودار تاریخی موقتاً توسط تنظیمات آنلاین غیرفعال شده است"
+    chartsDisabledNotice = "نمایش نمودار تاریخی موقتاً توسط تنظیمات آنلاین غیرفعال شده است",
+    updateErrorNetwork = "خطای شبکه هنگام دریافت بروزرسانی. اتصال اینترنت را بررسی و دوباره تلاش کنید.",
+    updateErrorInvalidUrl = "نشانی دانلود بروزرسانی نامعتبر یا از دامنه غیرمطمئن است.",
+    updateErrorHttpsFailed = "ارتباط امن HTTPS برقرار نشد یا تغییر مسیر ناامن به HTTP شناسایی شد.",
+    updateErrorChecksumMismatch = "عدم تطابق اثر انگشت SHA-256 فایل؛ بسته دانلودشده ممکن است دستکاری شده باشد.",
+    updateErrorMetadataInvalid = "اطلاعات امنیتی و هش انتشار ناقص یا نامعتبر است؛ دانلود مستقیم انجام نشد.",
+    updateErrorCorruptedApk = "فایل APK دانلودشده آسیب دیده یا ساختار معتبری ندارد.",
+    updateErrorWrongPackage = "شناسه بسته فایل دانلودشده با شناسه برنامه Chand?! (ir.thepoo7an.chand) مطابقت ندارد.",
+    updateErrorOlderVersion = "نسخه فایل دانلودشده جدیدتر از نسخه فعلی نیست و نصب مسدود شد.",
+    updateErrorUnexpectedSigner = "امضای دیجیتال فایل با گواهی رسمی انتشار مطابقت ندارد.",
+    updateErrorInsufficientStorage = "فضای ذخیره‌سازی دستگاه برای دانلود و بررسی بسته بروزرسانی کافی نیست.",
+    updateErrorUnreasonableSize = "حجم فایل بروزرسانی خارج از محدوده مجاز و غیرعادی است.",
+    updateErrorIncompleteDownload = "دانلود فایل بروزرسانی ناقص یا خالی است. لطفاً دوباره تلاش کنید.",
+    updateErrorInstallFailed = "باز کردن نصب‌کننده اندروید با خطا مواجه شد.",
+    sourceBreakdownTitle = "جزئیات منابع نرخ بازار",
+    sourceBreakdownSubtitle = "نرخ‌های گزارش‌شده از منابع فعال و وضعیت مشارکت در قیمت نهایی",
+    calculatedMainPriceLabel = "قیمت نهایی محاسبه‌شده",
+    primaryMainPriceLabel = "قیمت نهایی نمایش‌داده‌شده",
+    lastSuccessfulUpdateLabel = "آخرین بروزرسانی موفق",
+    configuredSourcesCountPrefix = "منابع پیکربندی‌شده:",
+    sourceTimestampLabel = "زمان منبع",
+    sourceTimestampUnavailable = "زمان منبع در دسترس نیست",
+    sourceContributedYes = "موثر در قیمت نهایی",
+    sourceContributedNo = "بدون اثر در قیمت نهایی",
+    sourcePrimaryTag = "منبع اصلی",
+    sourceRawQuotePrefix = "نرخ پایه:",
+    sourceUnitCurrencyToman = "تومان (TMN)",
+    sourceStatusIncluded = "پذیرفته‌شده",
+    sourceStatusRejected = "ردشده",
+    sourceStatusDelayed = "با تأخیر",
+    sourceStatusUnavailable = "ناموجود",
+    sourceStatusInvalid = "نامعتبر",
+    exclusionReasonValidationFailure = "عدم عبور از اعتبارسنجی",
+    exclusionReasonDisagreement = "اختلاف بیش از حد مجاز با سایر منابع",
+    exclusionReasonStale = "داده قدیمی و منقضی (تأخیر منبع)",
+    exclusionReasonInvalid = "پاسخ نامعتبر یا خارج از محدوده مجاز",
+    exclusionReasonMissingData = "عدم وجود داده برای این دارایی",
+    exclusionReasonProviderFailure = "عدم پاسخگویی ارائه‌دهنده",
+    sourceNoRecordsNotice = "جزئیات منابع برای این نرخ پایه آفلاین در دسترس نیست.",
+    sourceTapHint = "مشاهده منابع",
+    usdPerBarrelUnit = "دلار / بشکه",
+    usdPerBarrelShortUnit = "USD/bbl",
+    oilTomanEstimatePrefix = "تخمین بر اساس دلار:",
+    change24hUnavailable = "تغییر ۲۴ساعت ناموجود",
+    sourceUnitCurrencyUsdPerBarrel = "دلار / بشکه (USD/bbl)"
 )
 
 val EnStrings = ChandStrings(
@@ -324,6 +432,7 @@ val EnStrings = ChandStrings(
     categoryFiat = "Currencies",
     categoryGold = "Gold & Coin",
     categoryCrypto = "Crypto",
+    categoryOil = "Crude Oil",
     tomanAssetName = "Iranian Toman",
     chartInteractiveHint = "Drag across the chart to inspect price points",
     widgetSection = "Home Screen Widgets",
@@ -381,7 +490,51 @@ val EnStrings = ChandStrings(
     liveConfigChangesTitle = "Live Changes Applied Now",
     liveConfigOverridesActiveLabel = "active rule(s)",
     liveConfigDefaultSummary = "Online endpoints and market rules are up to date",
-    chartsDisabledNotice = "Historical charts are temporarily paused via online configuration"
+    chartsDisabledNotice = "Historical charts are temporarily paused via online configuration",
+    updateErrorNetwork = "Network error while fetching update. Check your connection and retry.",
+    updateErrorInvalidUrl = "Invalid or untrusted update download URL.",
+    updateErrorHttpsFailed = "HTTPS verification failed or an insecure HTTP redirect downgrade was blocked.",
+    updateErrorChecksumMismatch = "SHA-256 checksum mismatch — downloaded APK does not match trusted release metadata.",
+    updateErrorMetadataInvalid = "Release verification metadata is missing, incomplete, or inconsistent.",
+    updateErrorCorruptedApk = "Downloaded APK archive is corrupted or structurally invalid.",
+    updateErrorWrongPackage = "APK package name does not match ir.thepoo7an.chand.",
+    updateErrorOlderVersion = "APK version code is not newer than the currently installed build.",
+    updateErrorUnexpectedSigner = "APK signing certificate does not match the trusted production release key.",
+    updateErrorInsufficientStorage = "Insufficient device storage available to download and verify the update.",
+    updateErrorUnreasonableSize = "Update APK size is outside allowed safety bounds.",
+    updateErrorIncompleteDownload = "Downloaded APK was empty or incomplete. Please retry.",
+    updateErrorInstallFailed = "Could not launch the Android package installer.",
+    sourceBreakdownTitle = "Market Source Breakdown",
+    sourceBreakdownSubtitle = "Reported prices, source timestamps, and inclusion status across active providers",
+    calculatedMainPriceLabel = "Calculated Main Price",
+    primaryMainPriceLabel = "Displayed Main Price",
+    lastSuccessfulUpdateLabel = "Last Successful Update",
+    configuredSourcesCountPrefix = "Configured Sources:",
+    sourceTimestampLabel = "Source Timestamp",
+    sourceTimestampUnavailable = "Source timestamp unavailable",
+    sourceContributedYes = "Contributed to final price",
+    sourceContributedNo = "Did not contribute to final price",
+    sourcePrimaryTag = "Primary",
+    sourceRawQuotePrefix = "Raw quote:",
+    sourceUnitCurrencyToman = "Toman (TMN)",
+    sourceStatusIncluded = "INCLUDED",
+    sourceStatusRejected = "REJECTED",
+    sourceStatusDelayed = "DELAYED",
+    sourceStatusUnavailable = "UNAVAILABLE",
+    sourceStatusInvalid = "INVALID",
+    exclusionReasonValidationFailure = "Validation failure",
+    exclusionReasonDisagreement = "Excessive disagreement",
+    exclusionReasonStale = "Stale data",
+    exclusionReasonInvalid = "Invalid response",
+    exclusionReasonMissingData = "Missing data",
+    exclusionReasonProviderFailure = "No provider response",
+    sourceNoRecordsNotice = "Per-source details are unavailable for offline reference baseline rates.",
+    sourceTapHint = "View sources",
+    usdPerBarrelUnit = "USD / barrel",
+    usdPerBarrelShortUnit = "USD/bbl",
+    oilTomanEstimatePrefix = "Est. via USD/TMN:",
+    change24hUnavailable = "24h chg N/A",
+    sourceUnitCurrencyUsdPerBarrel = "USD / barrel"
 )
 
 fun stringsFor(language: AppLanguage): ChandStrings =
@@ -498,6 +651,26 @@ object NumberFormatters {
             else -> fourDecimalFmt.format(amount)
         }
         return "$" + applyDigits(formatted, usePersianDigits)
+    }
+
+    fun formatUsdDeltaWithArrow(
+        changeUsd: Double?,
+        changePct: Double,
+        usePersianDigits: Boolean
+    ): String {
+        val arrow = when {
+            (changeUsd != null && changeUsd > 0.0001) || changePct > 0.005 -> "↑"
+            (changeUsd != null && changeUsd < -0.0001) || changePct < -0.005 -> "↓"
+            else -> "• "
+        }
+        val body = if (changeUsd != null && changeUsd.isFinite() && abs(changeUsd) >= 0.01) {
+            "$${twoDecimalFmt.format(abs(changeUsd))}"
+        } else if (changePct.isFinite() && abs(changePct) > 0.005) {
+            "${String.format(Locale.US, "%.2f", abs(changePct))}%"
+        } else {
+            "0.00%"
+        }
+        return applyDigits("$arrow$body", usePersianDigits)
     }
 
     fun formatPercent(change: Double, usePersianDigits: Boolean): String {

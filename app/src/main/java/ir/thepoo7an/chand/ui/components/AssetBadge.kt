@@ -53,6 +53,13 @@ fun AssetBadge(
                 modifier = modifier
             )
         }
+        category == AssetCategory.OIL -> {
+            OilDropBadge(
+                accentColor = Color(accentHex),
+                size = size,
+                modifier = modifier
+            )
+        }
         else -> {
             CircularFlagBadge(
                 assetId = assetId,
@@ -61,6 +68,66 @@ fun AssetBadge(
                 modifier = modifier
             )
         }
+    }
+}
+
+@Composable
+private fun OilDropBadge(
+    accentColor: Color,
+    size: Dp,
+    modifier: Modifier = Modifier
+) {
+    Canvas(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+    ) {
+        val w = this.size.width
+        val h = this.size.height
+        val r = minOf(w, h) / 2f
+
+        drawCircle(
+            brush = Brush.linearGradient(
+                colors = listOf(accentColor, Color(0xFF0F172A)),
+                start = Offset(0f, 0f),
+                end = Offset(w, h)
+            ),
+            radius = r,
+            center = Offset(w / 2f, h / 2f)
+        )
+
+        drawCircle(
+            color = Color(0xFFF59E0B).copy(alpha = 0.40f),
+            radius = r * 0.86f,
+            center = Offset(w / 2f, h / 2f),
+            style = Stroke(width = 1.2.dp.toPx())
+        )
+
+        val dropPath = Path().apply {
+            val cx = w / 2f
+            val topY = h * 0.21f
+            val bottomY = h * 0.78f
+            moveTo(cx, topY)
+            cubicTo(
+                cx + w * 0.22f, h * 0.46f,
+                cx + w * 0.23f, h * 0.74f,
+                cx, bottomY
+            )
+            cubicTo(
+                cx - w * 0.23f, h * 0.74f,
+                cx - w * 0.22f, h * 0.46f,
+                cx, topY
+            )
+            close()
+        }
+        drawPath(
+            path = dropPath,
+            brush = Brush.verticalGradient(
+                colors = listOf(Color(0xFFFBBF24), Color(0xFFD97706)),
+                startY = h * 0.22f,
+                endY = h * 0.78f
+            )
+        )
     }
 }
 

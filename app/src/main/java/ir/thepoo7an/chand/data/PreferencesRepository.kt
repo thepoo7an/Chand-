@@ -73,7 +73,7 @@ class PreferencesRepository(
 
         val language = prefs[Keys.LANGUAGE]?.let { name ->
             AppLanguage.entries.firstOrNull { it.name == name }
-        } ?: AppLanguage.EN
+        } ?: AppLanguage.FA
 
         val usePersianDigits = prefs[Keys.USE_PERSIAN_DIGITS] ?: (language == AppLanguage.FA)
         val isGridView = prefs[Keys.IS_GRID_VIEW] ?: true

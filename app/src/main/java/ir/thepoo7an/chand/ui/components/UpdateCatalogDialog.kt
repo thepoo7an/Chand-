@@ -63,6 +63,7 @@ import ir.thepoo7an.chand.network.AppUpdateDownloadState
 import ir.thepoo7an.chand.network.AppUpdateInfo
 import ir.thepoo7an.chand.network.AppUpdateInstaller
 import ir.thepoo7an.chand.network.AppUpdateService
+import ir.thepoo7an.chand.network.UpdateSecurityValidator
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import ir.thepoo7an.chand.ui.theme.LocalMarketColors
@@ -483,6 +484,9 @@ fun UpdateCatalogDialog(
                     }
 
                     errorThis != null -> {
+                        val fallbackUrl = info.releasePageUrl
+                            .takeIf { UpdateSecurityValidator.isSafeExternalHttpsUrl(it) }
+                            ?: info.downloadUrl.takeIf { UpdateSecurityValidator.isSafeExternalHttpsUrl(it) }
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = marketColors.loss.copy(alpha = 0.12f),
@@ -494,51 +498,58 @@ fun UpdateCatalogDialog(
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
+                                    verticalAlignment = Alignment.Top,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Outlined.ErrorOutline,
                                         contentDescription = null,
                                         tint = marketColors.loss,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier
+                                            .padding(top = 2.dp)
+                                            .size(18.dp)
                                     )
                                     Text(
-                                        text = strings.downloadFailedLabel,
-                                        style = MaterialTheme.typography.labelLarge,
+                                        text = strings.updateErrorMessage(errorThis.reason),
+                                        style = MaterialTheme.typography.bodySmall,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = marketColors.loss
+                                        color = marketColors.loss,
+                                        modifier = Modifier.testTag("update_error_message")
                                     )
                                 }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Button(
-                                        onClick = { onStartDownload(info) },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.primary
-                                        ),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .minimumInteractiveComponentSize()
-                                            .testTag("retry_download_button")
-                                    ) {
-                                        Text(strings.retryDownloadButton, fontSize = 12.sp, maxLines = 1)
+                                    if (info.hasDirectApkAsset) {
+                                        Button(
+                                            onClick = { onStartDownload(info) },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.primary
+                                            ),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .minimumInteractiveComponentSize()
+                                                .testTag("retry_download_button")
+                                        ) {
+                                            Text(strings.retryDownloadButton, fontSize = 12.sp, maxLines = 1)
+                                        }
                                     }
-                                    OutlinedButton(
-                                        onClick = {
-                                            runCatching {
-                                                context.startActivity(
-                                                    Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
-                                                )
-                                            }
-                                        },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .minimumInteractiveComponentSize()
-                                    ) {
-                                        Text(strings.openInBrowserFallback, fontSize = 12.sp, maxLines = 1)
+                                    if (!fallbackUrl.isNullOrBlank()) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                runCatching {
+                                                    context.startActivity(
+                                                        Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl))
+                                                    )
+                                                }
+                                            },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .minimumInteractiveComponentSize()
+                                        ) {
+                                            Text(strings.openInBrowserFallback, fontSize = 12.sp, maxLines = 1)
+                                        }
                                     }
                                 }
                             }
@@ -546,33 +557,53 @@ fun UpdateCatalogDialog(
                     }
 
                     else -> {
-                        Button(
-                            onClick = {
-                                if (info.hasDirectApkAsset) {
-                                    onStartDownload(info)
-                                } else {
+                        val safeBrowserFallback = info.releasePageUrl
+                            .takeIf { UpdateSecurityValidator.isSafeExternalHttpsUrl(it) }
+                            ?: info.downloadUrl.takeIf { UpdateSecurityValidator.isSafeExternalHttpsUrl(it) }
+                        if (info.hasDirectApkAsset) {
+                            Button(
+                                onClick = { onStartDownload(info) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("download_in_app_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = strings.downloadUpdateButton,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        } else if (!safeBrowserFallback.isNullOrBlank()) {
+                            Button(
+                                onClick = {
                                     runCatching {
                                         context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse(info.downloadUrl))
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(safeBrowserFallback))
                                         )
                                     }
-                                }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .minimumInteractiveComponentSize()
-                                .testTag("download_in_app_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Download,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (info.hasDirectApkAsset) strings.downloadUpdateButton else strings.openInBrowserFallback,
-                                fontWeight = FontWeight.Bold
-                            )
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("download_in_app_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Outlined.OpenInNew,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = strings.openInBrowserFallback,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }
@@ -583,12 +614,15 @@ fun UpdateCatalogDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (info.releasePageUrl.isNotBlank()) {
+                    val safeReleasePage = info.releasePageUrl.takeIf {
+                        UpdateSecurityValidator.isSafeExternalHttpsUrl(it)
+                    }
+                    if (!safeReleasePage.isNullOrBlank()) {
                         TextButton(
                             onClick = {
                                 runCatching {
                                     context.startActivity(
-                                        Intent(Intent.ACTION_VIEW, Uri.parse(info.releasePageUrl))
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(safeReleasePage))
                                     )
                                 }
                             }

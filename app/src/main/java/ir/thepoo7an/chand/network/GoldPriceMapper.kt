@@ -2,8 +2,11 @@ package ir.thepoo7an.chand.network
 
 import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.AssetHistoryPoint
+import ir.thepoo7an.chand.model.CandidateExclusionReason
+import ir.thepoo7an.chand.model.CandidateStatus
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.model.SourceCandidateRecord
 import kotlin.math.abs
 
 /**
@@ -36,33 +39,111 @@ internal object GoldPriceMapper {
         usdtSpark: List<Double>,
         cachedAssetsById: Map<String, MarketAsset>,
         nowMillis: Long,
-        computeTableDelta: (List<AssetHistoryPoint>, Double) -> Pair<Double, Double>? = { _, _ -> null }
+        computeTableDelta: (List<AssetHistoryPoint>, Double) -> Pair<Double, Double>? = { _, _ -> null },
+        tgjuFailed: Boolean = false,
+        binanceFailed: Boolean = false,
+        goldApiFailed: Boolean = false,
+        currencyApiFailed: Boolean = false
     ): List<MarketAsset> {
         val onsRaw = tgju["ons"]
         val allSpotCandidates = mutableListOf<MarketPriceMapper.PriceCandidate>()
-        goldSpotCandidates.filter { it.price in 1000.0..10_000.0 }.forEach { allSpotCandidates.add(it) }
-        paxgQuote?.priceUsd?.takeIf { it in 1000.0..10_000.0 }?.let { paxgPrice ->
+
+        goldSpotCandidates.forEach { cand ->
+            when {
+                cand.unavailabilityReason != null -> allSpotCandidates.add(cand)
+                cand.price.isFinite() && cand.price in 1000.0..10_000.0 -> allSpotCandidates.add(cand)
+                else -> allSpotCandidates.add(
+                    cand.copy(unavailabilityReason = CandidateExclusionReason.INVALID)
+                )
+            }
+        }
+        if (allSpotCandidates.none { it.sourceName == "GoldAPI" } && goldApiFailed) {
             allSpotCandidates.add(
                 MarketPriceMapper.PriceCandidate(
+                    sourceName = "GoldAPI",
+                    price = 0.0,
+                    unavailabilityReason = CandidateExclusionReason.PROVIDER_FAILURE
+                )
+            )
+        }
+        if (allSpotCandidates.none { it.sourceName == "CurrencyAPI" } && currencyApiFailed) {
+            allSpotCandidates.add(
+                MarketPriceMapper.PriceCandidate(
+                    sourceName = "CurrencyAPI",
+                    price = 0.0,
+                    unavailabilityReason = CandidateExclusionReason.PROVIDER_FAILURE
+                )
+            )
+        }
+
+        val hasPrimarySpot = allSpotCandidates.any { it.unavailabilityReason == null && it.isPrimary }
+        val paxgValid = paxgQuote?.priceUsd?.takeIf { it.isFinite() && it in 1000.0..10_000.0 }
+        when {
+            paxgValid != null -> allSpotCandidates.add(
+                MarketPriceMapper.PriceCandidate(
                     sourceName = "Binance PAXG",
-                    price = paxgPrice,
-                    isPrimary = allSpotCandidates.none { it.isPrimary },
-                    timestampMillis = paxgQuote.timestampMillis.takeIf { it > 0L } ?: nowMillis,
+                    price = paxgValid,
+                    isPrimary = !hasPrimarySpot,
+                    timestampMillis = paxgQuote.timestampMillis.coerceAtLeast(0L),
                     changePct = paxgQuote.changePct,
                     highToman = paxgQuote.highUsd?.let { it * usdToman },
                     lowToman = paxgQuote.lowUsd?.let { it * usdToman }
                 )
             )
+            paxgQuote?.priceUsd != null -> allSpotCandidates.add(
+                MarketPriceMapper.PriceCandidate(
+                    sourceName = "Binance PAXG",
+                    price = paxgQuote.priceUsd,
+                    isPrimary = false,
+                    timestampMillis = paxgQuote.timestampMillis.coerceAtLeast(0L),
+                    unavailabilityReason = CandidateExclusionReason.INVALID
+                )
+            )
+            else -> allSpotCandidates.add(
+                MarketPriceMapper.PriceCandidate(
+                    sourceName = "Binance PAXG",
+                    price = 0.0,
+                    isPrimary = false,
+                    unavailabilityReason = if (binanceFailed) {
+                        CandidateExclusionReason.PROVIDER_FAILURE
+                    } else {
+                        CandidateExclusionReason.MISSING_DATA
+                    }
+                )
+            )
         }
+
         val tgjuOnsUsd = (onsRaw?.priceToman ?: 0.0) * 10.0
-        if (tgjuOnsUsd in 1000.0..10_000.0) {
-            allSpotCandidates.add(
+        val hasActiveSpotAfterPaxg = allSpotCandidates.any { it.unavailabilityReason == null && it.isPrimary }
+        when {
+            onsRaw != null && tgjuOnsUsd.isFinite() && tgjuOnsUsd in 1000.0..10_000.0 -> allSpotCandidates.add(
                 MarketPriceMapper.PriceCandidate(
                     sourceName = "TGJU",
                     price = tgjuOnsUsd,
-                    isPrimary = allSpotCandidates.none { it.isPrimary },
-                    timestampMillis = onsRaw?.timestampMillis?.takeIf { it > 0L } ?: nowMillis,
-                    changePct = onsRaw?.changePct ?: 0.0
+                    isPrimary = !hasActiveSpotAfterPaxg,
+                    timestampMillis = onsRaw.timestampMillis.coerceAtLeast(0L),
+                    changePct = onsRaw.changePct
+                )
+            )
+            onsRaw != null -> allSpotCandidates.add(
+                MarketPriceMapper.PriceCandidate(
+                    sourceName = "TGJU",
+                    price = tgjuOnsUsd,
+                    isPrimary = false,
+                    timestampMillis = onsRaw.timestampMillis.coerceAtLeast(0L),
+                    unavailabilityReason = CandidateExclusionReason.INVALID
+                )
+            )
+            else -> allSpotCandidates.add(
+                MarketPriceMapper.PriceCandidate(
+                    sourceName = "TGJU",
+                    price = 0.0,
+                    isPrimary = false,
+                    unavailabilityReason = if (tgjuFailed) {
+                        CandidateExclusionReason.PROVIDER_FAILURE
+                    } else {
+                        CandidateExclusionReason.MISSING_DATA
+                    }
                 )
             )
         }
@@ -70,11 +151,13 @@ internal object GoldPriceMapper {
         val onsConsensus = MarketValidationHelpers.validateCrossSourcePrices(
             candidates = allSpotCandidates,
             thresholdPct = MarketValidationConfig.effectiveFiatDisagreementThresholdPct(),
-            nowMillis = nowMillis
+            nowMillis = nowMillis,
+            staleMaxAgeMillis = MarketValidationConfig.effectiveFiatGoldLiveMaxAgeMillis()
         )
         val hasRealOns = onsConsensus != null
         val onsUsd = onsConsensus?.price ?: MarketPriceMapper.DEFAULT_OFFLINE_ONS_USD
         val onsTs = onsConsensus?.sourceTimestampMillis ?: 0L
+        val safeUsdTs = usdSourceTimestampMillis.coerceAtLeast(0L)
         val onsRawFreshness = MarketValidationHelpers.deriveFreshness(
             category = AssetCategory.GOLD,
             fetchedThisRefresh = hasRealOns,
@@ -84,10 +167,7 @@ internal object GoldPriceMapper {
             nowMillis = nowMillis
         )
         val derivedGoldFreshness = DataFreshness.stalest(onsRawFreshness, usdBasisFreshness)
-        val derivedGoldTs = minOf(
-            onsTs.takeIf { it > 0L } ?: nowMillis,
-            usdSourceTimestampMillis.takeIf { it > 0L } ?: nowMillis
-        )
+        val derivedGoldTs = if (onsTs > 0L && safeUsdTs > 0L) minOf(onsTs, safeUsdTs) else 0L
 
         val gram24Theoretical = (onsUsd / MarketValidationConfig.TROY_OUNCE_GRAMS) * usdToman
         val gram18Theoretical = gram24Theoretical * (MarketValidationConfig.GOLD_18K_FINENESS_PER_MILLE / 1000.0)
@@ -103,7 +183,7 @@ internal object GoldPriceMapper {
                 val xauPrice = onsUsd * usdToman
                 val changePct = paxgQuote?.changePct ?: onsRaw?.changePct ?: usdChangePct
                 val changeToman = xauPrice * changePct / 100.0
-                val xauSource = onsConsensus?.acceptedSources?.joinToString("+")?.let { "$it + USD" }
+                val xauSource = onsConsensus?.sourceAttributionLabel?.let { "$it + USD" }
                     ?: "Offline Reference"
                 val xauHigh = paxgQuote?.highUsd?.takeIf { it > 0.0 }?.let { it * usdToman }
                 val xauLow = paxgQuote?.lowUsd?.takeIf { it > 0.0 }?.let { it * usdToman }
@@ -111,6 +191,22 @@ internal object GoldPriceMapper {
                     goldSpark.size >= 4 -> MarketValidationHelpers.scaleSeriesToCurrent(goldSpark, xauPrice)
                     usdtSpark.size >= 4 -> MarketValidationHelpers.scaleSeriesToCurrent(usdtSpark, xauPrice)
                     else -> emptyList()
+                }
+                val xauCandidateRecords = onsConsensus?.candidateRecords?.map { rec ->
+                    rec.copy(
+                        priceToman = rec.rawPrice?.let { it * usdToman },
+                        detail = rec.rawPrice?.let { "xauUsd=$it" } ?: rec.detail
+                    )
+                } ?: allSpotCandidates.map { cand ->
+                    SourceCandidateRecord(
+                        sourceName = cand.sourceName,
+                        priceToman = null,
+                        rawPrice = cand.price.takeIf { it.isFinite() && it > 0.0 },
+                        sourceTimestampMillis = cand.timestampMillis.coerceAtLeast(0L),
+                        isPrimary = cand.isPrimary,
+                        status = CandidateStatus.REJECTED,
+                        exclusionReason = cand.unavailabilityReason ?: CandidateExclusionReason.INVALID
+                    )
                 }
 
                 result.add(
@@ -135,7 +231,9 @@ internal object GoldPriceMapper {
                         sourceTimestampMillis = derivedGoldTs,
                         fetchedAtMillis = nowMillis,
                         disputed = onsConsensus?.disputed == true,
-                        singleSource = onsConsensus?.singleSource ?: true
+                        singleSource = onsConsensus?.singleSource ?: true,
+                        isCalculatedPrice = onsConsensus?.isCalculated == true,
+                        candidates = xauCandidateRecords
                     )
                 )
                 continue
@@ -148,7 +246,7 @@ internal object GoldPriceMapper {
                     cachedAssetsById[spec.id]?.intrinsicValueToman
                 }
 
-                if (q != null && q.priceToman > 0.0) {
+                if (q != null && q.priceToman.isFinite() && q.priceToman > 0.0) {
                     val price = q.priceToman
                     val changePct = q.changePct.takeIf { abs(it) > 0.001 } ?: 0.0
                     val changeToman = q.changeToman.takeIf { abs(it) > 0.1 } ?: (price * changePct / 100.0)
@@ -158,7 +256,7 @@ internal object GoldPriceMapper {
                     } else {
                         null
                     }
-                    val ts = q.timestampMillis.takeIf { it > 0L } ?: nowMillis
+                    val ts = q.timestampMillis.coerceAtLeast(0L)
                     val freshness = MarketValidationHelpers.deriveFreshness(
                         category = AssetCategory.GOLD,
                         fetchedThisRefresh = true,
@@ -197,7 +295,19 @@ internal object GoldPriceMapper {
                             singleSource = true,
                             intrinsicValueToman = intrinsic,
                             bubbleToman = bubbleToman,
-                            bubblePercent = bubblePct
+                            bubblePercent = bubblePct,
+                            isCalculatedPrice = false,
+                            candidates = listOf(
+                                SourceCandidateRecord(
+                                    sourceName = "TGJU",
+                                    priceToman = price,
+                                    rawPrice = price,
+                                    sourceTimestampMillis = ts,
+                                    isPrimary = true,
+                                    status = CandidateStatus.INCLUDED,
+                                    exclusionReason = null
+                                )
+                            )
                         )
                     )
                 } else {
@@ -244,7 +354,23 @@ internal object GoldPriceMapper {
                                 singleSource = false,
                                 intrinsicValueToman = intrinsic,
                                 bubbleToman = null,
-                                bubblePercent = null
+                                bubblePercent = null,
+                                isCalculatedPrice = false,
+                                candidates = listOf(
+                                    SourceCandidateRecord(
+                                        sourceName = "TGJU",
+                                        priceToman = q?.priceToman?.takeIf { it.isFinite() && it > 0.0 },
+                                        rawPrice = q?.priceToman?.takeIf { it.isFinite() && it > 0.0 },
+                                        sourceTimestampMillis = q?.timestampMillis?.coerceAtLeast(0L) ?: 0L,
+                                        isPrimary = false,
+                                        status = CandidateStatus.REJECTED,
+                                        exclusionReason = when {
+                                            q != null -> CandidateExclusionReason.INVALID
+                                            tgjuFailed -> CandidateExclusionReason.PROVIDER_FAILURE
+                                            else -> CandidateExclusionReason.MISSING_DATA
+                                        }
+                                    )
+                                )
                             )
                         )
                     }
@@ -253,6 +379,16 @@ internal object GoldPriceMapper {
             }
 
             // Benchmark gold units (18K gram, 24K gram, Mesghal)
+            val unitFactorVsXau = when (spec.id) {
+                "GOLD_18K" -> (1.0 / MarketValidationConfig.TROY_OUNCE_GRAMS) *
+                    (MarketValidationConfig.GOLD_18K_FINENESS_PER_MILLE / 1000.0)
+                "GOLD_24K" -> 1.0 / MarketValidationConfig.TROY_OUNCE_GRAMS
+                "GOLD_MESGHAL" -> (MarketValidationConfig.MESGHAL_18K_EQUIVALENT_GRAMS /
+                    MarketValidationConfig.TROY_OUNCE_GRAMS) *
+                    (MarketValidationConfig.GOLD_18K_FINENESS_PER_MILLE / 1000.0)
+                else -> (1.0 / MarketValidationConfig.TROY_OUNCE_GRAMS) *
+                    (MarketValidationConfig.GOLD_18K_FINENESS_PER_MILLE / 1000.0)
+            }
             val fallbackTheoretical = when (spec.id) {
                 "GOLD_18K" -> gram18Theoretical
                 "GOLD_24K" -> gram24Theoretical
@@ -260,14 +396,14 @@ internal object GoldPriceMapper {
                 else -> gram18Theoretical
             }
 
-            if (q != null && q.priceToman > 0.0) {
+            if (q != null && q.priceToman.isFinite() && q.priceToman > 0.0) {
                 val price = q.priceToman
                 val tableFallback = if (spec.id == "GOLD_18K") computeTableDelta(tgjuGoldRecent, price) else null
                 val changePct = q.changePct.takeIf { abs(it) > 0.001 } ?: tableFallback?.second ?: 0.0
                 val changeToman = q.changeToman.takeIf { abs(it) > 0.1 }
                     ?: tableFallback?.first
                     ?: (price * changePct / 100.0)
-                val ts = q.timestampMillis.takeIf { it > 0L } ?: nowMillis
+                val ts = q.timestampMillis.coerceAtLeast(0L)
                 val freshness = MarketValidationHelpers.deriveFreshness(
                     category = AssetCategory.GOLD,
                     fetchedThisRefresh = true,
@@ -303,7 +439,19 @@ internal object GoldPriceMapper {
                         sourceTimestampMillis = ts,
                         fetchedAtMillis = nowMillis,
                         disputed = false,
-                        singleSource = true
+                        singleSource = true,
+                        isCalculatedPrice = false,
+                        candidates = listOf(
+                            SourceCandidateRecord(
+                                sourceName = "TGJU",
+                                priceToman = price,
+                                rawPrice = price,
+                                sourceTimestampMillis = ts,
+                                isPrimary = true,
+                                status = CandidateStatus.INCLUDED,
+                                exclusionReason = null
+                            )
+                        )
                     )
                 )
             } else if (hasRealOns && usdToman > 1_000.0) {
@@ -314,6 +462,34 @@ internal object GoldPriceMapper {
                     goldSpark.size >= 4 -> MarketValidationHelpers.scaleSeriesToCurrent(goldSpark, price)
                     usdtSpark.size >= 4 -> MarketValidationHelpers.scaleSeriesToCurrent(usdtSpark, price)
                     else -> emptyList()
+                }
+                val spotLabel = onsConsensus!!.sourceAttributionLabel
+                val fallbackCandidates = buildList {
+                    add(
+                        SourceCandidateRecord(
+                            sourceName = "TGJU",
+                            priceToman = q?.priceToman?.takeIf { it.isFinite() && it > 0.0 },
+                            rawPrice = q?.priceToman?.takeIf { it.isFinite() && it > 0.0 },
+                            sourceTimestampMillis = q?.timestampMillis?.coerceAtLeast(0L) ?: 0L,
+                            isPrimary = false,
+                            status = CandidateStatus.REJECTED,
+                            exclusionReason = when {
+                                q != null -> CandidateExclusionReason.INVALID
+                                tgjuFailed -> CandidateExclusionReason.PROVIDER_FAILURE
+                                else -> CandidateExclusionReason.MISSING_DATA
+                            }
+                        )
+                    )
+                    onsConsensus.candidateRecords.forEach { rec ->
+                        if (rec.sourceName != "TGJU") {
+                            add(
+                                rec.copy(
+                                    priceToman = rec.rawPrice?.let { it * usdToman * unitFactorVsXau },
+                                    detail = rec.rawPrice?.let { "xauUsd=$it" } ?: rec.detail
+                                )
+                            )
+                        }
+                    }
                 }
                 result.add(
                     MarketAsset(
@@ -331,13 +507,15 @@ internal object GoldPriceMapper {
                         high24hToman = null,
                         low24hToman = null,
                         sparkline = spark,
-                        sourceLabel = "${onsConsensus.selectedCandidate.sourceName} + USD",
+                        sourceLabel = "$spotLabel + USD",
                         updatedAtMillis = nowMillis,
                         freshness = derivedGoldFreshness,
                         sourceTimestampMillis = derivedGoldTs,
                         fetchedAtMillis = nowMillis,
                         disputed = onsConsensus.disputed,
-                        singleSource = onsConsensus.singleSource
+                        singleSource = onsConsensus.singleSource,
+                        isCalculatedPrice = true,
+                        candidates = fallbackCandidates
                     )
                 )
             } else {
@@ -366,7 +544,23 @@ internal object GoldPriceMapper {
                             updatedAtMillis = nowMillis,
                             freshness = DataFreshness.UNAVAILABLE,
                             sourceTimestampMillis = 0L,
-                            fetchedAtMillis = nowMillis
+                            fetchedAtMillis = nowMillis,
+                            isCalculatedPrice = false,
+                            candidates = listOf(
+                                SourceCandidateRecord(
+                                    sourceName = "TGJU",
+                                    priceToman = null,
+                                    rawPrice = null,
+                                    sourceTimestampMillis = 0L,
+                                    isPrimary = false,
+                                    status = CandidateStatus.REJECTED,
+                                    exclusionReason = if (tgjuFailed) {
+                                        CandidateExclusionReason.PROVIDER_FAILURE
+                                    } else {
+                                        CandidateExclusionReason.MISSING_DATA
+                                    }
+                                )
+                            )
                         )
                     )
                 }
@@ -376,3 +570,4 @@ internal object GoldPriceMapper {
         return result
     }
 }
+

@@ -70,7 +70,8 @@ class Stage2MarketReliabilityTest {
         assertNull(eur.lowToman)
         assertEquals(-200.0, eur.changeToman, 0.01)
         assertEquals(-0.26, eur.changePct, 0.01)
-        assertEquals(now, eur.timestampMillis)
+        // Missing source timestamp must remain unknown (0L), never fabricated as nowMillis
+        assertEquals(0L, eur.timestampMillis)
     }
 
     @Test

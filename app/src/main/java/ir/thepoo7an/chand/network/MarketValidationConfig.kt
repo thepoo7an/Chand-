@@ -17,6 +17,9 @@ object MarketValidationConfig {
     /** Maximum allowed deviation (%) from cross-source median for fiat / free-market prices. */
     const val FIAT_DISAGREEMENT_THRESHOLD_PCT: Double = 3.0
 
+    /** Maximum allowed deviation (%) from cross-source median for global crude oil benchmarks (USD/bbl). */
+    const val OIL_DISAGREEMENT_THRESHOLD_PCT: Double = 3.0
+
     /**
      * Default minimum jump (%) followed by reversion considered a single-tick history spike
      * when asset category / time range are unspecified (preserves legacy 24H / default behavior).
@@ -29,11 +32,23 @@ object MarketValidationConfig {
     /** Adaptive history spike threshold (%) for daily-or-coarser crypto series (7D / 1M / 1Y). */
     const val HISTORY_SPIKE_THRESHOLD_CRYPTO_MULTI_DAY_PCT: Double = 40.0
 
-    /** Adaptive history spike threshold (%) for daily-or-coarser fiat series (7D / 1M / 1Y). */
+    /** Adaptive history spike threshold (%) for daily-or-coarser fiat series (7D / 1M). */
     const val HISTORY_SPIKE_THRESHOLD_FIAT_MULTI_DAY_PCT: Double = 15.0
 
-    /** Adaptive history spike threshold (%) for daily-or-coarser gold/coin series (7D / 1M / 1Y). */
+    /** Adaptive history spike threshold (%) for annual fiat series (1Y, multi-day/biweekly gaps). */
+    const val HISTORY_SPIKE_THRESHOLD_FIAT_YEARLY_PCT: Double = 25.0
+
+    /** Adaptive history spike threshold (%) for daily-or-coarser gold/coin series (7D / 1M). */
     const val HISTORY_SPIKE_THRESHOLD_GOLD_MULTI_DAY_PCT: Double = 15.0
+
+    /** Adaptive history spike threshold (%) for annual gold/coin series (1Y, multi-day/biweekly gaps). */
+    const val HISTORY_SPIKE_THRESHOLD_GOLD_YEARLY_PCT: Double = 25.0
+
+    /** Adaptive history spike threshold (%) for daily crude oil series (7D / 1M). */
+    const val HISTORY_SPIKE_THRESHOLD_OIL_MULTI_DAY_PCT: Double = 20.0
+
+    /** Adaptive history spike threshold (%) for annual crude oil series (1Y). */
+    const val HISTORY_SPIKE_THRESHOLD_OIL_YEARLY_PCT: Double = 35.0
 
     /** Default corroboration timestamp tolerance (1 hour) when range is unspecified. */
     const val HISTORY_CORROBORATION_DEFAULT_TOLERANCE_SEC: Long = 3_600L
@@ -48,19 +63,31 @@ object MarketValidationConfig {
      * Returns the single-tick reverting spike threshold (%) calibrated by asset [category] and [range],
      * incorporating any active online [LiveConfigRegistry] override.
      * - 24H: 15% for every category.
-     * - 7D / 1M / 1Y (daily or coarser buckets): 40% for crypto, 15% for fiat and gold.
+     * - 7D / 1M: 40% for crypto, 15% for fiat and gold.
+     * - 1Y: 40% for crypto, 25% for fiat and gold (coarse samples & macro regime shifts).
      */
     fun spikeThresholdPct(category: AssetCategory, range: TimeRange): Double {
         val overrides = LiveConfigRegistry.currentConfig().validation
         return when (range) {
             TimeRange.H24 -> overrides.spikeThreshold24hPct ?: HISTORY_SPIKE_THRESHOLD_24H_PCT
-            TimeRange.D7, TimeRange.M1, TimeRange.Y1 -> when (category) {
+            TimeRange.D7, TimeRange.M1 -> when (category) {
                 AssetCategory.CRYPTO -> overrides.spikeThresholdCryptoMultiDayPct
                     ?: HISTORY_SPIKE_THRESHOLD_CRYPTO_MULTI_DAY_PCT
                 AssetCategory.FIAT -> overrides.spikeThresholdFiatMultiDayPct
                     ?: HISTORY_SPIKE_THRESHOLD_FIAT_MULTI_DAY_PCT
                 AssetCategory.GOLD -> overrides.spikeThresholdGoldMultiDayPct
                     ?: HISTORY_SPIKE_THRESHOLD_GOLD_MULTI_DAY_PCT
+                AssetCategory.OIL -> HISTORY_SPIKE_THRESHOLD_OIL_MULTI_DAY_PCT
+                AssetCategory.ALL, AssetCategory.PINNED -> HISTORY_SPIKE_THRESHOLD_PCT
+            }
+            TimeRange.Y1 -> when (category) {
+                AssetCategory.CRYPTO -> overrides.spikeThresholdCryptoMultiDayPct
+                    ?: HISTORY_SPIKE_THRESHOLD_CRYPTO_MULTI_DAY_PCT
+                AssetCategory.FIAT -> overrides.spikeThresholdFiatMultiDayPct
+                    ?: HISTORY_SPIKE_THRESHOLD_FIAT_YEARLY_PCT
+                AssetCategory.GOLD -> overrides.spikeThresholdGoldMultiDayPct
+                    ?: HISTORY_SPIKE_THRESHOLD_GOLD_YEARLY_PCT
+                AssetCategory.OIL -> HISTORY_SPIKE_THRESHOLD_OIL_YEARLY_PCT
                 AssetCategory.ALL, AssetCategory.PINNED -> HISTORY_SPIKE_THRESHOLD_PCT
             }
         }
@@ -84,6 +111,13 @@ object MarketValidationConfig {
             ?.let { it.toLong() * 60L * 1000L }
             ?: FIAT_GOLD_LIVE_MAX_AGE_MILLIS
 
+    fun effectiveOilDisagreementThresholdPct(): Double = OIL_DISAGREEMENT_THRESHOLD_PCT
+
+    fun effectiveOilLiveMaxAgeMillis(): Long =
+        LiveConfigRegistry.currentConfig().validation.fiatGoldLiveMaxAgeMinutes
+            ?.let { it.toLong() * 60L * 1000L }
+            ?: OIL_LIVE_MAX_AGE_MILLIS
+
     /**
      * Returns bucket-sized timestamp tolerance (seconds) for cross-provider spike corroboration.
      */
@@ -100,6 +134,9 @@ object MarketValidationConfig {
     /** Maximum source timestamp age (30 minutes) for a fetched fiat or gold asset to be marked LIVE. */
     const val FIAT_GOLD_LIVE_MAX_AGE_MILLIS: Long = 30L * 60L * 1000L
 
+    /** Maximum source timestamp age (30 minutes) for a fetched global crude oil benchmark to be marked LIVE. */
+    const val OIL_LIVE_MAX_AGE_MILLIS: Long = 30L * 60L * 1000L
+
     /** Minimum source count required to take a consensus median and exclude outliers. */
     const val CONSENSUS_MEDIAN_MIN_SOURCES: Int = 3
 
@@ -111,6 +148,9 @@ object MarketValidationConfig {
 
     /** Allowed future clock skew tolerance (2 minutes) when computing source timestamp age. */
     const val CLOCK_SKEW_TOLERANCE_MILLIS: Long = 2L * 60L * 1000L
+
+    /** Maximum plausible future offset (24 hours) before a provider timestamp is deemed untrustworthy. */
+    const val FUTURE_TIMESTAMP_REJECT_TOLERANCE_MILLIS: Long = 24L * 60L * 60L * 1000L
 
     /** Standard troy ounce mass in grams. */
     const val TROY_OUNCE_GRAMS: Double = 31.1035

@@ -8,7 +8,14 @@ enum class AssetCategory {
     PINNED,
     FIAT,
     GOLD,
-    CRYPTO
+    CRYPTO,
+    OIL
+}
+
+@Serializable
+enum class PriceDisplayUnit {
+    TOMAN,
+    USD_PER_BARREL
 }
 
 @Serializable
@@ -55,6 +62,33 @@ enum class DataFreshness {
 }
 
 @Serializable
+enum class CandidateStatus {
+    INCLUDED,
+    REJECTED
+}
+
+@Serializable
+enum class CandidateExclusionReason {
+    STALE,
+    INVALID,
+    EXCESSIVE_DISAGREEMENT,
+    MISSING_DATA,
+    PROVIDER_FAILURE
+}
+
+@Serializable
+data class SourceCandidateRecord(
+    val sourceName: String,
+    val priceToman: Double? = null,
+    val rawPrice: Double? = null,
+    val sourceTimestampMillis: Long = 0L,
+    val isPrimary: Boolean = false,
+    val status: CandidateStatus = CandidateStatus.INCLUDED,
+    val exclusionReason: CandidateExclusionReason? = null,
+    val detail: String = ""
+)
+
+@Serializable
 data class MarketAsset(
     val id: String,
     val symbol: String,
@@ -77,10 +111,26 @@ data class MarketAsset(
     val fetchedAtMillis: Long = 0L,
     val disputed: Boolean = false,
     val singleSource: Boolean = false,
+    val isCalculatedPrice: Boolean = false,
+    val candidates: List<SourceCandidateRecord> = emptyList(),
     val intrinsicValueToman: Double? = null,
     val bubbleToman: Double? = null,
-    val bubblePercent: Double? = null
-)
+    val bubblePercent: Double? = null,
+    val primaryUnit: PriceDisplayUnit = PriceDisplayUnit.TOMAN,
+    val isChange24hAvailable: Boolean = true,
+    val change24hUsd: Double? = null,
+    val high24hUsd: Double? = null,
+    val low24hUsd: Double? = null
+) {
+    val isUsdPerBarrel: Boolean
+        get() = primaryUnit == PriceDisplayUnit.USD_PER_BARREL
+
+    val primaryPriceValue: Double
+        get() = if (isUsdPerBarrel) (priceUsd ?: 0.0) else priceToman
+
+    val hasUsablePrimaryPrice: Boolean
+        get() = primaryPriceValue.isFinite() && primaryPriceValue > 0.0
+}
 
 @Serializable
 data class AssetHistoryPoint(
@@ -106,8 +156,8 @@ data class CachedMarketSnapshot(
 
 data class AppPreferences(
     val themeMode: ThemeMode = ThemeMode.AMOLED,
-    val language: AppLanguage = AppLanguage.EN,
-    val usePersianDigits: Boolean = false,
+    val language: AppLanguage = AppLanguage.FA,
+    val usePersianDigits: Boolean = (language == AppLanguage.FA),
     val isGridView: Boolean = true,
     val pinnedIds: Set<String> = DEFAULT_PINNED_IDS,
     val refreshIntervalSeconds: Int = 30,

@@ -23,8 +23,16 @@ android {
 
     val githubRepo = System.getenv("GITHUB_REPOSITORY")?.takeIf { it.isNotBlank() }
       ?: project.findProperty("githubRepo")?.toString()?.takeIf { it.isNotBlank() }
-      ?: "thepoo7an/Chand-"
+      ?: "thepoo7an/chand-iran-currency-gold-crypto"
     buildConfigField("String", "GITHUB_REPOSITORY", "\"$githubRepo\"")
+
+    val expectedReleaseCertSha256 = (System.getenv("CERT_SHA256")?.takeIf { it.isNotBlank() }
+      ?: project.findProperty("expectedReleaseCertSha256")?.toString()?.takeIf { it.isNotBlank() }
+      ?: "8cbacff1b11ee42a6e527d1a577007c20d375a75d419a368852b301ee2846d8b")
+      .lowercase()
+      .replace(":", "")
+      .trim()
+    buildConfigField("String", "EXPECTED_RELEASE_CERT_SHA256", "\"$expectedReleaseCertSha256\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

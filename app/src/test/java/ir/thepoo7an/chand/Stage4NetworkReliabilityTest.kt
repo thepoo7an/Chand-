@@ -1,11 +1,16 @@
 package ir.thepoo7an.chand
 
+import ir.thepoo7an.chand.network.ApkPackageInspector
+import ir.thepoo7an.chand.network.AppUpdateException
 import ir.thepoo7an.chand.network.AppUpdateService
 import ir.thepoo7an.chand.network.AppUpdateState
 import ir.thepoo7an.chand.network.InFlightRequestDeduplicator
 import ir.thepoo7an.chand.network.NetworkConfig
 import ir.thepoo7an.chand.network.NetworkConfig.RequestProfile
 import ir.thepoo7an.chand.network.NetworkOutcome
+import ir.thepoo7an.chand.network.UpdateErrorReason
+import ir.thepoo7an.chand.network.UpdateSecurityValidator
+import ir.thepoo7an.chand.network.VerifiedApkDetails
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -73,7 +78,7 @@ class Stage4NetworkReliabilityTest {
         assertEquals(RequestProfile.HISTORY, NetworkConfig.profileForUrl("https://api.binance.com/api/v3/klines?symbol=BTCUSDT"))
         assertEquals(RequestProfile.HISTORY, NetworkConfig.profileForUrl("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=7"))
         assertEquals(RequestProfile.HISTORY, NetworkConfig.profileForUrl("https://api.frankfurter.dev/v1/2025-01-01..2025-01-08"))
-        assertEquals(RequestProfile.UPDATE_CHECK, NetworkConfig.profileForUrl("https://api.github.com/repos/thepoo7an/chand/releases/latest"))
+        assertEquals(RequestProfile.UPDATE_CHECK, NetworkConfig.profileForUrl("https://api.github.com/repos/thepoo7an/chand-iran-currency-gold-crypto/releases/latest"))
     }
 
     @Test
@@ -302,7 +307,7 @@ class Stage4NetworkReliabilityTest {
                   "tag_name": "v2.1.0",
                   "name": "Chand 2.1.0 (Build 99)",
                   "body": "Release notes",
-                  "html_url": "https://github.com/thepoo7an/chand/releases/tag/v2.1.0",
+                  "html_url": "https://github.com/thepoo7an/chand-iran-currency-gold-crypto/releases/tag/v2.1.0",
                   "prerelease": false,
                   "draft": false,
                   "published_at": "2026-01-01T00:00:00Z",
@@ -322,7 +327,7 @@ class Stage4NetworkReliabilityTest {
             (1..4).map {
                 async(Dispatchers.IO) {
                     updateService.checkForUpdate(
-                        repoSlugInput = "thepoo7an/chand",
+                        repoSlugInput = "thepoo7an/chand-iran-currency-gold-crypto",
                         currentVersionName = "1.0",
                         currentVersionCode = 10,
                         supportedAbis = arrayOf("arm64-v8a")
@@ -346,10 +351,10 @@ class Stage4NetworkReliabilityTest {
             - **Universal (all CPUs):** `Chand-universal-release.apk`
 
             ## What's Changed
-            * بهبود سرعت **نمایشگر نمودار** در ارزها by @dev in https://github.com/thepoo7an/Chand-/pull/12
+            * بهبود سرعت **نمایشگر نمودار** در ارزها by @dev in https://github.com/thepoo7an/chand-iran-currency-gold-crypto/pull/12
             * Add adaptive spike filter for volatile crypto ([details](https://example.com))
 
-            **Full Changelog**: https://github.com/thepoo7an/Chand-/compare/v1.0...v1.1
+            **Full Changelog**: https://github.com/thepoo7an/chand-iran-currency-gold-crypto/compare/v1.0...v1.1
         """.trimIndent()
 
         val sections = AppUpdateService.parseReleaseNotes(rawBody)
@@ -368,7 +373,8 @@ class Stage4NetworkReliabilityTest {
     fun `downloadApk streams verified APK payload and rejects invalid non-ZIP payloads`() = runBlocking {
         val tempDir = Files.createTempDirectory("chand-apk-test").toFile()
         try {
-            val validApkBytes = byteArrayOf(0x50, 0x4B, 0x03, 0x04) + ByteArray(64 * 1024) { 0x2A }
+            val validApkBytes = UpdateTestFixtures.buildMinimalSignedApkBytes(paddingSize = 64 * 1024)
+            val expectedSha = UpdateSecurityValidator.sha256Hex(validApkBytes)
             val validClient = interceptorClient { req ->
                 Response.Builder()
                     .request(req)
@@ -378,14 +384,24 @@ class Stage4NetworkReliabilityTest {
                     .body(validApkBytes.toResponseBody("application/vnd.android.package-archive".toMediaType()))
                     .build()
             }
-            val service = AppUpdateService(validClient)
+            val inspector = ApkPackageInspector {
+                VerifiedApkDetails(
+                    packageName = UpdateSecurityValidator.EXPECTED_PACKAGE_NAME,
+                    versionCode = 200L,
+                    signerSha256Digests = setOf(BuildConfig.EXPECTED_RELEASE_CERT_SHA256)
+                )
+            }
+            val service = AppUpdateService(validClient, apkInspector = inspector)
             val destFile = File(tempDir, "Chand-arm64-v8a-release.apk")
             val progressReports = mutableListOf<Pair<Long, Long>>()
 
             val result = service.downloadApk(
-                downloadUrl = "https://example.invalid/Chand-arm64-v8a-release.apk",
+                downloadUrl = "https://objects.githubusercontent.com/chand/Chand-arm64-v8a-release.apk",
                 destinationFile = destFile,
-                expectedSizeBytes = validApkBytes.size.toLong()
+                expectedSizeBytes = validApkBytes.size.toLong(),
+                expectedSha256 = expectedSha,
+                expectedVersionCode = 200,
+                currentVersionCode = 100
             ) { read, total ->
                 progressReports.add(read to total)
             }
@@ -398,26 +414,31 @@ class Stage4NetworkReliabilityTest {
             assertEquals(validApkBytes.size.toLong(), progressReports.last().first)
 
             // Reject HTML error payload masquerading as 200 OK
+            val htmlBytes = "<html>Captive Portal</html>".toByteArray()
             val htmlClient = interceptorClient { req ->
                 Response.Builder()
                     .request(req)
                     .protocol(Protocol.HTTP_1_1)
                     .code(200)
                     .message("OK")
-                    .body("<html>Captive Portal</html>".toResponseBody("text/html".toMediaType()))
+                    .body(htmlBytes.toResponseBody("text/html".toMediaType()))
                     .build()
             }
             val badDest = File(tempDir, "bad-update.apk")
-            var threw = false
+            var caughtReason: UpdateErrorReason? = null
             try {
-                AppUpdateService(htmlClient).downloadApk(
-                    downloadUrl = "https://example.invalid/bad.apk",
-                    destinationFile = badDest
+                AppUpdateService(htmlClient, apkInspector = inspector).downloadApk(
+                    downloadUrl = "https://objects.githubusercontent.com/chand/bad.apk",
+                    destinationFile = badDest,
+                    expectedSizeBytes = htmlBytes.size.toLong(),
+                    expectedSha256 = UpdateSecurityValidator.sha256Hex(htmlBytes),
+                    expectedVersionCode = 200,
+                    currentVersionCode = 100
                 )
-            } catch (_: IOException) {
-                threw = true
+            } catch (e: AppUpdateException) {
+                caughtReason = e.reason
             }
-            assertTrue(threw)
+            assertTrue(caughtReason == UpdateErrorReason.UNREASONABLE_FILE_SIZE || caughtReason == UpdateErrorReason.CORRUPTED_APK)
             assertFalse(badDest.exists())
             assertFalse(File(tempDir, "bad-update.apk.part").exists())
         } finally {

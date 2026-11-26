@@ -15,9 +15,14 @@ import kotlin.math.abs
  */
 object HistoryNormalizer {
 
+    /** Upper bound (2100-01-01 UTC in seconds) to reject un-divided millisecond or corrupted future timestamps. */
+    const val MAX_REASONABLE_TIMESTAMP_SEC: Long = 4_102_444_800L
+
     data class NormalizationResult(
         val points: List<AssetHistoryPoint>,
-        val removedSpikeCount: Int
+        val removedSpikeCount: Int,
+        val invalidCount: Int = 0,
+        val duplicateCount: Int = 0
     )
 
     @Volatile
@@ -28,13 +33,15 @@ object HistoryNormalizer {
         points: List<AssetHistoryPoint>,
         spikeThresholdPct: Double = MarketValidationConfig.HISTORY_SPIKE_THRESHOLD_PCT,
         corroborating: List<AssetHistoryPoint> = emptyList(),
-        toleranceSec: Long = MarketValidationConfig.corroborationToleranceSec(null)
+        toleranceSec: Long = MarketValidationConfig.corroborationToleranceSec(null),
+        maxTimestampSec: Long? = null
     ): List<AssetHistoryPoint> {
         val res = normalizeWithStats(
             points = points,
             spikeThresholdPct = spikeThresholdPct,
             corroborating = corroborating,
-            toleranceSec = toleranceSec
+            toleranceSec = toleranceSec,
+            maxTimestampSec = maxTimestampSec
         )
         lastRemovedSpikeCount = res.removedSpikeCount
         return res.points
@@ -46,13 +53,15 @@ object HistoryNormalizer {
         range: TimeRange,
         spikeThresholdPct: Double = MarketValidationConfig.spikeThresholdPct(category, range),
         corroborating: List<AssetHistoryPoint> = emptyList(),
-        toleranceSec: Long = MarketValidationConfig.corroborationToleranceSec(range)
+        toleranceSec: Long = MarketValidationConfig.corroborationToleranceSec(range),
+        maxTimestampSec: Long? = null
     ): List<AssetHistoryPoint> {
         val res = normalizeWithStats(
             points = points,
             spikeThresholdPct = spikeThresholdPct,
             corroborating = corroborating,
-            toleranceSec = toleranceSec
+            toleranceSec = toleranceSec,
+            maxTimestampSec = maxTimestampSec
         )
         lastRemovedSpikeCount = res.removedSpikeCount
         return res.points
@@ -62,20 +71,37 @@ object HistoryNormalizer {
         points: List<AssetHistoryPoint>,
         spikeThresholdPct: Double = MarketValidationConfig.HISTORY_SPIKE_THRESHOLD_PCT,
         corroborating: List<AssetHistoryPoint> = emptyList(),
-        toleranceSec: Long = MarketValidationConfig.corroborationToleranceSec(null)
+        toleranceSec: Long = MarketValidationConfig.corroborationToleranceSec(null),
+        maxTimestampSec: Long? = null
     ): NormalizationResult {
-        val sorted = filterValidSorted(points)
-        if (sorted.isEmpty()) return NormalizationResult(emptyList(), 0)
+        val (sorted, invalidCount, duplicateCount) = filterValidSortedWithCounts(points, maxTimestampSec)
+        if (sorted.isEmpty()) {
+            return NormalizationResult(
+                points = emptyList(),
+                removedSpikeCount = 0,
+                invalidCount = invalidCount,
+                duplicateCount = duplicateCount
+            )
+        }
         if (sorted.size < 3 || spikeThresholdPct <= 0.0) {
-            return NormalizationResult(sorted, 0)
+            return NormalizationResult(
+                points = sorted,
+                removedSpikeCount = 0,
+                invalidCount = invalidCount,
+                duplicateCount = duplicateCount
+            )
         }
 
-        val sortedCorroborating = filterValidSorted(corroborating)
-        return filterRevertingSpikesWithStats(
+        val sortedCorroborating = filterValidSorted(corroborating, maxTimestampSec)
+        val spikeFiltered = filterRevertingSpikesWithStats(
             sorted = sorted,
             thresholdPct = spikeThresholdPct,
             sortedCorroborating = sortedCorroborating,
             toleranceSec = toleranceSec
+        )
+        return spikeFiltered.copy(
+            invalidCount = invalidCount,
+            duplicateCount = duplicateCount
         )
     }
 
@@ -85,12 +111,14 @@ object HistoryNormalizer {
         range: TimeRange,
         spikeThresholdPct: Double = MarketValidationConfig.spikeThresholdPct(category, range),
         corroborating: List<AssetHistoryPoint> = emptyList(),
-        toleranceSec: Long = MarketValidationConfig.corroborationToleranceSec(range)
+        toleranceSec: Long = MarketValidationConfig.corroborationToleranceSec(range),
+        maxTimestampSec: Long? = null
     ): NormalizationResult = normalizeWithStats(
         points = points,
         spikeThresholdPct = spikeThresholdPct,
         corroborating = corroborating,
-        toleranceSec = toleranceSec
+        toleranceSec = toleranceSec,
+        maxTimestampSec = maxTimestampSec
     )
 
     fun normalizePairs(
@@ -119,16 +147,33 @@ object HistoryNormalizer {
         ).map { it.timestampSec to it.priceToman }
     }
 
-    private fun filterValidSorted(points: List<AssetHistoryPoint>): List<AssetHistoryPoint> {
-        if (points.isEmpty()) return emptyList()
+    private fun filterValidSorted(
+        points: List<AssetHistoryPoint>,
+        maxTimestampSec: Long? = null
+    ): List<AssetHistoryPoint> = filterValidSortedWithCounts(points, maxTimestampSec).first
+
+    private fun filterValidSortedWithCounts(
+        points: List<AssetHistoryPoint>,
+        maxTimestampSec: Long? = null
+    ): Triple<List<AssetHistoryPoint>, Int, Int> {
+        if (points.isEmpty()) return Triple(emptyList(), 0, 0)
+        val effectiveMaxTs = maxTimestampSec?.coerceAtMost(MAX_REASONABLE_TIMESTAMP_SEC)
+            ?: MAX_REASONABLE_TIMESTAMP_SEC
         val dedupedByTs = LinkedHashMap<Long, AssetHistoryPoint>(points.size)
+        var invalidCount = 0
+        var duplicateCount = 0
         for (pt in points) {
-            if (pt.timestampSec > 0L && pt.priceToman.isFinite() && pt.priceToman > 0.0) {
-                dedupedByTs[pt.timestampSec] = pt
+            if (pt.timestampSec !in 1L..effectiveMaxTs || !pt.priceToman.isFinite() || pt.priceToman <= 0.0) {
+                invalidCount++
+                continue
             }
+            if (dedupedByTs.containsKey(pt.timestampSec)) {
+                duplicateCount++
+            }
+            dedupedByTs[pt.timestampSec] = pt
         }
-        if (dedupedByTs.isEmpty()) return emptyList()
-        return dedupedByTs.values.sortedBy { it.timestampSec }
+        if (dedupedByTs.isEmpty()) return Triple(emptyList(), invalidCount, duplicateCount)
+        return Triple(dedupedByTs.values.sortedBy { it.timestampSec }, invalidCount, duplicateCount)
     }
 
     internal fun filterRevertingSpikes(
