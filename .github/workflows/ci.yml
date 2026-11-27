@@ -78,7 +78,21 @@ jobs:
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
 
       - name: Run unit & Robolectric tests
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
+        id: unit_tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          ./gradlew :app:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/gradle-tests.log"
+
+      # Raw job logs are not always retrievable through the API; surface the actionable
+      # compiler/test errors as annotations so a failure is diagnosable from the PR page.
+      - name: Summarise test failures as annotations
+        if: steps.unit_tests.outcome == 'failure'
+        run: |
+          log="$RUNNER_TEMP/gradle-tests.log"
+          { grep -E "^e: " "$log"; grep -A2 -E " FAILED$" "$log" | grep -vE "^--$"; } \
+            | head -10 | while IFS= read -r line; do printf '::error::%s\n' "$line"; done
+          exit 1
 
       - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
