@@ -2,7 +2,15 @@ package ir.thepoo7an.chand
 
 import ir.thepoo7an.chand.network.LiveConfigSignature
 import ir.thepoo7an.chand.network.LiveConfigSignatureCheck
+import ir.thepoo7an.chand.network.RemoteConfigService
+import ir.thepoo7an.chand.network.RemoteConfigSyncResult
 import java.io.File
+import kotlinx.coroutines.test.runTest
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -145,6 +153,61 @@ class LiveConfigSignatureTest {
         assertTrue("LIVE_CONFIG_PUBLIC_KEYS must not be empty", trustedKeys.isNotEmpty())
         val result = LiveConfigSignature.verify(configFile!!.readText(), trustedKeys)
         assertTrue("expected Valid for the committed config but was $result", result is LiveConfigSignatureCheck.Valid)
+    }
+
+    @Test
+    fun `fetchLiveConfig applies a correctly signed document`() = runTest {
+        val result = signedService(SIGNED_FIXTURE).fetchLiveConfig(
+            repoSlug = "thepoo7an/chand-iran-currency-gold-crypto",
+            appVersionCode = 100
+        )
+        assertTrue("expected Applied but was $result", result is RemoteConfigSyncResult.Applied)
+        assertEquals(
+            12,
+            (result as RemoteConfigSyncResult.Applied).config.configVersion
+        )
+    }
+
+    @Test
+    fun `fetchLiveConfig rejects a tampered document end to end`() = runTest {
+        val tampered = SIGNED_FIXTURE.replace(
+            "https://mirror.example.com/tgju",
+            "https://attacker.example.net/tgju"
+        )
+        val result = signedService(tampered).fetchLiveConfig(
+            repoSlug = "thepoo7an/chand-iran-currency-gold-crypto",
+            appVersionCode = 100
+        )
+        assertTrue("expected Error but was $result", result is RemoteConfigSyncResult.Error)
+        assertEquals(
+            "config_signature_signature_mismatch",
+            (result as RemoteConfigSyncResult.Error).reason
+        )
+    }
+
+    @Test
+    fun `fetchLiveConfig rejects an unsigned document once a trust store is configured`() = runTest {
+        val result = signedService(UNSIGNED_FIXTURE).fetchLiveConfig(
+            repoSlug = "thepoo7an/chand-iran-currency-gold-crypto",
+            appVersionCode = 100
+        )
+        assertTrue("expected Error but was $result", result is RemoteConfigSyncResult.Error)
+        assertEquals("config_unsigned", (result as RemoteConfigSyncResult.Error).reason)
+    }
+
+    private fun signedService(body: String): RemoteConfigService {
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(body.toResponseBody("application/json".toMediaType()))
+                    .build()
+            }
+            .build()
+        return RemoteConfigService(client, trustedConfigKeys = trustedTestKeys)
     }
 
     private companion object {

@@ -287,7 +287,13 @@ sealed interface RemoteConfigUiState {
  * without needing APK re-installation.
  */
 class RemoteConfigService(
-    private val client: OkHttpClient = NetworkConfig.sharedClient
+    private val client: OkHttpClient = NetworkConfig.sharedClient,
+    /**
+     * Trusted signing keys (`keyId` -> base64 SubjectPublicKeyInfo). Defaults to the keys baked
+     * into this build; tests inject their own store instead.
+     */
+    private val trustedConfigKeys: Map<String, String> =
+        LiveConfigSignature.parseTrustedKeys(BuildConfig.LIVE_CONFIG_PUBLIC_KEYS)
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -310,8 +316,8 @@ class RemoteConfigService(
             var sawHttp404Only = true
             var lastError = ""
             var parsedIncompatible: RemoteConfigSyncResult.IncompatibleVersion? = null
-            // Trust store baked in at build time; empty means signature enforcement is opted out.
-            val trustedKeys = LiveConfigSignature.parseTrustedKeys(BuildConfig.LIVE_CONFIG_PUBLIC_KEYS)
+            // Empty trust store means the build opted out of signature enforcement.
+            val trustedKeys = trustedConfigKeys
 
             for (url in urls) {
                 val outcome = NetworkConfig.executeGetWithRetry(
