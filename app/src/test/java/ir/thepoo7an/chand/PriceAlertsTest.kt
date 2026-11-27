@@ -1,9 +1,11 @@
 package ir.thepoo7an.chand
 
 import android.content.Context
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.startup.AppInitializer
@@ -274,6 +276,36 @@ class PriceAlertsTest {
         composeRule.onNodeWithTag("alert_save_button").performClick()
         assertEquals(1, savedCalls)
         assertEquals(125_000.0, lastSavedUpper)
+    }
+
+    @Test
+    fun `AlertsScreen reports a failed test alert instead of pretending success`() {
+        var attempts = 0
+
+        composeRule.setContent {
+            ChandTheme(language = AppLanguage.EN) {
+                AlertsScreen(
+                    alerts = emptyList(),
+                    availableAssets = listOf(asset("USD", 115_000.0)),
+                    prefs = AppPreferences(language = AppLanguage.EN, usePersianDigits = false),
+                    strings = EnStrings,
+                    notificationsEnabledOverride = true,
+                    onSendTestAlert = {
+                        attempts++
+                        false
+                    }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("test_alert_button").performClick()
+        composeRule.waitForIdle()
+
+        // A notification that never reached the system must not be reported as sent.
+        composeRule.onNodeWithTag("alert_test_failed_banner").assertIsDisplayed()
+        composeRule.onNodeWithTag("alert_test_sent_banner").assertDoesNotExist()
+        composeRule.onNodeWithText(EnStrings.alertTestFailedNotice).assertIsDisplayed()
+        assertEquals(1, attempts)
     }
 
     @Test

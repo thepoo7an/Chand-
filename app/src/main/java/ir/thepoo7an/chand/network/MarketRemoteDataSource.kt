@@ -10,6 +10,7 @@ import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.SourceCandidateRecord
 import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.network.MarketPriceMapper.ExchangeQuote
+import ir.thepoo7an.chand.util.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -560,7 +561,8 @@ class MarketRemoteDataSource(
             }
         } catch (ce: CancellationException) {
             throw ce
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            AppLog.e("Live market aggregation failed; returning an empty snapshot", t)
             RemoteFetchResult(
                 assets = emptyList(),
                 fetchedAtMillis = System.currentTimeMillis(),
@@ -882,7 +884,8 @@ class MarketRemoteDataSource(
             }
         } catch (ce: CancellationException) {
             throw ce
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            AppLog.e("Asset history fetch failed for ${asset.id} (${range.name})", t)
             AssetHistoryResult(
                 points = emptyList(),
                 sourceLabel = "",
@@ -1201,6 +1204,9 @@ class MarketRemoteDataSource(
     }
 
     private fun nearestValue(targetSec: Long, series: List<AssetHistoryPoint>): Double {
+        // Callers already guard against empty series; returning 0.0 keeps this total instead of
+        // throwing from a forced unwrap deep inside a price calculation.
+        if (series.isEmpty()) return 0.0
         if (series.size == 1) return series.first().priceToman
         var lo = 0
         var hi = series.lastIndex
@@ -1216,7 +1222,7 @@ class MarketRemoteDataSource(
         val left = series.getOrNull(hi)
         val right = series.getOrNull(lo)
         return when {
-            left == null -> right!!.priceToman
+            left == null -> right?.priceToman ?: series.first().priceToman
             right == null -> left.priceToman
             abs(targetSec - left.timestampSec) <= abs(right.timestampSec - targetSec) -> left.priceToman
             else -> right.priceToman

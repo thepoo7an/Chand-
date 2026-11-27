@@ -67,8 +67,8 @@ jobs:
 
       - name: Run unit & Robolectric tests
         run: |
-          if ! gradle :app:testDebugUnitTest --stacktrace; then
-            echo "::error::Unit & Robolectric tests failed (gradle :app:testDebugUnitTest). Expand this step log for details."
+          if ! ./gradlew :app:testDebugUnitTest --stacktrace; then
+            echo "::error::Unit & Robolectric tests failed (./gradlew :app:testDebugUnitTest). Expand this step log for details."
             exit 1
           fi
 
@@ -176,12 +176,12 @@ jobs:
 
       - name: Build Universal, arm64-v8a, armeabi-v7a Release APKs & Debug APK
         run: |
-          if ! gradle :app:assembleDebug --stacktrace; then
-            echo "::error::Debug APK build failed (gradle :app:assembleDebug). Expand this step log for details."
+          if ! ./gradlew :app:assembleDebug --stacktrace; then
+            echo "::error::Debug APK build failed (./gradlew :app:assembleDebug). Expand this step log for details."
             exit 1
           fi
-          if ! gradle :app:assembleRelease -PenableAbiSplits=true --stacktrace; then
-            echo "::error::Release APK build failed (gradle :app:assembleRelease -PenableAbiSplits=true). Expand this step log for details."
+          if ! ./gradlew :app:assembleRelease -PenableAbiSplits=true --stacktrace; then
+            echo "::error::Release APK build failed (./gradlew :app:assembleRelease -PenableAbiSplits=true). Expand this step log for details."
             exit 1
           fi
           mkdir -p dist

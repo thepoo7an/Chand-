@@ -63,12 +63,14 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
 **Nerkhnama (نرخ‌نما)** (package `ir.thepoo7an.chand` preserved for seamless updates) is a lightweight, privacy-respecting open-source Android tracker built for checking live **Iranian Toman (TMN)** prices across Tehran's free currency market, Iranian gold & coins, global crude oil, and cryptocurrencies.
 
 ### Why Nerkhnama?
-- **100% Free, Open Source & Zero Ads:** No banner ads, no forced interstitials, no analytics trackers, and **zero dangerous Android permissions** (only `INTERNET` and `ACCESS_NETWORK_STATE`).
+- **100% Free, Open Source & Zero Ads:** No banner ads, no forced interstitials, no analytics trackers, and **no sensitive permissions**: only `INTERNET`, `ACCESS_NETWORK_STATE`, `POST_NOTIFICATIONS` (Android 13+ price alerts) and `REQUEST_INSTALL_PACKAGES` (optional in-app update installer). No location, camera, contacts, storage, or telemetry SDKs.
 - **True Multi-Provider Live Aggregation:** Combines **TGJU** (Tehran Free Market), **Wallex**, **Bitpin**, **Nobitex**, **Binance**, **Frankfurter (ECB)**, **Currency-API**, and **Gold-API** — with transparent rate-basis badges so you always know the exact pricing source.
 - **Complete Market Coverage:**
   - **Fiat Currencies:** US Dollar (`USD`), Euro (`EUR`), UAE Dirham (`AED`), British Pound (`GBP`), Turkish Lira (`TRY`), Kuwaiti Dinar (`KWD`), Canadian Dollar (`CAD`), Swiss Franc (`CHF`), Chinese Yuan (`CNY`), Australian Dollar (`AUD`), Japanese Yen (`JPY`), Saudi Riyal (`SAR`), Iraqi Dinar (`IQD`).
   - **Gold & Iranian Coins:** 18K Gold (`GRAM`), 24K Gold (`GRAM24`), Gold Mesghal (`MESGHAL`), Emami Coin (`SEKE`), Bahar Azadi (`BAHAR`), Half Coin (`HALF`), Quarter Coin (`QUARTER`), Gerami Coin (`GERAMI`), Global Gold Ounce (`XAU`).
   - **Cryptocurrencies:** Tether (`USDT`), Bitcoin (`BTC`), Ethereum (`ETH`), Toncoin (`TON`), Solana (`SOL`), BNB (`BNB`), XRP (`XRP`), Dogecoin (`DOGE`).
+- **Per-Asset Price Alerts:** Upper and/or lower TMN thresholds stored locally, evaluated in the app and by a 30-minute WorkManager job, with per-crossing notifications, automatic re-arm hysteresis, and a manual test action.
+- **Multi-Source Transparency & Freshness:** Every asset keeps its individual provider quotes (`TGJU`, `Wallex`, `Bitpin`, `Nobitex`, global benchmarks), shows comparison deltas with divergence flags, a source breakdown sheet with source/fetch timestamps, and a per-asset freshness age chip.
 - **Real Historical Charts (`24H` / `7D` / `1M` / `1Y`) & Per-Currency Sparklines:** Interactive touch scrubbing with exact **Jalali** dates/times, range high/low metrics, and currency-specific 7-day ECB/TGJU card sparklines.
 - **5 Native Jetpack Glance Widgets (Home & Lock Screen):**
   - **1×1 Hero Widget** *(customizable asset in Settings — USD by default)*
@@ -76,7 +78,7 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
   - **4×2 Live Watchlist Widget** (pinned favorites)
   - **2×2 Crypto Watch Widget** (`BTC • ETH • USDT`)
   - **Transparent Lock Screen Widget** (`keyguard|home_screen` on Android 12+ / API 31+, falling back to `home_screen` on Android 7–11; monochrome background-free typography inspired by Nothing OS)
-- **Instant Connectivity & 30-Minute Periodic Widget Sync:** Automatically refreshes widgets when moving from offline to online (`ConnectivityManager.NetworkCallback`) and schedules periodic `JobScheduler` updates while widgets are placed.
+- **Instant Connectivity & 30-Minute Periodic Widget Sync:** Automatically refreshes widgets when moving from offline to online (`ConnectivityManager.NetworkCallback`) and keeps a persisted 30-minute `WorkManager` refresh running while widgets are placed (survives reboots).
 - **AMOLED Pure Black, Dark & Light Themes + Bilingual UI:** Built natively in **Persian (RTL)** and **English (LTR)** with optional Persian digits (`۱۲۳`), 2-column Bento Grid or List view, and a built-in quick currency converter keypad.
 
 ---
@@ -86,7 +88,7 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
 **نرخ‌نما (Nerkhnama)** یک اپلیکیشن **رایگان، متن‌باز و بدون تبلیغات** برای پیگیری لحظه‌ای **قیمت دلار آزاد، ارزهای رایج، طلای ۱۸ و ۲۴ عیار، مثقال طلا، انواع سکه، نفت خام جهانی (Brent و WTI) و رمزارزها** به **تومان** است. (شناسه بسته `ir.thepoo7an.chand` برای حفظ سازگاری بروزرسانی‌ها بدون تغییر باقی مانده است.)
 
 ### امکانات کلیدی نرخ‌نما
-- **بدون تبلیغات و کاملاً امن:** بدون هیچ دسترسی حساس یا ردیاب تبلیغاتی؛ فقط دسترسی اینترنت برای دریافت نرخ‌های لحظه‌ای.
+- **بدون تبلیغات و کاملاً امن:** بدون ردیاب تبلیغاتی؛ مجوزها فقط شامل اینترنت، وضعیت شبکه، اعلان (برای هشدار قیمت در اندروید ۱۳ به بالا) و نصب بستهٔ اختیاری برای به‌روزرسانی داخل برنامه است — بدون دسترسی به مکان، دوربین، مخاطبین یا حافظه.
 - **منابع معتبر و شفاف بازار آزاد:** تجمیع خودکار نرخ‌ها از **TGJU، والکس، بیت‌پین، نوبیتکس، بایننس، بانک مرکزی اروپا (Frankfurter) و Gold-API** با نمایش دقیق منبع نرخ‌گذاری در بالای صفحه.
 - **۵ ویجت حرفه‌ای صفحه اصلی و لاک‌اسکرین:**
   - **ویجت ۱×۱ تک‌نرخی:** امکان انتخاب دارایی دلخواه از تنظیمات (دلار، یورو، طلا، مثقال، سکه امامی، بیت‌کوین و...).
@@ -105,18 +107,18 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
 ### Prerequisites
 - **JDK 21** (Temurin / OpenJDK)
 - **Android SDK** (`compileSdk 36`, `minSdk 24`, `targetSdk 36`)
-- **Gradle 9.3.1** (installed on `PATH`)
+- No global Gradle install is required — use the checked-in wrapper (`./gradlew`, Gradle 9.3.1).
 
 ### Commands
 
 1. **Run Unit & Robolectric Tests**
    ```bash
-   gradle :app:testDebugUnitTest
+   ./gradlew :app:testDebugUnitTest
    ```
 
 2. **Build Debug APK**
    ```bash
-   gradle :app:assembleDebug
+   ./gradlew :app:assembleDebug
    ```
 
 3. **Build ABI-Split Release APKs (Universal + `arm64-v8a` + `armeabi-v7a`)**
@@ -124,11 +126,20 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
    KEYSTORE_PATH=/path/to/your-upload-key.jks \
    STORE_PASSWORD=your_store_password \
    KEY_PASSWORD=your_key_password \
-   gradle :app:assembleRelease -PenableAbiSplits=true
+   CERT_SHA256=<your release cert SHA-256> \
+   ./gradlew :app:assembleRelease -PenableAbiSplits=true
    ```
    Output APKs are written to `app/build/outputs/apk/release/`.
 
+### In-App Update Signing (important for forks)
+`app/build.gradle.kts` bakes `EXPECTED_RELEASE_CERT_SHA256` (overridable via the `CERT_SHA256` env var or the `expectedReleaseCertSha256` Gradle property) into the APK. The in-app updater verifies the downloaded APK against this certificate and **refuses to install anything signed by another key**. If you build your own release, set `CERT_SHA256` to *your* signing certificate's SHA-256, otherwise every in-app update will fail with `UNEXPECTED_SIGNER`.
+
+Optional dependencies:
+- `EIA_API_KEY` (env var) or `-PeiaApiKey=...` — enables the official EIA Brent/WTI spot benchmark; it must be provided at build time because Android apps cannot read shell environment variables.
+- `.env` — only consumed by the Secrets Gradle plugin at build time (see `.env.example`). Live endpoint configuration is fetched at runtime from `chand-live-config.json`; its schema is documented in [`docs/live-config.md`](docs/live-config.md).
+
 ### Automated GitHub Actions Releases
+Pull requests and pushes run `.github/workflows/ci.yml`: unit + Robolectric tests, `assembleDebug`, an ABI-split `assembleRelease` with an ephemeral CI signing key, and a non-blocking `lintDebug` report.
 The workflow in `.github/workflows/release-apk.yml` automatically runs unit & Robolectric tests, increments `versionCode` from `github.run_number` (and `versionName` from `v*` tags or `1.0.<run_number>`), builds all three ABI APKs (`arm64-v8a`, `armeabi-v7a`, `universal`), and publishes a GitHub Release on every push to `main`/`master` or `v*` tag.
 
 Add these Repository Secrets under **Settings → Secrets and variables → Actions** (alias `upload`):

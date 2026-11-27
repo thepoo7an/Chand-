@@ -38,6 +38,17 @@ android {
       .trim()
     buildConfigField("String", "EXPECTED_RELEASE_CERT_SHA256", "\"$expectedReleaseCertSha256\"")
 
+    // Optional U.S. EIA API v2 key for official Brent/WTI spot validation. Must be baked in at
+    // build time: Android app processes cannot read shell environment variables at runtime.
+    // Provide it as `EIA_API_KEY=...` or `-PeiaApiKey=...`; empty by default (feature disabled).
+    val eiaApiKey = (System.getenv("EIA_API_KEY")?.takeIf { it.isNotBlank() }
+      ?: project.findProperty("eiaApiKey")?.toString()?.takeIf { it.isNotBlank() }
+      ?: "")
+      .trim()
+      .replace("\\", "")
+      .replace("\"", "")
+    buildConfigField("String", "EIA_API_KEY", "\"$eiaApiKey\"")
+
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
@@ -113,6 +124,9 @@ secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
+  // EIA_API_KEY is injected explicitly by the buildConfigField above so local `.env` values and
+  // CI env vars can never produce a duplicate BuildConfig field.
+  ignoreList.add("EIA_API_KEY")
 }
 
 dependencies {

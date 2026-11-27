@@ -159,6 +159,34 @@ class PriceMappingTest {
     }
 
     @Test
+    fun `mapFiatAsset never rescales non-JPY IQD quotes and flags the divergence instead`() {
+        val usdToman = 70_000.0
+        val eurSpec = MarketPriceMapper.SUPPORTED_FIATS.first { it.id == "EUR" }
+
+        // A quote roughly 100x above the FX cross-rate must NOT be silently divided by 100.
+        val asset = MarketPriceMapper.mapFiatAsset(
+            spec = eurSpec,
+            usdToman = usdToman,
+            usdChangePct = 0.0,
+            tgjuQuote = MarketPriceMapper.TgjuQuote(
+                priceToman = 7_600_000.0,
+                openToman = 7_600_000.0,
+                highToman = 7_610_000.0,
+                lowToman = 7_590_000.0,
+                changeToman = 0.0,
+                changePct = 0.0
+            ),
+            fxPerUsd = 0.92,
+            usdtSpark = emptyList(),
+            nowMillis = 123_456L
+        )
+
+        assertNotNull(asset)
+        assertEquals(7_600_000.0, asset!!.priceToman, 0.5)
+        assertTrue(asset.disputed)
+    }
+
+    @Test
     fun `mapCryptoAsset multiplies Binance USD by USDT Toman when local TMN markets are absent`() {
         val btcSpec = MarketPriceMapper.SUPPORTED_CRYPTOS.first { it.id == "BTC" }
         val asset = MarketPriceMapper.mapCryptoAsset(

@@ -8,15 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Price Alerts (WorkManager)**: Per-asset upper and/or lower TMN alert thresholds stored in DataStore, a dedicated Alerts management screen (`Alerts`), per-crossing notification alerts without extra manifest permissions, manual re-arm, and a "Test alert" action.
+- **Price Alerts (WorkManager)**: Per-asset upper and/or lower TMN alert thresholds stored in DataStore, a dedicated Alerts management screen (`Alerts`), per-crossing notifications (with the Android 13+ `POST_NOTIFICATIONS` runtime-permission flow), manual re-arm, and a "Test alert" action that reports the real delivery result.
 - **Multi-Source Price Comparison**: Preserved individual Tehran free-market provider quotes (`TGJU`, `Wallex`, `Bitpin`, `Nobitex`) and global benchmark cross-checks, surfaced subtle comparison delta chips on asset cards/rows with divergence flagging (`> 0.5%`), and linked directly to the source breakdown bottom sheet showing both source and fetch timestamps.
 - **Per-Asset Data Freshness Indicator**: Relative freshness age chips across asset cards, list rows, and all 5 Glance widgets (`<= 30m` normal, `> 30m` amber, `> 2h` red) backed by genuine fetch timestamps.
 - **Support Development Card**: Optional open-source repository link card hidden by default behind a Settings toggle (zero ads/analytics preserved).
 - **Iranian Store-Listing Prep**: Added Cafe Bazaar and Myket localized store copy, icons, feature graphics, and screenshots under `docs/store-listing/`.
 
+### Fixed
+- **Price alerts on Android 13+**: Declared and request the `POST_NOTIFICATIONS` runtime permission, added an actionable "Enable notifications" banner (system settings deep link), and made the test-alert action surface failures instead of always reporting success.
+- **Widget background sync after reboot**: Moved the 30-minute periodic widget refresh from a non-persisted `JobScheduler` job to persisted `WorkManager`, so it survives reboots and app upgrades.
+- **Backup / restore**: Backup and device-transfer rules now include the DataStore file that actually holds theme, language, pins, watchlist and price alerts (they previously pointed only at `sharedpref`).
+- **Fiat price safety**: The 100×/1000× TGJU unit normalisation is now applied only to `JPY`/`IQD` (the two symbols TGJU quotes in 100/1000 units). Other currencies keep their raw quote so a genuine cross-source divergence is flagged as `disputed` instead of being silently rescaled into a plausible-but-wrong price.
+- **`EIA_API_KEY` is now build-injected**: Android apps cannot read shell environment variables, so the oil spot validation key is baked into `BuildConfig` from `EIA_API_KEY` / `-PeiaApiKey=` instead of an always-empty `System.getenv` lookup.
+- Notification small icon now uses the monochrome vector instead of a launcher mipmap; removed a dead `&& false` expression in the update metadata fallback path.
+- **Language switch no longer overrides the digit style**: an explicit Persian/Latin digit choice is remembered (new `use_persian_digits_explicit` flag) instead of being reset every time the UI language changes.
+- **Silent failures are now diagnosable**: provider, live-config, widget-sync and background refresh errors are logged through a debug-only `AppLog` facade (release builds stay silent).
+
 ### Changed
 - **Lock-Screen Widget Compatibility**: Split `res/xml/chand_widget_lockscreen_info.xml` (pre-Android 12 home-screen fallback) and `res/xml-v31/chand_widget_lockscreen_info.xml` (`keyguard|home_screen`), plus an Android 12+ notice in Settings on older OS versions.
 - **History Gap Detection & Documentation**: Required at least 5 points before inferring historical chart gaps, and documented category/range spike-removal thresholds in code.
+- **Live-config URL hardening**: Credential-bearing URLs, IP literals, loopback/private/link-local hosts and malformed DNS labels are now rejected before an endpoint override can be applied.
+- **CI**: Pull requests now also build the minified release variant (R8 / keep-rule verification), run Android Lint, upload test/lint reports, and use the checked-in `./gradlew` wrapper (which is now executable).
+- **Documentation**: Accurate permission list, alerts/comparison/freshness features, wrapper-based build commands, in-app update certificate requirements for forks, and a new `docs/live-config.md` schema reference plus `SECURITY.md`.
 - **Versioning & Release Automation**: Aligned local fallback `versionName` to `1.0.0-dev`, logged resolved build version metadata during Gradle configuration, fetched full git history in GitHub Actions, and appended commit ranges to GitHub Release bodies.
 
 ## [1.0.0] - 2026-11-20

@@ -44,6 +44,7 @@ class PreferencesRepository(
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val LANGUAGE = stringPreferencesKey("language")
         val USE_PERSIAN_DIGITS = booleanPreferencesKey("use_persian_digits")
+        val USE_PERSIAN_DIGITS_EXPLICIT = booleanPreferencesKey("use_persian_digits_explicit")
         val IS_GRID_VIEW = booleanPreferencesKey("is_grid_view")
         val PINNED_IDS = stringSetPreferencesKey("pinned_ids")
         val REFRESH_INTERVAL = intPreferencesKey("refresh_interval_seconds")
@@ -140,14 +141,32 @@ class PreferencesRepository(
     }
 
     suspend fun setLanguage(language: AppLanguage) {
-        dataStore.edit {
-            it[Keys.LANGUAGE] = language.name
-            it[Keys.USE_PERSIAN_DIGITS] = (language == AppLanguage.FA)
+        dataStore.edit { prefs ->
+            val previousLanguage = prefs[Keys.LANGUAGE]
+                ?.let { name -> runCatching { AppLanguage.valueOf(name) }.getOrNull() }
+                ?: AppLanguage.FA
+            val storedDigits = prefs[Keys.USE_PERSIAN_DIGITS]
+            // The digit preference only *defaults* to the UI language. Once the user has chosen
+            // explicitly a language switch must not silently undo that choice. Older installs
+            // have no marker, so a stored value that already deviates from the language default
+            // is treated as an explicit choice and promoted to one.
+            val isExplicit = prefs[Keys.USE_PERSIAN_DIGITS_EXPLICIT] == true ||
+                (storedDigits != null && storedDigits != (previousLanguage == AppLanguage.FA))
+
+            prefs[Keys.LANGUAGE] = language.name
+            if (isExplicit) {
+                prefs[Keys.USE_PERSIAN_DIGITS_EXPLICIT] = true
+            } else {
+                prefs[Keys.USE_PERSIAN_DIGITS] = (language == AppLanguage.FA)
+            }
         }
     }
 
     suspend fun setUsePersianDigits(enabled: Boolean) {
-        dataStore.edit { it[Keys.USE_PERSIAN_DIGITS] = enabled }
+        dataStore.edit {
+            it[Keys.USE_PERSIAN_DIGITS] = enabled
+            it[Keys.USE_PERSIAN_DIGITS_EXPLICIT] = true
+        }
     }
 
     suspend fun setIsGridView(isGrid: Boolean) {
