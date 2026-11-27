@@ -1,0 +1,78 @@
+name: Sign live config
+
+# Re-signs chand-live-config.json with the ECDSA P-256 key stored in the
+# LIVE_CONFIG_SIGNING_KEY secret. Requires LIVE_CONFIG_PUBLIC_KEYS (or the committed
+# gradle/live-config-keys.properties) to contain the matching public key.
+
+on:
+  workflow_dispatch:
+    inputs:
+      key_id:
+        description: "Trust-store key id to sign with (e.g. prod-2026-11)"
+        required: true
+        default: prod-2026-11
+      branch:
+        description: "Branch to commit the signed config to"
+        required: true
+        default: main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sign-live-config-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: Sign and verify chand-live-config.json
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Require the signing secret
+        env:
+          SIGNING_KEY: ${{ secrets.LIVE_CONFIG_SIGNING_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::error::LIVE_CONFIG_SIGNING_KEY secret is missing; cannot sign the config."
+            exit 1
+          fi
+          KEY_FILE="$RUNNER_TEMP/live-config-signing-key.pem"
+          printf '%s\n' "$SIGNING_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          echo "LIVE_CONFIG_KEY_FILE=$KEY_FILE" >> "$GITHUB_ENV"
+
+      - name: Sign
+        run: |
+          python3 scripts/sign-live-config.py \
+            --key "$LIVE_CONFIG_KEY_FILE" \
+            --key-id "${{ inputs.key_id }}" \
+            --in chand-live-config.json \
+            --out chand-live-config.json
+
+      - name: Verify with the committed trust store
+        run: |
+          TRUSTED="$(grep -E '^liveConfigPublicKeys=' gradle/live-config-keys.properties | cut -d= -f2-)"
+          if [ -z "$TRUSTED" ]; then
+            echo "::error::gradle/live-config-keys.properties has no liveConfigPublicKeys entry."
+            exit 1
+          fi
+          python3 scripts/verify-live-config.py --config chand-live-config.json --keys "$TRUSTED"
+
+      - name: Commit the signed config
+        run: |
+          rm -f "$LIVE_CONFIG_KEY_FILE"
+          if git diff --quiet -- chand-live-config.json; then
+            echo "Config already signed with this key; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chand-live-config.json
+          git commit -m "chore(live-config): sign with key ${{ inputs.key_id }}"
+          git push origin "HEAD:${{ inputs.branch }}"

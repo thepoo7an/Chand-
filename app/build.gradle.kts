@@ -49,6 +49,27 @@ android {
       .replace("\"", "")
     buildConfigField("String", "EIA_API_KEY", "\"$eiaApiKey\"")
 
+    // Live-config trust store: `keyId:base64SubjectPublicKeyInfo` pairs. Only PUBLIC keys live
+    // here; the matching private key stays outside the repository (LIVE_CONFIG_SIGNING_KEY secret).
+    // Override with LIVE_CONFIG_PUBLIC_KEYS (env) or -PliveConfigPublicKeys=... for forks.
+    val liveConfigKeysFile = rootProject.file("gradle/live-config-keys.properties")
+    val liveConfigKeysFromFile = if (liveConfigKeysFile.exists()) {
+      java.util.Properties().apply {
+        liveConfigKeysFile.inputStream().use { stream -> load(stream) }
+      }.getProperty("liveConfigPublicKeys").orEmpty()
+    } else {
+      ""
+    }
+    val liveConfigPublicKeys = (
+      System.getenv("LIVE_CONFIG_PUBLIC_KEYS")?.takeIf { it.isNotBlank() }
+        ?: project.findProperty("liveConfigPublicKeys")?.toString()?.takeIf { it.isNotBlank() }
+        ?: liveConfigKeysFromFile
+      )
+      .trim()
+      .replace("\\", "")
+      .replace("\"", "")
+    buildConfigField("String", "LIVE_CONFIG_PUBLIC_KEYS", "\"$liveConfigPublicKeys\"")
+
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 

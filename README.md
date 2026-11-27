@@ -136,6 +136,7 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
 
 Optional dependencies:
 - `EIA_API_KEY` (env var) or `-PeiaApiKey=...` — enables the official EIA Brent/WTI spot benchmark; it must be provided at build time because Android apps cannot read shell environment variables.
+- `LIVE_CONFIG_PUBLIC_KEYS` (env) or `-PliveConfigPublicKeys=keyId:base64,...` — replaces the trust store in `gradle/live-config-keys.properties`. The runtime config `chand-live-config.json` must be **signed** (ECDSA P-256) with a key the build trusts; see [`docs/live-config.md`](docs/live-config.md) for the canonical payload, the signing script and key rotation.
 - `.env` — only consumed by the Secrets Gradle plugin at build time (see `.env.example`). Live endpoint configuration is fetched at runtime from `chand-live-config.json`; its schema is documented in [`docs/live-config.md`](docs/live-config.md).
 
 ### Automated GitHub Actions Releases

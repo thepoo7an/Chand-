@@ -994,8 +994,15 @@ fun SettingsSheet(
                                 )
                             }
                             is RemoteConfigUiState.Error -> {
+                                val signatureRejected =
+                                    liveConfigSyncState.message.startsWith("config_signature") ||
+                                        liveConfigSyncState.message == "config_unsigned"
                                 Text(
-                                    text = "${strings.liveConfigErrorLabel}: ${liveConfigSyncState.message}",
+                                    text = if (signatureRejected) {
+                                        strings.liveConfigSignatureErrorLabel
+                                    } else {
+                                        "${strings.liveConfigErrorLabel}: ${liveConfigSyncState.message}"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = marketColors.loss
                                 )

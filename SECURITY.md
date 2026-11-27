@@ -20,16 +20,17 @@ out of scope.
 | Surface | Mitigation |
 | --- | --- |
 | In-app APK updater (`REQUEST_INSTALL_PACKAGES`) | HTTPS-only with an allowlist of GitHub/CDN hosts, redirect-downgrade rejection, mandatory SHA-256 + size from `chand-update-metadata.json`, ZIP/APK structure checks, exact package name, strictly newer `versionCode`, and a **pinned release signing certificate** (`EXPECTED_RELEASE_CERT_SHA256`). Anything that fails verification is deleted. |
-| Live configuration (`chand-live-config.json`) | HTTPS-only, DNS-host validation (no credentials in URL, no IP literals, no loopback/private/link-local hosts), numeric range clamping, `USD` cannot be disabled. **The config is not signed**, so it is trusted only as far as the repository/CDN that serves it. |
+| Live configuration (`chand-live-config.json`) | HTTPS-only, DNS-host validation (no credentials in URL, no IP literals, no loopback/private/link-local hosts), numeric range clamping, `USD` cannot be disabled, and a mandatory **ECDSA P-256 signature** over a canonical payload verified against a pinned public key before anything is applied. Signatures reject tampered configs, unknown key ids and (once a trust store is configured) unsigned documents. |
 | Market data providers | No credentials are sent; prices are cross-checked across sources with divergence flagging, and stale/implausible quotes are excluded from consensus. |
 | FileProvider | Exposes only `cache/updates/`, `exported="false"`, per-URI read grants for the installer intent. |
 | Permissions | `INTERNET`, `ACCESS_NETWORK_STATE`, `POST_NOTIFICATIONS`, `REQUEST_INSTALL_PACKAGES`. No analytics, ads, location, camera or storage access. |
 
 ## Known residual risks (documented, not fixed)
 
-- **Unsigned live configuration** — whoever controls the published config URL controls the price
-  endpoints and validation tolerances. Mitigation today is operational (protected branch, reviewed
-  commits). A signed-config scheme is the planned hardening step.
+- **Live-config signing key custody** — the config is signed, so the remaining risk is the private
+  key: store it as the `LIVE_CONFIG_SIGNING_KEY` Actions secret, never in the repository, and rotate
+  it with the documented two-key window. Forks that clear the trust store fall back to accepting
+  unsigned configs (debug-logged) for local development only.
 - **Third-party data feeds** — provider outages, rate limits or upstream changes can make prices
   stale; the UI surfaces freshness and source attribution instead of hiding it.
 - **Self-signed / ephemeral test builds** published from CI when release secrets are absent are

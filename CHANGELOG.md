@@ -27,8 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Lock-Screen Widget Compatibility**: Split `res/xml/chand_widget_lockscreen_info.xml` (pre-Android 12 home-screen fallback) and `res/xml-v31/chand_widget_lockscreen_info.xml` (`keyguard|home_screen`), plus an Android 12+ notice in Settings on older OS versions.
 - **History Gap Detection & Documentation**: Required at least 5 points before inferring historical chart gaps, and documented category/range spike-removal thresholds in code.
+- **Signed live configuration**: `chand-live-config.json` now carries an ECDSA P-256 signature (`signature` + `keyId`) verified against a pinned trust store (`gradle/live-config-keys.properties`) before any endpoint, threshold or asset catalog change is applied; tampered, unknown-key and unsigned configs are rejected and the previous config is kept. Signing/verification tooling lives in `scripts/` and the committed config is verified by both CI and a unit test.
 - **Live-config URL hardening**: Credential-bearing URLs, IP literals, loopback/private/link-local hosts and malformed DNS labels are now rejected before an endpoint override can be applied.
 - **CI**: Pull requests now also build the minified release variant (R8 / keep-rule verification), run Android Lint, upload test/lint reports, and use the checked-in `./gradlew` wrapper (which is now executable).
+- **Live-config signature operations**: `docs/live-config.md` documents the canonical payload, trust store, key rotation and the manual **Sign live config** workflow (`.github/workflows/sign-live-config.yml`).
 - **Documentation**: Accurate permission list, alerts/comparison/freshness features, wrapper-based build commands, in-app update certificate requirements for forks, and a new `docs/live-config.md` schema reference plus `SECURITY.md`.
 - **Versioning & Release Automation**: Aligned local fallback `versionName` to `1.0.0-dev`, logged resolved build version metadata during Gradle configuration, fetched full git history in GitHub Actions, and appended commit ranges to GitHub Release bodies.
 

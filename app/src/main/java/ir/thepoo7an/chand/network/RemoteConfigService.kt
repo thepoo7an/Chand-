@@ -310,6 +310,8 @@ class RemoteConfigService(
             var sawHttp404Only = true
             var lastError = ""
             var parsedIncompatible: RemoteConfigSyncResult.IncompatibleVersion? = null
+            // Trust store baked in at build time; empty means signature enforcement is opted out.
+            val trustedKeys = LiveConfigSignature.parseTrustedKeys(BuildConfig.LIVE_CONFIG_PUBLIC_KEYS)
 
             for (url in urls) {
                 val outcome = NetworkConfig.executeGetWithRetry(
@@ -320,6 +322,26 @@ class RemoteConfigService(
                 when (outcome) {
                     is NetworkOutcome.Success -> {
                         sawHttp404Only = false
+                        // Verify before parsing: a tampered or unknown-key config must never be
+                        // applied, and a signature error is not "no config published".
+                        when (val signatureCheck = LiveConfigSignature.verify(outcome.data, trustedKeys)) {
+                            is LiveConfigSignatureCheck.Invalid -> {
+                                AppLog.w(
+                                    "Rejected live config from $url (${signatureCheck.reason})"
+                                )
+                                lastError = "config_signature_${signatureCheck.reason}"
+                                continue
+                            }
+                            LiveConfigSignatureCheck.Unsigned -> {
+                                if (trustedKeys.isNotEmpty()) {
+                                    AppLog.w("Rejected unsigned live config from $url")
+                                    lastError = "config_unsigned"
+                                    continue
+                                }
+                                AppLog.d("Live config from $url is unsigned and no keys are configured")
+                            }
+                            is LiveConfigSignatureCheck.Valid -> Unit
+                        }
                         val parsed = parseConfigJson(outcome.data)
                         if (parsed != null) {
                             if (!LiveConfigRegistry.isCompatible(parsed, appVersionCode)) {

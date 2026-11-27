@@ -21,3 +21,11 @@ debug.keystore
 /dist
 /.build-outputs/
 /.aistudio/
+
+# Live-config signing key (never commit private keys)
+.live-config-signing-key.pem
+*.live-config-signing-key.pem
+
+# Python tooling cache
+__pycache__/
+*.pyc
