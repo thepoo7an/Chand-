@@ -89,14 +89,16 @@ jobs:
       - name: Summarise test failures as annotations
         if: steps.unit_tests.outcome == 'failure'
         run: |
-          log="$RUNNER_TEMP/gradle-tests.log"
-          # One annotation per failing test, with its message/stack joined onto a single line
-          # (GitHub only renders single-line annotations from `::error::`).
-          grep -n " FAILED$" "$log" | head -8 | cut -d: -f1 | while IFS= read -r n; do
-            sed -n "${n},$((n + 6))p" "$log" | tr '\n' '|' | sed 's/%/%25/g'
-            echo
-          done | sed 's/^/::error::/'
-          grep -E "^e: " "$log" | head -4 | sed 's/%/%25/g' | sed 's/^/::error::/'
+          # JUnit XML carries the assertion message/stack, which Gradle's console summary omits.
+          for x in app/build/test-results/testDebugUnitTest/TEST-*.xml; do
+            [ -f "$x" ] || continue
+            awk '/<testcase / { if (match($0, /name="[^"]*"/)) n = substr($0, RSTART + 6, RLENGTH - 7) }
+                 /<failure /  { if (match($0, /message="[^"]*"/)) {
+                                  m = substr($0, RSTART + 9, RLENGTH - 10)
+                                  gsub(/[\r\n]+/, " ", m)
+                                  print n " :: " m } }' "$x"
+          done | head -8 | cut -c1-1200 | sed 's/%/%25/g' | sed 's/^/::error::/'
+          grep -E "^e: " "$RUNNER_TEMP/gradle-tests.log" | head -3 | sed 's/%/%25/g' | sed 's/^/::error::/'
           exit 1
 
       - name: Build Debug APK
