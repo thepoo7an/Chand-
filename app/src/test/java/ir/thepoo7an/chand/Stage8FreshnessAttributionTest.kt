@@ -10,6 +10,7 @@ import ir.thepoo7an.chand.model.SourceCandidateRecord
 import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.network.FinancialApiService
 import ir.thepoo7an.chand.network.HistoryNormalizer
+import ir.thepoo7an.chand.network.BitpinMarketService
 import ir.thepoo7an.chand.network.LiveConfigRegistry
 import ir.thepoo7an.chand.network.MarketPriceMapper
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
@@ -71,7 +72,7 @@ class Stage8FreshnessAttributionTest {
         )
         assertEquals(0L, wallex.getValue("USDT").timestampMillis)
 
-        val bitpin = MarketRemoteDataSource.parseBitpinQuotesPayload(
+        val bitpin = BitpinMarketService.parseQuotesPayload(
             """{"results":[{"currency1":{"code":"USDT"},"currency2":{"code":"IRT"},"price_info":{"price":"71250","change":0.2}}]}""",
             nowMillis = now
         )

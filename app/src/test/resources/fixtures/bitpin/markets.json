@@ -1,0 +1,54 @@
+{
+  "count": 6,
+  "results": [
+    {
+      "id": 1,
+      "currency1": { "code": "BTC", "title": "Bitcoin" },
+      "currency2": { "code": "IRT", "title": "Toman" },
+      "price": "61250000000",
+      "price_info": {
+        "price": "61250000000",
+        "change": 1.42,
+        "updated_at": "2025-11-27T10:15:00Z"
+      }
+    },
+    {
+      "id": 2,
+      "currency1": { "code": "BTC", "title": "Bitcoin" },
+      "currency2": { "code": "USDT", "title": "Tether" },
+      "price": "93500.5",
+      "price_info": {
+        "price": "93500.5",
+        "change": 1.1,
+        "updated_at": "2025-11-27T10:16:00Z"
+      }
+    },
+    {
+      "id": 3,
+      "currency1": { "code": "ETH", "title": "Ethereum" },
+      "currency2": { "code": "USDT", "title": "Tether" },
+      "price": "3520.75",
+      "price_info": { "price": "3520.75", "change": -0.8 }
+    },
+    {
+      "id": 4,
+      "currency1": { "code": "USDT", "title": "Tether" },
+      "currency2": { "code": "IRT", "title": "Toman" },
+      "price": "71280",
+      "price_info": { "price": "71,280", "change": 0.35, "updated_at": 1764240000 }
+    },
+    {
+      "id": 5,
+      "currency1": { "code": "DOGE", "title": "Dogecoin" },
+      "currency2": { "code": "BTC", "title": "Bitcoin" },
+      "price": "0.00000031",
+      "price_info": { "price": "0.00000031", "change": 2.0 }
+    },
+    {
+      "id": 6,
+      "currency1": { "code": "TRX", "title": "Tron" },
+      "currency2": { "code": "IRT", "title": "Toman" },
+      "price_info": { "price": "0", "change": 0 }
+    }
+  ]
+}

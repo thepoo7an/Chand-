@@ -28,7 +28,8 @@ import kotlin.math.abs
 class MarketRemoteDataSource(
     private val client: OkHttpClient = NetworkConfig.sharedClient,
     private val financialApi: FinancialApiService = FinancialApiService(client),
-    private val oilApi: OilApiService = OilApiService(client)
+    private val oilApi: OilApiService = OilApiService(client),
+    private val bitpinApi: BitpinMarketService = BitpinMarketService(client)
 ) : MarketDataSource {
 
     private val liveMarketDeduplicator = InFlightRequestDeduplicator<String, RemoteFetchResult>()
@@ -1016,15 +1017,8 @@ class MarketRemoteDataSource(
         return parseWallexUdfPayload(raw, spikeThresholdPct = spikeThresholdPct)
     }
 
-    private suspend fun fetchBitpinQuotes(nowMillis: Long): Map<String, ExchangeQuote> {
-        val url = LiveConfigRegistry.currentConfig().endpoints.bitpinMarketsUrl
-            .ifBlank { "https://api.bitpin.ir/v1/mkt/markets/" }
-        val raw = executeGet(
-            url = url,
-            profile = NetworkConfig.RequestProfile.FAST_QUOTE
-        ) ?: return emptyMap()
-        return parseBitpinQuotesPayload(raw, nowMillis)
-    }
+    private suspend fun fetchBitpinQuotes(nowMillis: Long): Map<String, ExchangeQuote> =
+        bitpinApi.fetchQuotes(nowMillis)
 
     private suspend fun fetchBinanceQuotes(
         nowMillis: Long,
@@ -1323,18 +1317,8 @@ class MarketRemoteDataSource(
             map
         }.getOrDefault(emptyMap())
 
-        internal fun parseTgjuTimestampMillis(raw: String?): Long? {
-            if (raw.isNullOrBlank()) return null
-            val trimmed = raw.trim()
-            val tz = TimeZone.getTimeZone("Asia/Tehran")
-            val patterns = listOf("yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy/MM/dd HH:mm:ss")
-            for (pattern in patterns) {
-                val sdf = SimpleDateFormat(pattern, Locale.US).apply { timeZone = tz }
-                val parsed = runCatching { sdf.parse(trimmed)?.time }.getOrNull()
-                if (parsed != null && parsed > 0L) return parsed
-            }
-            return null
-        }
+        internal fun parseTgjuTimestampMillis(raw: String?): Long? =
+            ProviderParsing.parseTgjuTimestampMillis(raw)
 
         internal fun tgjuTableScaleForSlug(slug: String): Double = when (slug.trim().lowercase(Locale.US)) {
             "price_jpy" -> 0.001   // TGJU quotes Rials per 100 JPY -> /1000 = Toman per 1 JPY
@@ -1437,56 +1421,6 @@ class MarketRemoteDataSource(
             result
         }.getOrDefault(emptyMap())
 
-        internal fun parseBitpinQuotesPayload(
-            raw: String,
-            nowMillis: Long = System.currentTimeMillis()
-        ): Map<String, ExchangeQuote> = runCatching {
-            val root = JSONObject(raw)
-            val results = root.optJSONArray("results") ?: return emptyMap()
-            val rootTs = parseQuoteTimestampMillis(root)
-            data class BitpinSide(val price: Double, val change: Double, val timestampMillis: Long)
-            val tmnPrices = mutableMapOf<String, BitpinSide>()
-            val usdtPrices = mutableMapOf<String, BitpinSide>()
-
-            for (i in 0 until results.length()) {
-                val item = results.optJSONObject(i) ?: continue
-                val base = item.optJSONObject("currency1")?.optString("code")
-                    ?: item.optJSONObject("base_currency")?.optString("code")
-                    ?: continue
-                val quote = item.optJSONObject("currency2")?.optString("code")
-                    ?: item.optJSONObject("quote_currency")?.optString("code")
-                    ?: continue
-                val priceInfo = item.optJSONObject("price_info")
-                val price = parseNumeric(priceInfo?.optString("price"))
-                    ?: parseNumeric(item.optString("price"))
-                    ?: continue
-                val change = priceInfo?.optDouble("change", 0.0) ?: 0.0
-                val itemTs = parseQuoteTimestampMillis(priceInfo, item).takeIf { it > 0L } ?: rootTs
-                if (quote == "IRT" && price > 0) {
-                    tmnPrices[base] = BitpinSide(price, change, itemTs)
-                } else if (quote == "USDT" && price > 0) {
-                    usdtPrices[base] = BitpinSide(price, change, itemTs)
-                }
-            }
-
-            val allBases = tmnPrices.keys + usdtPrices.keys
-            val map = mutableMapOf<String, ExchangeQuote>()
-            for (base in allBases) {
-                val tmn = tmnPrices[base]
-                val usdt = usdtPrices[base]
-                val ts = tmn?.timestampMillis?.takeIf { it > 0L }
-                    ?: usdt?.timestampMillis?.takeIf { it > 0L }
-                    ?: 0L
-                map[base] = ExchangeQuote(
-                    priceToman = tmn?.price,
-                    priceUsd = usdt?.price,
-                    changePct = tmn?.change ?: usdt?.change ?: 0.0,
-                    timestampMillis = ts
-                )
-            }
-            map
-        }.getOrDefault(emptyMap())
-
         internal fun parseBinanceQuotesPayload(
             raw: String,
             nowMillis: Long = System.currentTimeMillis()
@@ -1528,35 +1462,8 @@ class MarketRemoteDataSource(
             (lastRial / 10.0) to ts
         }.getOrNull()
 
-        private fun parseQuoteTimestampMillis(vararg objects: JSONObject?): Long {
-            val candidateKeys = listOf("updated_at", "updatedAt", "lastUpdate", "last_update", "timestamp", "ts", "time")
-            for (obj in objects) {
-                if (obj == null) continue
-                for (key in candidateKeys) {
-                    if (!obj.has(key) || obj.isNull(key)) continue
-                    val rawVal = obj.opt(key) ?: continue
-                    when (rawVal) {
-                        is Number -> {
-                            val num = rawVal.toLong()
-                            if (num > 0L) {
-                                return if (num < 10_000_000_000L) num * 1000L else num
-                            }
-                        }
-                        is String -> {
-                            val trimmed = rawVal.trim()
-                            if (trimmed.isEmpty()) continue
-                            val numeric = trimmed.toLongOrNull()
-                            if (numeric != null && numeric > 0L) {
-                                return if (numeric < 10_000_000_000L) numeric * 1000L else numeric
-                            }
-                            FinancialApiService.parseIsoTimestampMillis(trimmed)?.let { return it }
-                            parseTgjuTimestampMillis(trimmed)?.let { return it }
-                        }
-                    }
-                }
-            }
-            return 0L
-        }
+        private fun parseQuoteTimestampMillis(vararg objects: JSONObject?): Long =
+            ProviderParsing.parseQuoteTimestampMillis(*objects)
 
         internal fun parseWallexUdfPayload(
             raw: String,
@@ -1647,23 +1554,6 @@ class MarketRemoteDataSource(
             }
         }.getOrDefault(emptyList())
 
-        internal fun parseNumeric(raw: String?): Double? {
-            if (raw.isNullOrBlank()) return null
-            val noHtml = raw.replace(Regex("<[^>]*>"), " ")
-            val ascii = StringBuilder(noHtml.length)
-            for (ch in noHtml) {
-                ascii.append(
-                    when (ch) {
-                        in '۰'..'۹' -> ('0' + (ch - '۰'))
-                        in '٠'..'٩' -> ('0' + (ch - '٠'))
-                        '−', '–' -> '-'
-                        ',', '٬', ' ', '\u00A0' -> continue
-                        else -> ch
-                    }
-                )
-            }
-            val match = Regex("-?\\d+(?:\\.\\d+)?").find(ascii.toString()) ?: return null
-            return match.value.toDoubleOrNull()
-        }
+        internal fun parseNumeric(raw: String?): Double? = ProviderParsing.parseNumeric(raw)
     }
 }

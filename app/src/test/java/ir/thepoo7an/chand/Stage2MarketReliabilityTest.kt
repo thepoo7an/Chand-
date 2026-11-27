@@ -3,6 +3,7 @@ package ir.thepoo7an.chand
 import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.network.BitpinMarketService
 import ir.thepoo7an.chand.network.FinancialApiService
 import ir.thepoo7an.chand.network.MarketPriceMapper
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
@@ -127,7 +128,7 @@ class Stage2MarketReliabilityTest {
               ]
             }
         """.trimIndent()
-        val bitpin = MarketRemoteDataSource.parseBitpinQuotesPayload(bitpinJson, now)
+        val bitpin = BitpinMarketService.parseQuotesPayload(bitpinJson, now)
         assertEquals(71_300.0, bitpin["USDT"]?.priceToman ?: 0.0, 0.01)
 
         val binanceJson = """
