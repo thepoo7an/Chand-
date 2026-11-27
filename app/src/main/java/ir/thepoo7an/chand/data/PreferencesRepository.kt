@@ -20,6 +20,7 @@ import ir.thepoo7an.chand.model.PriceAlert
 import ir.thepoo7an.chand.model.RemoteAppConfig
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.network.LiveConfigRegistry
+import ir.thepoo7an.chand.util.AppLog
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
@@ -62,7 +63,15 @@ class PreferencesRepository(
         val SHOW_SUPPORT_CARD = booleanPreferencesKey("show_support_card")
         val COMPARISON_ASSET_IDS = stringSetPreferencesKey("comparison_asset_ids")
         val PRICE_ALERTS_JSON = stringPreferencesKey("price_alerts_json")
+        val LIVE_CONFIG_FAILURE_STREAK = intPreferencesKey("live_config_failure_streak")
+        val LIVE_CONFIG_REVERTED_VERSION = intPreferencesKey("live_config_reverted_version")
     }
+
+    /**
+     * Number of consecutive fully-failed market refreshes tolerated before a remote live config is
+     * rolled back to the built-in defaults.
+     */
+    private val liveConfigFailureThreshold = 3
 
     private val safeDataFlow: Flow<Preferences> = dataStore.data.catch { throwable ->
         if (throwable is IOException) {
@@ -236,9 +245,19 @@ class PreferencesRepository(
         dataStore.edit { it[Keys.PRICE_ALERTS_JSON] = encoded }
     }
 
-    suspend fun hydrateLiveConfig(): RemoteAppConfig {
+    suspend fun hydrateLiveConfig(nowMillis: Long = System.currentTimeMillis()): RemoteAppConfig {
         val raw = runCatching { safeDataFlow.first()[Keys.LIVE_CONFIG_JSON] }.getOrNull()
         val parsed = decodeAndSanitizeConfig(raw)
+        if (parsed != null && LiveConfigRegistry.isExpired(parsed, nowMillis)) {
+            // Expired publication: forget it instead of keeping stale endpoints alive forever.
+            AppLog.w("Discarding expired live config v${parsed.configVersion}")
+            dataStore.edit { prefs ->
+                prefs.remove(Keys.LIVE_CONFIG_JSON)
+                prefs.remove(Keys.LIVE_CONFIG_LAST_SYNC)
+            }
+            LiveConfigRegistry.resetToDefault()
+            return LiveConfigRegistry.currentConfig()
+        }
         if (parsed != null) {
             LiveConfigRegistry.applyConfig(parsed)
             return parsed
@@ -246,22 +265,90 @@ class PreferencesRepository(
         return LiveConfigRegistry.currentConfig()
     }
 
-    suspend fun saveLiveConfig(config: RemoteAppConfig, syncedAtMillis: Long) {
+    /**
+     * Persists and applies [config]. Returns `false` when the config was deliberately suppressed:
+     * a version that already caused a self-healing rollback is never re-applied, so a mirror still
+     * serving the broken document cannot undo the recovery. Bump `configVersion` after fixing it.
+     */
+    suspend fun saveLiveConfig(config: RemoteAppConfig, syncedAtMillis: Long): Boolean {
         val clean = LiveConfigRegistry.sanitizeConfig(config)
+        if (LiveConfigRegistry.isExpired(clean)) {
+            AppLog.w("Refusing to persist expired live config v${clean.configVersion}")
+            return false
+        }
+        val revertedVersion = currentRevertedVersion()
+        if (clean.configVersion <= revertedVersion) {
+            AppLog.w(
+                "Suppressing live config v${clean.configVersion}; v$revertedVersion was rolled back"
+            )
+            return false
+        }
         val encoded = json.encodeToString(clean)
         dataStore.edit { prefs ->
             prefs[Keys.LIVE_CONFIG_JSON] = encoded
             prefs[Keys.LIVE_CONFIG_LAST_SYNC] = syncedAtMillis
+            prefs[Keys.LIVE_CONFIG_FAILURE_STREAK] = 0
         }
         LiveConfigRegistry.applyConfig(clean)
+        return true
     }
 
     suspend fun resetLiveConfig() {
         dataStore.edit { prefs ->
             prefs.remove(Keys.LIVE_CONFIG_JSON)
             prefs.remove(Keys.LIVE_CONFIG_LAST_SYNC)
+            prefs.remove(Keys.LIVE_CONFIG_FAILURE_STREAK)
+            // An explicit reset is the user overriding the guard, so allow the same version again.
+            prefs.remove(Keys.LIVE_CONFIG_REVERTED_VERSION)
         }
         LiveConfigRegistry.resetToDefault()
+    }
+
+    suspend fun currentRevertedVersion(): Int =
+        runCatching { safeDataFlow.first()[Keys.LIVE_CONFIG_REVERTED_VERSION] }.getOrNull() ?: 0
+
+    /**
+     * Records the outcome of a full market refresh and performs the self-healing rollback when
+     * [liveConfigFailureThreshold] consecutive refreshes produced no live data at all.
+     *
+     * @return `true` when the remote config was rolled back by this call.
+     */
+    suspend fun recordMarketRefreshOutcome(success: Boolean): Boolean {
+        if (success) {
+            val streak = runCatching {
+                safeDataFlow.first()[Keys.LIVE_CONFIG_FAILURE_STREAK]
+            }.getOrNull() ?: 0
+            if (streak != 0) {
+                dataStore.edit { prefs -> prefs[Keys.LIVE_CONFIG_FAILURE_STREAK] = 0 }
+            }
+            return false
+        }
+
+        val active = LiveConfigRegistry.currentConfig()
+        if (active.isBuiltInDefault) {
+            // Nothing remote is applied, so there is nothing that could be "fixed" by a rollback.
+            return false
+        }
+
+        val streak = (runCatching {
+            safeDataFlow.first()[Keys.LIVE_CONFIG_FAILURE_STREAK]
+        }.getOrNull() ?: 0) + 1
+        if (streak < liveConfigFailureThreshold) {
+            dataStore.edit { prefs -> prefs[Keys.LIVE_CONFIG_FAILURE_STREAK] = streak }
+            return false
+        }
+
+        AppLog.w(
+            "Rolling back live config v${active.configVersion} after $streak failed refreshes"
+        )
+        dataStore.edit { prefs ->
+            prefs.remove(Keys.LIVE_CONFIG_JSON)
+            prefs.remove(Keys.LIVE_CONFIG_LAST_SYNC)
+            prefs[Keys.LIVE_CONFIG_FAILURE_STREAK] = 0
+            prefs[Keys.LIVE_CONFIG_REVERTED_VERSION] = active.configVersion
+        }
+        LiveConfigRegistry.resetToDefault()
+        return true
     }
 
     suspend fun togglePin(assetId: String): Set<String> {

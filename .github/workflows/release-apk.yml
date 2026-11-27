@@ -72,6 +72,15 @@ jobs:
             exit 1
           fi
 
+      - name: Verify live-config signature
+        run: |
+          TRUSTED="$(grep -E '^liveConfigPublicKeys=' gradle/live-config-keys.properties | cut -d= -f2-)"
+          if [ -z "$TRUSTED" ]; then
+            echo "::warning::No live-config trust store configured; skipping signature verification."
+            exit 0
+          fi
+          python3 scripts/verify-live-config.py --config chand-live-config.json --keys "$TRUSTED"
+
       - name: Prepare release signing configuration
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}

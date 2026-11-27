@@ -21,6 +21,7 @@ import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.updateAll
 import ir.thepoo7an.chand.data.PreferencesRepository
+import ir.thepoo7an.chand.data.SnapshotPolicy
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
 import ir.thepoo7an.chand.network.InFlightRequestDeduplicator
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
@@ -144,11 +145,12 @@ object WidgetSyncCoordinator {
 
         scope.launch {
             val prefsRepo = PreferencesRepository(appContext)
-            val snapshotAgeMs = prefsRepo.loadCachedSnapshot()?.let {
-                System.currentTimeMillis() - it.updatedAtMillis
-            } ?: Long.MAX_VALUE
+            val snapshot = prefsRepo.loadCachedSnapshot()
 
-            if (transitionedFromOffline || snapshotAgeMs > 30_000L) {
+            if (
+                transitionedFromOffline ||
+                SnapshotPolicy.shouldRevalidate(snapshot?.updatedAtMillis, System.currentTimeMillis())
+            ) {
                 syncWidgetsNow(appContext, force = transitionedFromOffline)
             }
         }
@@ -174,11 +176,10 @@ object WidgetSyncCoordinator {
             val prefsRepo = PreferencesRepository(appContext)
             runCatching { prefsRepo.hydrateLiveConfig() }
             if (!hasAnyActiveWidgets(appContext)) return@launch
+            // Paint from cache first, then decide whether the cache is still worth trusting.
             updateAllWidgets(appContext)
-            val snapshotAgeMs = prefsRepo.loadCachedSnapshot()?.let {
-                System.currentTimeMillis() - it.updatedAtMillis
-            } ?: Long.MAX_VALUE
-            if (snapshotAgeMs > 30_000L) {
+            val snapshot = prefsRepo.loadCachedSnapshot()
+            if (SnapshotPolicy.shouldRevalidate(snapshot?.updatedAtMillis, System.currentTimeMillis())) {
                 syncWidgetsNow(appContext, force = false)
             }
         }
@@ -198,9 +199,10 @@ object WidgetSyncCoordinator {
         }
 
         return syncDeduplicator.execute("widget_sync") {
+            // Hoisted out of the try: the failure path must be able to report the outcome too.
+            val prefsRepo = PreferencesRepository(appContext)
             try {
                 val remote = MarketRemoteDataSource()
-                val prefsRepo = PreferencesRepository(appContext)
                 prefsRepo.hydrateLiveConfig()
                 val cached = prefsRepo.loadCachedSnapshot()
                 val cachedById = cached?.assets?.associateBy { it.id }.orEmpty()
@@ -220,21 +222,42 @@ object WidgetSyncCoordinator {
                     )
                     lastSyncElapsedMs.set(SystemClock.elapsedRealtime())
                     cancelPendingConnectivitySync(appContext)
+                    recordRefreshOutcome(prefsRepo, success = true)
                     updateAllWidgets(appContext)
                     true
                 } else {
+                    // A widget-only user never opens the app, so this path has to feed the same
+                    // live-config self-healing counters the in-app refresh does.
+                    val rolledBack = recordRefreshOutcome(prefsRepo, success = false)
                     schedulePendingConnectivitySync(appContext)
+                    if (rolledBack) updateAllWidgets(appContext)
                     false
                 }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
                 AppLog.e("Widget sync failed; scheduling a connectivity retry", t)
+                val rolledBack = recordRefreshOutcome(prefsRepo, success = false)
                 schedulePendingConnectivitySync(appContext)
+                if (rolledBack) updateAllWidgets(appContext)
                 false
             }
         }
     }
+
+    /**
+     * Reports a widget-only refresh to the live-config failure streak. Returns `true` when this
+     * failure tripped the self-healing rollback, so the caller can repaint with the default
+     * endpoints. Never throws: a bookkeeping problem must not abort a widget sync.
+     */
+    private suspend fun recordRefreshOutcome(
+        prefsRepo: PreferencesRepository,
+        success: Boolean
+    ): Boolean = runCatching {
+        prefsRepo.recordMarketRefreshOutcome(success)
+    }.onFailure {
+        AppLog.w("Could not record the widget refresh outcome", it)
+    }.getOrDefault(false)
 
     suspend fun hasAnyActiveWidgets(context: Context): Boolean {
         val appContext = context.applicationContext

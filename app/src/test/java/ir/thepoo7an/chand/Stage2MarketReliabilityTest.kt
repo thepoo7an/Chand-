@@ -3,9 +3,11 @@ package ir.thepoo7an.chand
 import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.network.BitpinMarketService
 import ir.thepoo7an.chand.network.FinancialApiService
 import ir.thepoo7an.chand.network.MarketPriceMapper
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
+import ir.thepoo7an.chand.network.WallexMarketService
 import ir.thepoo7an.chand.network.MarketValidationConfig
 import ir.thepoo7an.chand.network.TomanRateBasis
 import org.junit.Assert.assertEquals
@@ -111,7 +113,7 @@ class Stage2MarketReliabilityTest {
               }
             }
         """.trimIndent()
-        val wallex = MarketRemoteDataSource.parseWallexQuotesPayload(wallexJson, now)
+        val wallex = WallexMarketService.parseQuotesPayload(wallexJson, now)
         assertEquals(71_250.0, wallex["USDT"]?.priceToman ?: 0.0, 0.01)
         assertEquals(71_600.0, wallex["USDT"]?.highToman ?: 0.0, 0.01)
         assertEquals(70_800.0, wallex["USDT"]?.lowToman ?: 0.0, 0.01)
@@ -127,7 +129,7 @@ class Stage2MarketReliabilityTest {
               ]
             }
         """.trimIndent()
-        val bitpin = MarketRemoteDataSource.parseBitpinQuotesPayload(bitpinJson, now)
+        val bitpin = BitpinMarketService.parseQuotesPayload(bitpinJson, now)
         assertEquals(71_300.0, bitpin["USDT"]?.priceToman ?: 0.0, 0.01)
 
         val binanceJson = """

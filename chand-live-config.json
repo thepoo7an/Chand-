@@ -49,5 +49,7 @@
       "titleEn": "Enabled automatic online sync for API endpoints and market validation rules",
       "category": "CONFIG"
     }
-  ]
+  ],
+  "signature": "MEUCIAyHTKS4vXPGR+dQThIsGY8tzSLwBM6IzCuIF5SgyUmkAiEAi+1fp4xcil8gqxDObCTBtJ7X2eJLQcrgq3v+7TjniZI=",
+  "keyId": "prod-2026-11"
 }

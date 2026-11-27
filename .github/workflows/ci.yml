@@ -36,6 +36,9 @@ jobs:
       - name: Run version script self-tests
         run: bash scripts/test-compute-version.sh
 
+      - name: Run live-config signature self-tests
+        run: bash scripts/test-live-config-signature.sh
+
       - name: Prepare debug keystore
         run: |
           if [ ! -s debug.keystore ] && [ -s debug.keystore.base64 ]; then

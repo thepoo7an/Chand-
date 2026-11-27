@@ -173,7 +173,8 @@ class LiveConfigAndBugfixTest {
                     .build()
             }
             .build()
-        val service = RemoteConfigService(client)
+        // Signature enforcement is covered by LiveConfigSignatureTest.
+        val service = RemoteConfigService(client, trustedConfigKeys = emptyMap())
         val res = service.fetchLiveConfig(
             repoSlug = "thepoo7an/chand-iran-currency-gold-crypto",
             customConfigUrl = "https://custom.example.com/live.json",
@@ -231,7 +232,7 @@ class LiveConfigAndBugfixTest {
             context = context,
             prefsRepo = prefsRepo,
             remote = MarketRemoteDataSource(),
-            remoteConfigService = RemoteConfigService(client)
+            remoteConfigService = RemoteConfigService(client, trustedConfigKeys = emptyMap())
         )
 
         val syncResult = repo.syncLiveConfig("thepoo7an/chand-iran-currency-gold-crypto", "https://cdn.example.com/live.json")

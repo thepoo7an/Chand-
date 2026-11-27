@@ -136,7 +136,12 @@ data class RemoteAppConfig(
     val assetOverrides: List<RemoteAssetOverride> = emptyList(),
     val extraAssets: List<RemoteExtraAsset> = emptyList(),
     val liveNotice: RemoteLiveNotice? = null,
-    val appliedChanges: List<RemoteLiveChange> = emptyList()
+    val appliedChanges: List<RemoteLiveChange> = emptyList(),
+    /**
+     * Optional ISO-8601 expiry. An expired config is never applied, and an already-applied one is
+     * dropped on the next launch, so a stale publication cannot pin endpoints forever.
+     */
+    val expiresAtIso: String = ""
 ) {
     val isBuiltInDefault: Boolean
         get() = configVersion <= 0 &&

@@ -19,7 +19,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
+import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -53,6 +55,44 @@ object LiveConfigRegistry {
         val maxVer = config.maxAppVersionCode
         if (maxVer != null && appVersionCode > maxVer) return false
         return true
+    }
+
+    private val ISO_INSTANT_PATTERNS = listOf(
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss",
+        "yyyy-MM-dd"
+    )
+
+    /**
+     * Parses the subset of ISO-8601 used by `publishedAtIso`/`expiresAtIso`. Returns `null` for
+     * blank or unparsable input; callers must treat that as "no expiry" instead of failing.
+     */
+    fun parseInstantMillis(raw: String): Long? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        ISO_INSTANT_PATTERNS.forEach { pattern ->
+            val parsed = runCatching {
+                SimpleDateFormat(pattern, Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                    isLenient = false
+                }.parse(trimmed)
+            }.getOrNull()
+            if (parsed != null) return parsed.time
+        }
+        return null
+    }
+
+    /**
+     * True only when the config carries a valid `expiresAtIso` that has already been reached.
+     * The comparison is fail-closed (`>=`): the expiry instant itself is no longer served, so a
+     * publisher never has to reason about a one-millisecond window of stale endpoints.
+     */
+    fun isExpired(config: RemoteAppConfig, nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val expiresAt = parseInstantMillis(config.expiresAtIso) ?: return false
+        return nowMillis >= expiresAt
     }
 
     private val IPV4_LITERAL_REGEX = Regex("^[0-9.]+$")
@@ -226,6 +266,8 @@ object LiveConfigRegistry {
             }
         }
 
+        val cleanExpiry = raw.expiresAtIso.trim()
+
         val cleanChanges = raw.appliedChanges.mapNotNull { ch ->
             if (ch.titleFa.isBlank() && ch.titleEn.isBlank()) null
             else RemoteLiveChange(
@@ -249,7 +291,8 @@ object LiveConfigRegistry {
             assetOverrides = cleanOverrides,
             extraAssets = cleanExtras,
             liveNotice = cleanNotice,
-            appliedChanges = cleanChanges
+            appliedChanges = cleanChanges,
+            expiresAtIso = cleanExpiry
         )
     }
 }
@@ -287,7 +330,13 @@ sealed interface RemoteConfigUiState {
  * without needing APK re-installation.
  */
 class RemoteConfigService(
-    private val client: OkHttpClient = NetworkConfig.sharedClient
+    private val client: OkHttpClient = NetworkConfig.sharedClient,
+    /**
+     * Trusted signing keys (`keyId` -> base64 SubjectPublicKeyInfo). Defaults to the keys baked
+     * into this build; tests inject their own store instead.
+     */
+    private val trustedConfigKeys: Map<String, String> =
+        LiveConfigSignature.parseTrustedKeys(BuildConfig.LIVE_CONFIG_PUBLIC_KEYS)
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -310,6 +359,8 @@ class RemoteConfigService(
             var sawHttp404Only = true
             var lastError = ""
             var parsedIncompatible: RemoteConfigSyncResult.IncompatibleVersion? = null
+            // Empty trust store means the build opted out of signature enforcement.
+            val trustedKeys = trustedConfigKeys
 
             for (url in urls) {
                 val outcome = NetworkConfig.executeGetWithRetry(
@@ -320,8 +371,35 @@ class RemoteConfigService(
                 when (outcome) {
                     is NetworkOutcome.Success -> {
                         sawHttp404Only = false
+                        // Verify before parsing: a tampered or unknown-key config must never be
+                        // applied, and a signature error is not "no config published".
+                        when (val signatureCheck = LiveConfigSignature.verify(outcome.data, trustedKeys)) {
+                            is LiveConfigSignatureCheck.Invalid -> {
+                                AppLog.w(
+                                    "Rejected live config from $url (${signatureCheck.reason})"
+                                )
+                                lastError = "config_signature_${signatureCheck.reason}"
+                                continue
+                            }
+                            LiveConfigSignatureCheck.Unsigned -> {
+                                if (trustedKeys.isNotEmpty()) {
+                                    AppLog.w("Rejected unsigned live config from $url")
+                                    lastError = "config_unsigned"
+                                    continue
+                                }
+                                AppLog.d("Live config from $url is unsigned and no keys are configured")
+                            }
+                            is LiveConfigSignatureCheck.Valid -> Unit
+                        }
                         val parsed = parseConfigJson(outcome.data)
                         if (parsed != null) {
+                            if (LiveConfigRegistry.isExpired(parsed)) {
+                                // Publishing an expiry is how an operator retires an old config;
+                                // an expired document must never replace what is running.
+                                AppLog.w("Skipped expired live config from $url")
+                                lastError = "config_expired"
+                                continue
+                            }
                             if (!LiveConfigRegistry.isCompatible(parsed, appVersionCode)) {
                                 parsedIncompatible = RemoteConfigSyncResult.IncompatibleVersion(
                                     remoteConfigVersion = parsed.configVersion,
