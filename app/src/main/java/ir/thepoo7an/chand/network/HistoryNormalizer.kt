@@ -276,4 +276,174 @@ object HistoryNormalizer {
         val endToEndPct = (endToEndDrift / prevPrice) * 100.0
         return endToEndPct <= thresholdPct || endToEndDrift < abs(deltaPrev) * 0.5
     }
+
+    enum class ChartDisplayMode {
+        LINE,
+        BAR
+    }
+
+    data class ChartSeriesGap(
+        val afterTimestampSec: Long,
+        val beforeTimestampSec: Long
+    ) {
+        val durationSec: Long
+            get() = (beforeTimestampSec - afterTimestampSec).coerceAtLeast(0L)
+    }
+
+    data class PreparedHistorySeries(
+        val points: List<AssetHistoryPoint>,
+        val segments: List<List<AssetHistoryPoint>>,
+        val gaps: List<ChartSeriesGap>,
+        val minTimestampSec: Long,
+        val maxTimestampSec: Long,
+        val minPrice: Double,
+        val maxPrice: Double,
+        val openPrice: Double,
+        val closePrice: Double,
+        val periodDeltaPrice: Double,
+        val periodDeltaPercent: Double
+    ) {
+        val observationCount: Int
+            get() = points.size
+
+        val hasSufficientHistory: Boolean
+            get() = points.size >= 2
+
+        val hasGaps: Boolean
+            get() = gaps.isNotEmpty()
+    }
+
+    /**
+     * Filters points strictly to `[nowSec - range.lookbackSeconds - edgeGraceSec, nowSec + 300L]`
+     * so long-range responses don't bleed old observations into narrower windows.
+     */
+    fun filterToRange(
+        points: List<AssetHistoryPoint>,
+        range: TimeRange,
+        nowSec: Long
+    ): List<AssetHistoryPoint> {
+        if (points.isEmpty() || nowSec <= 0L) return points
+        val edgeGraceSec = when (range) {
+            TimeRange.H24 -> 3_600L
+            TimeRange.D7, TimeRange.M1, TimeRange.Y1 -> 43_200L
+        }
+        val minAllowedSec = (nowSec - range.lookbackSeconds - edgeGraceSec).coerceAtLeast(1L)
+        val maxAllowedSec = (nowSec + 300L).coerceAtMost(MAX_REASONABLE_TIMESTAMP_SEC)
+        return points.filter { it.timestampSec in minAllowedSec..maxAllowedSec }
+    }
+
+    /**
+     * Computes the maximum permissible spacing between consecutive observations before
+     * splitting a historical chart line across an outage or missing data interval.
+     */
+    fun gapThresholdSec(
+        range: TimeRange,
+        sortedPoints: List<AssetHistoryPoint>
+    ): Long {
+        if (sortedPoints.size < 2) return Long.MAX_VALUE
+        val diffs = ArrayList<Long>(sortedPoints.size - 1)
+        for (i in 1 until sortedPoints.size) {
+            val d = sortedPoints[i].timestampSec - sortedPoints[i - 1].timestampSec
+            if (d > 0L) diffs.add(d)
+        }
+        if (diffs.isEmpty()) return Long.MAX_VALUE
+        diffs.sort()
+        val medianStepSec = diffs[diffs.size / 2]
+
+        return when (range) {
+            TimeRange.H24 -> if (medianStepSec <= 6L * 3_600L) 4L * 3_600L else medianStepSec * 2L + 3_600L
+            TimeRange.D7 -> if (medianStepSec <= 8L * 3_600L) 16L * 3_600L else 4L * 86_400L
+            TimeRange.M1 -> maxOf(4L * 86_400L, medianStepSec * 3L)
+            TimeRange.Y1 -> maxOf(14L * 86_400L, medianStepSec * 4L)
+        }
+    }
+
+    /**
+     * Prepares a chart-ready series from raw points:
+     * - Filters invalid timestamps/prices, deduplicates timestamps, sorts chronologically.
+     * - Optionally clips to the target [TimeRange] window ending at [nowSec].
+     * - Segments points across real data gaps so lines never silently bridge large outages.
+     * - Computes honest range bounds and period open->close deltas without fabricating points.
+     */
+    fun prepareChartSeries(
+        points: List<AssetHistoryPoint>,
+        range: TimeRange,
+        category: AssetCategory? = null,
+        nowSec: Long? = null,
+        applyRangeCutoff: Boolean = false,
+        removeSpikes: Boolean = false
+    ): PreparedHistorySeries {
+        val maxTs = nowSec?.let { it + 300L }
+        val cleaned = if (removeSpikes && category != null) {
+            normalize(
+                points = points,
+                category = category,
+                range = range,
+                maxTimestampSec = maxTs
+            )
+        } else {
+            filterValidSorted(points, maxTimestampSec = maxTs)
+        }
+        val ranged = if (applyRangeCutoff && nowSec != null) {
+            filterToRange(cleaned, range, nowSec)
+        } else {
+            cleaned
+        }
+
+        if (ranged.isEmpty()) {
+            return PreparedHistorySeries(
+                points = emptyList(),
+                segments = emptyList(),
+                gaps = emptyList(),
+                minTimestampSec = 0L,
+                maxTimestampSec = 0L,
+                minPrice = 0.0,
+                maxPrice = 0.0,
+                openPrice = 0.0,
+                closePrice = 0.0,
+                periodDeltaPrice = 0.0,
+                periodDeltaPercent = 0.0
+            )
+        }
+
+        val thresholdSec = gapThresholdSec(range, ranged)
+        val segments = mutableListOf<List<AssetHistoryPoint>>()
+        val gaps = mutableListOf<ChartSeriesGap>()
+        var currentSegment = mutableListOf(ranged.first())
+
+        for (i in 1 until ranged.size) {
+            val prev = ranged[i - 1]
+            val curr = ranged[i]
+            val delta = curr.timestampSec - prev.timestampSec
+            if (delta > thresholdSec) {
+                segments.add(currentSegment)
+                gaps.add(ChartSeriesGap(afterTimestampSec = prev.timestampSec, beforeTimestampSec = curr.timestampSec))
+                currentSegment = mutableListOf(curr)
+            } else {
+                currentSegment.add(curr)
+            }
+        }
+        segments.add(currentSegment)
+
+        val minPrice = ranged.minOf { it.priceToman }
+        val maxPrice = ranged.maxOf { it.priceToman }
+        val openPrice = ranged.first().priceToman
+        val closePrice = ranged.last().priceToman
+        val deltaPrice = if (ranged.size >= 2) closePrice - openPrice else 0.0
+        val deltaPct = if (ranged.size >= 2 && openPrice > 0.0) (deltaPrice / openPrice) * 100.0 else 0.0
+
+        return PreparedHistorySeries(
+            points = ranged,
+            segments = segments,
+            gaps = gaps,
+            minTimestampSec = ranged.first().timestampSec,
+            maxTimestampSec = ranged.last().timestampSec,
+            minPrice = minPrice,
+            maxPrice = maxPrice,
+            openPrice = openPrice,
+            closePrice = closePrice,
+            periodDeltaPrice = deltaPrice,
+            periodDeltaPercent = deltaPct
+        )
+    }
 }

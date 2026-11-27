@@ -87,6 +87,8 @@ import ir.thepoo7an.chand.network.UpdateSecurityValidator
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import ir.thepoo7an.chand.ui.theme.LocalMarketColors
+import ir.thepoo7an.chand.ui.theme.PriceTrendDirection
+import ir.thepoo7an.chand.ui.theme.resolvePriceTrend
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -481,25 +483,37 @@ fun SettingsSheet(
                                 modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
                                 verticalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
-                                data class PreviewRow(val flag: String, val code: String, val price: String, val isGain: Boolean)
+                                data class PreviewRow(val flag: String, val code: String, val price: String, val trend: PriceTrendDirection)
                                 val sampleRows = listOf(
                                     PreviewRow(
                                         usdPreview?.badgeText ?: "🇺🇸",
                                         if (isFa) "دلار" else "USD",
                                         usdPreview?.priceToman?.takeIf { it > 0.0 }?.let { NumberFormatters.formatToman(it, false) } ?: "100,045",
-                                        (usdPreview?.change24hPercent ?: 1.0) >= 0.0
+                                        if (usdPreview != null) {
+                                            resolvePriceTrend(usdPreview.change24hToman, usdPreview.change24hPercent, usdPreview.hasUsablePrimaryPrice)
+                                        } else {
+                                            PriceTrendDirection.UP
+                                        }
                                     ),
                                     PreviewRow(
                                         eurPreview?.badgeText ?: "🇪🇺",
                                         if (isFa) "یورو" else "EUR",
                                         eurPreview?.priceToman?.takeIf { it > 0.0 }?.let { NumberFormatters.formatToman(it, false) } ?: "109,755",
-                                        (eurPreview?.change24hPercent ?: -1.0) >= 0.0
+                                        if (eurPreview != null) {
+                                            resolvePriceTrend(eurPreview.change24hToman, eurPreview.change24hPercent, eurPreview.hasUsablePrimaryPrice)
+                                        } else {
+                                            PriceTrendDirection.DOWN
+                                        }
                                     ),
                                     PreviewRow(
                                         goldPreview?.badgeText ?: "✨",
                                         if (isFa) "طلا" else "GOLD",
                                         goldPreview?.priceToman?.takeIf { it > 0.0 }?.let { NumberFormatters.formatToman(it, false) } ?: "7,403,000",
-                                        (goldPreview?.change24hPercent ?: 1.0) >= 0.0
+                                        if (goldPreview != null) {
+                                            resolvePriceTrend(goldPreview.change24hToman, goldPreview.change24hPercent, goldPreview.hasUsablePrimaryPrice)
+                                        } else {
+                                            PriceTrendDirection.UP
+                                        }
                                     )
                                 )
                                 sampleRows.forEach { row ->
@@ -526,10 +540,14 @@ fun SettingsSheet(
                                                 horizontalArrangement = Arrangement.spacedBy(3.dp)
                                             ) {
                                                 Text(
-                                                    text = if (row.isGain) "↑" else "↓",
+                                                    text = when (row.trend) {
+                                                        PriceTrendDirection.UP -> "↑"
+                                                        PriceTrendDirection.DOWN -> "↓"
+                                                        PriceTrendDirection.NEUTRAL -> "•"
+                                                    },
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = if (row.isGain) marketColors.gain else marketColors.loss
+                                                    color = marketColors.trendColor(row.trend)
                                                 )
                                                 Text(
                                                     text = NumberFormatters.applyDigits(row.price, prefs.usePersianDigits),
@@ -613,7 +631,7 @@ fun SettingsSheet(
                                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                                 ) {
                                     Text(
-                                        text = "CHAND",
+                                        text = if (isFa) "نرخ‌نما" else "NERKHNAMA",
                                         fontSize = 10.sp,
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Medium,

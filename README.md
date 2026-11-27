@@ -1,14 +1,14 @@
 <div align="center">
 
-<img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png" width="96" height="96" alt="Chand?! App Icon" />
+<img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png" width="96" height="96" alt="Nerkhnama App Icon" />
 
-# Chand?! (چند؟!) — Iran Currency, Gold & Crypto Tracker
+# Nerkhnama (نرخ‌نما) — Iran Currency, Gold, Oil & Crypto Tracker
 
-**AMOLED live currency, gold, coin & crypto rate tracker in Iranian Toman (TMN)** — zero ads, zero trackers, native Kotlin & Jetpack Compose with Home & Lock Screen Widgets.
+**AMOLED live currency, gold, coin, crude oil & crypto rate tracker in Iranian Toman (TMN)** — zero ads, zero trackers, native Kotlin & Jetpack Compose with Home & Lock Screen Widgets.
 
-**اپلیکیشن متن‌باز و بدون تبلیغات ردیابی لحظه‌ای قیمت دلار، ارز، طلا، سکه و رمزارز به تومان — همراه با نمودار واقعی تاریخچه شمسی، مبدل سریع و ویجت‌های صفحه اصلی و لاک‌اسکرین.**
+**اپلیکیشن متن‌باز و بدون تبلیغات نرخ‌نما برای ردیابی لحظه‌ای قیمت دلار، ارز، طلا، سکه، نفت خام و رمزارز به تومان — همراه با نمودار خطی و میله‌ای با تاریخچه شمسی، مبدل سریع و ویجت‌های صفحه اصلی و لاک‌اسکرین.**
 
-[🇬🇧 English Overview](#-overview) • [🇮🇷 معرفی و راهنمای فارسی](#-معرفی-فارسی-برنامه-چند) • [⬇️ Download APK](#-download-latest-apk) • [📸 Screenshots](#-screenshots)
+[🇬🇧 English Overview](#-overview) • [🇮🇷 معرفی و راهنمای فارسی](#-معرفی-فارسی-برنامه-نرخنما) • [⬇️ Download APK](#-download-latest-apk) • [📸 Screenshots](#-screenshots)
 
 <p>
   <a href="https://github.com/thepoo7an/chand-iran-currency-gold-crypto/releases/latest">
@@ -60,9 +60,9 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
 
 ## ✨ Overview
 
-**Chand?!** (`ir.thepoo7an.chand`) is a lightweight, privacy-respecting open-source Android tracker built for checking live **Iranian Toman (TMN)** prices across Tehran's free currency market, Iranian gold & coins, and global cryptocurrencies.
+**Nerkhnama (نرخ‌نما)** (package `ir.thepoo7an.chand` preserved for seamless updates) is a lightweight, privacy-respecting open-source Android tracker built for checking live **Iranian Toman (TMN)** prices across Tehran's free currency market, Iranian gold & coins, global crude oil, and cryptocurrencies.
 
-### Why Chand?!
+### Why Nerkhnama?
 - **100% Free, Open Source & Zero Ads:** No banner ads, no forced interstitials, no analytics trackers, and **zero dangerous Android permissions** (only `INTERNET` and `ACCESS_NETWORK_STATE`).
 - **True Multi-Provider Live Aggregation:** Combines **TGJU** (Tehran Free Market), **Wallex**, **Bitpin**, **Nobitex**, **Binance**, **Frankfurter (ECB)**, **Currency-API**, and **Gold-API** — with transparent rate-basis badges so you always know the exact pricing source.
 - **Complete Market Coverage:**
@@ -81,11 +81,11 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
 
 ---
 
-## 🇮🇷 معرفی فارسی برنامه چند؟!
+## 🇮🇷 معرفی فارسی برنامه نرخ‌نما
 
-**چند؟! (Chand?!)** یک اپلیکیشن **رایگان، متن‌باز و بدون تبلیغات** برای پیگیری لحظه‌ای **قیمت دلار آزاد، ارزهای رایج، طلای ۱۸ و ۲۴ عیار، مثقال طلا، انواع سکه (امامی، بهار آزادی، نیم، ربع و گرمی) و رمزارزها (تتر، بیت‌کوین، اتریوم، تون‌کوین و...)** به **تومان** است.
+**نرخ‌نما (Nerkhnama)** یک اپلیکیشن **رایگان، متن‌باز و بدون تبلیغات** برای پیگیری لحظه‌ای **قیمت دلار آزاد، ارزهای رایج، طلای ۱۸ و ۲۴ عیار، مثقال طلا، انواع سکه، نفت خام جهانی (Brent و WTI) و رمزارزها** به **تومان** است. (شناسه بسته `ir.thepoo7an.chand` برای حفظ سازگاری بروزرسانی‌ها بدون تغییر باقی مانده است.)
 
-### امکانات کلیدی چند؟!
+### امکانات کلیدی نرخ‌نما
 - **بدون تبلیغات و کاملاً امن:** بدون هیچ دسترسی حساس یا ردیاب تبلیغاتی؛ فقط دسترسی اینترنت برای دریافت نرخ‌های لحظه‌ای.
 - **منابع معتبر و شفاف بازار آزاد:** تجمیع خودکار نرخ‌ها از **TGJU، والکس، بیت‌پین، نوبیتکس، بایننس، بانک مرکزی اروپا (Frankfurter) و Gold-API** با نمایش دقیق منبع نرخ‌گذاری در بالای صفحه.
 - **۵ ویجت حرفه‌ای صفحه اصلی و لاک‌اسکرین:**
@@ -139,7 +139,7 @@ Add these Repository Secrets under **Settings → Secrets and variables → Acti
 ---
 
 ## ⭐ Support & Feedback
-If **Chand?!** helps you track daily rates faster without ads, please **give this repository a Star ⭐** so more people can discover it!
+If **Nerkhnama (نرخ‌نما)** helps you track daily rates faster without ads, please **give this repository a Star ⭐** so more people can discover it!
 Found a bug or want another currency/coin added? **[Open an Issue](https://github.com/thepoo7an/chand-iran-currency-gold-crypto/issues/new/choose)**.
 
 ---

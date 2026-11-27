@@ -1,9 +1,9 @@
 <resources>
-    <string name="app_name">Chand?!</string>
-    <string name="widget_description">Chand?! — Live Watchlist (EUR, GBP, AED)</string>
-    <string name="widget_single_description">Chand?! — Hero Rate (US Dollar)</string>
-    <string name="widget_crypto_description">Chand?! — Crypto Rates (BTC, ETH, USDT)</string>
-    <string name="widget_2x1_description">Chand?! — Compact 2×1 (USD, EUR, Gold)</string>
-    <string name="widget_lockscreen_description">Chand?! — Lock Screen (Transparent)</string>
-    <string name="widget_tap_to_open">Tap to open Chand?!</string>
+    <string name="app_name">Nerkhnama</string>
+    <string name="widget_description">Nerkhnama — Live Watchlist (EUR, GBP, AED)</string>
+    <string name="widget_single_description">Nerkhnama — Hero Rate (US Dollar)</string>
+    <string name="widget_crypto_description">Nerkhnama — Crypto Rates (BTC, ETH, USDT)</string>
+    <string name="widget_2x1_description">Nerkhnama — Compact 2×1 (USD, EUR, Gold)</string>
+    <string name="widget_lockscreen_description">Nerkhnama — Lock Screen (Transparent)</string>
+    <string name="widget_tap_to_open">Tap to open Nerkhnama</string>
 </resources>

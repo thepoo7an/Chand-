@@ -96,9 +96,12 @@ import ir.thepoo7an.chand.ui.components.AssetBadge
 import ir.thepoo7an.chand.ui.components.MiniSparkline
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
+import ir.thepoo7an.chand.ui.theme.InterFontFamily
 import ir.thepoo7an.chand.ui.theme.LightBg
 import ir.thepoo7an.chand.ui.theme.LightBgBottom
 import ir.thepoo7an.chand.ui.theme.LocalMarketColors
+import ir.thepoo7an.chand.ui.theme.VazirmatnFontFamily
+import ir.thepoo7an.chand.ui.theme.resolvePriceTrend
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -170,11 +173,11 @@ fun MarketFeedScreen(
                 ) {
                     Text(
                         text = strings.appTitle,
-                        fontFamily = ir.thepoo7an.chand.ui.theme.InterFontFamily,
-                        fontSize = 31.sp,
+                        fontFamily = if (isFa) VazirmatnFontFamily else InterFontFamily,
+                        fontSize = if (isFa) 29.sp else 30.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.onBackground,
-                        letterSpacing = (-0.6).sp
+                        letterSpacing = if (isFa) 0.sp else (-0.6).sp
                     )
                     val isLivePulse = readyState?.freshness == DataFreshness.LIVE
                     val isDelayedPulse = readyState?.freshness == DataFreshness.DELAYED
@@ -632,15 +635,15 @@ private fun ChandBentoCard(
     val marketColors = LocalMarketColors.current
     val haptic = LocalHapticFeedback.current
     val isOilUsd = asset.isUsdPerBarrel
-    val isGain = asset.change24hPercent >= 0.0
-    val trendColor = if (isOilUsd && !asset.isChange24hAvailable) {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    } else if (isGain) {
-        marketColors.gain
-    } else {
-        marketColors.loss
-    }
     val isUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
+    val hasDisplayChange = !isUnavailable && (!isOilUsd || asset.isChange24hAvailable)
+    val trendDirection = resolvePriceTrend(
+        changeAmount = if (isOilUsd) asset.change24hUsd else asset.change24hToman,
+        changePct = asset.change24hPercent,
+        hasChangeData = hasDisplayChange
+    )
+    val trendColor = marketColors.trendColor(trendDirection)
+    val trendBg = marketColors.trendContainerColor(trendDirection)
     val statusBadgeText = when {
         asset.disputed -> strings.disputedLabel
         asset.freshness == DataFreshness.DELAYED -> strings.delayedBadge
@@ -772,15 +775,29 @@ private fun ChandBentoCard(
                                     usePersianDigits
                                 )
                             }
-                            Text(
-                                text = deltaLabel,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (isUnavailable) MaterialTheme.colorScheme.onSurfaceVariant else trendColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                            Surface(
+                                shape = RoundedCornerShape(7.dp),
+                                color = if (isUnavailable || !hasDisplayChange) {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                                } else {
+                                    trendBg
+                                },
                                 modifier = Modifier.weight(1f, fill = false)
-                            )
+                            ) {
+                                Text(
+                                    text = deltaLabel,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isUnavailable || !hasDisplayChange) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    } else {
+                                        trendColor
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
                         }
 
                         if (statusBadgeText != null) {
@@ -821,9 +838,12 @@ private fun ChandBentoCard(
                                     isOilUsd -> NumberFormatters.formatUsd(asset.priceUsd ?: 0.0, usePersianDigits)
                                     else -> NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)
                                 },
-                                fontSize = if (isOilUsd) 24.sp else 27.sp,
-                                fontWeight = FontWeight.Bold,
-                                lineHeight = 30.sp,
+                                style = MaterialTheme.typography.headlineMedium.copy(
+                                    fontSize = if (isOilUsd) 24.sp else 27.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    lineHeight = 30.sp,
+                                    fontFeatureSettings = "tnum"
+                                ),
                                 color = if (isUnavailable) MaterialTheme.colorScheme.onSurfaceVariant
                                 else MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
@@ -878,22 +898,15 @@ private fun MarketAssetListRow(
 ) {
     val marketColors = LocalMarketColors.current
     val isOilUsd = asset.isUsdPerBarrel
-    val isGain = asset.change24hPercent >= 0.0
-    val hasDisplayChange = !isOilUsd || asset.isChange24hAvailable
-    val trendColor = if (!hasDisplayChange) {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    } else if (isGain) {
-        marketColors.gain
-    } else {
-        marketColors.loss
-    }
-    val trendBg = if (!hasDisplayChange) {
-        MaterialTheme.colorScheme.surfaceVariant
-    } else if (isGain) {
-        marketColors.gainContainer
-    } else {
-        marketColors.lossContainer
-    }
+    val isUnavailableRow = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
+    val hasDisplayChange = !isUnavailableRow && (!isOilUsd || asset.isChange24hAvailable)
+    val trendDirection = resolvePriceTrend(
+        changeAmount = if (isOilUsd) asset.change24hUsd else asset.change24hToman,
+        changePct = asset.change24hPercent,
+        hasChangeData = hasDisplayChange
+    )
+    val trendColor = marketColors.trendColor(trendDirection)
+    val trendBg = marketColors.trendContainerColor(trendDirection)
 
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -963,7 +976,11 @@ private fun MarketAssetListRow(
                         Text(
                             text = rowStatusText,
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (asset.disputed) marketColors.gold else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = when {
+                                asset.disputed -> marketColors.gold
+                                rowStatusText == strings.liveBadge -> marketColors.gain
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                             maxLines = 1
                         )
                     }
@@ -1026,8 +1043,10 @@ private fun MarketAssetListRow(
                                 isOilUsd -> NumberFormatters.formatUsd(asset.priceUsd ?: 0.0, usePersianDigits)
                                 else -> NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)
                             },
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontFeatureSettings = "tnum"
+                            ),
                             color = if (isUnavailableRow) MaterialTheme.colorScheme.onSurfaceVariant
                             else MaterialTheme.colorScheme.onSurface
                         )

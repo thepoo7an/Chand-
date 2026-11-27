@@ -17,8 +17,36 @@ import androidx.core.view.WindowCompat
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.ThemeMode
 
+enum class PriceTrendDirection {
+    UP,
+    DOWN,
+    NEUTRAL
+}
+
+fun resolvePriceTrend(
+    changeAmount: Double?,
+    changePct: Double,
+    hasChangeData: Boolean = true
+): PriceTrendDirection {
+    if (!hasChangeData) return PriceTrendDirection.NEUTRAL
+    val validPct = changePct.isFinite()
+    val validAmt = changeAmount != null && changeAmount.isFinite()
+    if (!validPct && !validAmt) return PriceTrendDirection.NEUTRAL
+    return when {
+        (validPct && changePct > 0.005) || (validAmt && changeAmount!! > 0.001) -> PriceTrendDirection.UP
+        (validPct && changePct < -0.005) || (validAmt && changeAmount!! < -0.001) -> PriceTrendDirection.DOWN
+        else -> PriceTrendDirection.NEUTRAL
+    }
+}
+
 @Immutable
 data class MarketColors(
+    val priceUp: Color,
+    val priceUpContainer: Color,
+    val priceDown: Color,
+    val priceDownContainer: Color,
+    val priceNeutral: Color,
+    val priceNeutralContainer: Color,
     val gain: Color,
     val gainContainer: Color,
     val loss: Color,
@@ -26,10 +54,28 @@ data class MarketColors(
     val gold: Color,
     val hairline: Color,
     val isAmoled: Boolean
-)
+) {
+    fun trendColor(direction: PriceTrendDirection): Color = when (direction) {
+        PriceTrendDirection.UP -> priceUp
+        PriceTrendDirection.DOWN -> priceDown
+        PriceTrendDirection.NEUTRAL -> priceNeutral
+    }
+
+    fun trendContainerColor(direction: PriceTrendDirection): Color = when (direction) {
+        PriceTrendDirection.UP -> priceUpContainer
+        PriceTrendDirection.DOWN -> priceDownContainer
+        PriceTrendDirection.NEUTRAL -> priceNeutralContainer
+    }
+}
 
 val LocalMarketColors = staticCompositionLocalOf {
     MarketColors(
+        priceUp = PriceUpRedAmoled,
+        priceUpContainer = PriceUpRedContainerAmoled,
+        priceDown = PriceDownGreenAmoled,
+        priceDownContainer = PriceDownGreenContainerAmoled,
+        priceNeutral = PriceNeutralGrayAmoled,
+        priceNeutralContainer = PriceNeutralGrayContainerAmoled,
         gain = GainEmerald,
         gainContainer = GainEmeraldDarkBg,
         loss = LossCoral,
@@ -115,6 +161,12 @@ fun ChandTheme(
 
     val marketColors = when (themeMode) {
         ThemeMode.LIGHT -> MarketColors(
+            priceUp = PriceUpRedLight,
+            priceUpContainer = PriceUpRedContainerLight,
+            priceDown = PriceDownGreenLight,
+            priceDownContainer = PriceDownGreenContainerLight,
+            priceNeutral = PriceNeutralGrayLight,
+            priceNeutralContainer = PriceNeutralGrayContainerLight,
             gain = Color(0xFF059669),
             gainContainer = GainEmeraldLightBg,
             loss = Color(0xFFDC2626),
@@ -124,6 +176,12 @@ fun ChandTheme(
             isAmoled = false
         )
         ThemeMode.DARK -> MarketColors(
+            priceUp = PriceUpRedDark,
+            priceUpContainer = PriceUpRedContainerDark,
+            priceDown = PriceDownGreenDark,
+            priceDownContainer = PriceDownGreenContainerDark,
+            priceNeutral = PriceNeutralGrayDark,
+            priceNeutralContainer = PriceNeutralGrayContainerDark,
             gain = GainEmerald,
             gainContainer = GainEmeraldDarkBg,
             loss = LossCoral,
@@ -133,6 +191,12 @@ fun ChandTheme(
             isAmoled = false
         )
         ThemeMode.AMOLED -> MarketColors(
+            priceUp = PriceUpRedAmoled,
+            priceUpContainer = PriceUpRedContainerAmoled,
+            priceDown = PriceDownGreenAmoled,
+            priceDownContainer = PriceDownGreenContainerAmoled,
+            priceNeutral = PriceNeutralGrayAmoled,
+            priceNeutralContainer = PriceNeutralGrayContainerAmoled,
             gain = GainEmerald,
             gainContainer = GainEmeraldDarkBg,
             loss = LossCoral,

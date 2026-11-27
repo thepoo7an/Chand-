@@ -175,7 +175,13 @@ data class ChandStrings(
     val usdPerBarrelShortUnit: String,
     val oilTomanEstimatePrefix: String,
     val change24hUnavailable: String,
-    val sourceUnitCurrencyUsdPerBarrel: String
+    val sourceUnitCurrencyUsdPerBarrel: String,
+    val chartModeLine: String,
+    val chartModeBar: String,
+    val chartPointsSuffix: String,
+    val chartGapDetectedNotice: String,
+    val periodChangeLabel: String,
+    val change24hLabel: String
 ) {
     fun categoryLabel(category: AssetCategory): String = when (category) {
         AssetCategory.ALL -> categoryAll
@@ -204,7 +210,7 @@ data class ChandStrings(
 }
 
 val FaStrings = ChandStrings(
-    appTitle = "Chand?!",
+    appTitle = "نرخ‌نما",
     marketTab = "بازار",
     converterTab = "مبدل",
     liveBadge = "زنده",
@@ -330,7 +336,7 @@ val FaStrings = ChandStrings(
     updateErrorChecksumMismatch = "عدم تطابق اثر انگشت SHA-256 فایل؛ بسته دانلودشده ممکن است دستکاری شده باشد.",
     updateErrorMetadataInvalid = "اطلاعات امنیتی و هش انتشار ناقص یا نامعتبر است؛ دانلود مستقیم انجام نشد.",
     updateErrorCorruptedApk = "فایل APK دانلودشده آسیب دیده یا ساختار معتبری ندارد.",
-    updateErrorWrongPackage = "شناسه بسته فایل دانلودشده با شناسه برنامه Chand?! (ir.thepoo7an.chand) مطابقت ندارد.",
+    updateErrorWrongPackage = "شناسه بسته فایل دانلودشده با شناسه برنامه نرخ‌نما (ir.thepoo7an.chand) مطابقت ندارد.",
     updateErrorOlderVersion = "نسخه فایل دانلودشده جدیدتر از نسخه فعلی نیست و نصب مسدود شد.",
     updateErrorUnexpectedSigner = "امضای دیجیتال فایل با گواهی رسمی انتشار مطابقت ندارد.",
     updateErrorInsufficientStorage = "فضای ذخیره‌سازی دستگاه برای دانلود و بررسی بسته بروزرسانی کافی نیست.",
@@ -367,11 +373,17 @@ val FaStrings = ChandStrings(
     usdPerBarrelShortUnit = "USD/bbl",
     oilTomanEstimatePrefix = "تخمین بر اساس دلار:",
     change24hUnavailable = "تغییر ۲۴ساعت ناموجود",
-    sourceUnitCurrencyUsdPerBarrel = "دلار / بشکه (USD/bbl)"
+    sourceUnitCurrencyUsdPerBarrel = "دلار / بشکه (USD/bbl)",
+    chartModeLine = "خطی",
+    chartModeBar = "میله‌ای",
+    chartPointsSuffix = "نقطه",
+    chartGapDetectedNotice = "وقفه داده",
+    periodChangeLabel = "تغییر بازه",
+    change24hLabel = "تغییر ۲۴ساعت"
 )
 
 val EnStrings = ChandStrings(
-    appTitle = "Chand?!",
+    appTitle = "Nerkhnama",
     marketTab = "Markets",
     converterTab = "Converter",
     liveBadge = "LIVE",
@@ -534,7 +546,13 @@ val EnStrings = ChandStrings(
     usdPerBarrelShortUnit = "USD/bbl",
     oilTomanEstimatePrefix = "Est. via USD/TMN:",
     change24hUnavailable = "24h chg N/A",
-    sourceUnitCurrencyUsdPerBarrel = "USD / barrel"
+    sourceUnitCurrencyUsdPerBarrel = "USD / barrel",
+    chartModeLine = "Line",
+    chartModeBar = "Bar",
+    chartPointsSuffix = "pts",
+    chartGapDetectedNotice = "Data gap",
+    periodChangeLabel = "Period Change",
+    change24hLabel = "24h Change"
 )
 
 fun stringsFor(language: AppLanguage): ChandStrings =

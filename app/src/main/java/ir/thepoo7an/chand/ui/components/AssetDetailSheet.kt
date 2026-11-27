@@ -1,6 +1,7 @@
 package ir.thepoo7an.chand.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,9 +13,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.rounded.Refresh
@@ -41,12 +46,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.clickable
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.AssetHistoryPoint
@@ -54,9 +59,12 @@ import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.RemoteFeaturesConfig
 import ir.thepoo7an.chand.model.TimeRange
+import ir.thepoo7an.chand.network.HistoryNormalizer
+import ir.thepoo7an.chand.network.HistoryNormalizer.ChartDisplayMode
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import ir.thepoo7an.chand.ui.theme.LocalMarketColors
+import ir.thepoo7an.chand.ui.theme.resolvePriceTrend
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,14 +87,25 @@ fun AssetDetailSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val marketColors = LocalMarketColors.current
-    var scrubbedIndex by remember(historyPoints) { mutableStateOf<Int?>(null) }
+    val isFa = prefs.language == AppLanguage.FA
+    var chartMode by remember(asset.id) { mutableStateOf(ChartDisplayMode.LINE) }
+
+    val preparedSeries = remember(historyPoints, selectedRange) {
+        HistoryNormalizer.prepareChartSeries(
+            points = historyPoints,
+            range = selectedRange,
+            applyRangeCutoff = false,
+            removeSpikes = false
+        )
+    }
+    var scrubbedIndex by remember(preparedSeries.points) { mutableStateOf<Int?>(null) }
 
     val isOilUsd = asset.isUsdPerBarrel
-    val activePoint = scrubbedIndex?.let { idx -> historyPoints.getOrNull(idx) }
+    val activePoint = scrubbedIndex?.let { idx -> preparedSeries.points.getOrNull(idx) }
     val displayPrimaryPrice = activePoint?.priceToman ?: asset.primaryPriceValue
 
-    val (rangeChangePrimary, rangeChangePct, hasDisplayChange) = remember(
-        historyPoints,
+    val (rangeChangePrimary, rangeChangePct, hasDisplayChange, isPeriodChange) = remember(
+        preparedSeries,
         asset.change24hToman,
         asset.change24hUsd,
         asset.change24hPercent,
@@ -94,21 +113,25 @@ fun AssetDetailSheet(
         scrubbedIndex,
         isOilUsd
     ) {
-        if (historyPoints.size >= 2) {
-            val first = historyPoints.first().priceToman
-            val target = activePoint?.priceToman ?: historyPoints.last().priceToman
+        if (preparedSeries.hasSufficientHistory) {
+            val first = preparedSeries.openPrice
+            val target = activePoint?.priceToman ?: preparedSeries.closePrice
             val diff = target - first
             val pct = if (first > 0.0) (diff / first) * 100.0 else asset.change24hPercent
-            Triple(diff, pct, true)
+            listOf(diff, pct, true, true)
         } else if (isOilUsd) {
-            Triple(asset.change24hUsd ?: 0.0, asset.change24hPercent, asset.isChange24hAvailable)
+            listOf(asset.change24hUsd ?: 0.0, asset.change24hPercent, asset.isChange24hAvailable, false)
         } else {
-            Triple(asset.change24hToman, asset.change24hPercent, asset.isChange24hAvailable)
+            listOf(asset.change24hToman, asset.change24hPercent, asset.isChange24hAvailable, false)
         }
     }
+    val deltaPrimaryValue = rangeChangePrimary as Double
+    val deltaPctValue = rangeChangePct as Double
+    val hasChangeBool = hasDisplayChange as Boolean
+    val isPeriodDelta = isPeriodChange as Boolean
 
     val (rangeHigh, rangeLow) = remember(
-        historyPoints,
+        preparedSeries,
         selectedRange,
         asset.high24hToman,
         asset.low24hToman,
@@ -118,9 +141,9 @@ fun AssetDetailSheet(
     ) {
         val assetHigh = if (isOilUsd) asset.high24hUsd else asset.high24hToman
         val assetLow = if (isOilUsd) asset.low24hUsd else asset.low24hToman
-        if (historyPoints.size >= 2) {
-            val maxHist = historyPoints.maxOf { it.priceToman }
-            val minHist = historyPoints.minOf { it.priceToman }
+        if (preparedSeries.hasSufficientHistory) {
+            val maxHist = preparedSeries.maxPrice
+            val minHist = preparedSeries.minPrice
             if (selectedRange == TimeRange.H24) {
                 listOfNotNull(maxHist, assetHigh).maxOrNull() to
                     listOfNotNull(minHist, assetLow).minOrNull()
@@ -132,36 +155,33 @@ fun AssetDetailSheet(
         }
     }
 
-    val isPositive = rangeChangePct >= 0.0
-    val trendColor = if (!hasDisplayChange) {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    } else if (isPositive) {
-        marketColors.gain
-    } else {
-        marketColors.loss
-    }
-    val trendBg = if (!hasDisplayChange) {
-        MaterialTheme.colorScheme.surfaceVariant
-    } else if (isPositive) {
-        marketColors.gainContainer
-    } else {
-        marketColors.lossContainer
-    }
-    val isFa = prefs.language == AppLanguage.FA
+    val trendDirection = resolvePriceTrend(
+        changeAmount = deltaPrimaryValue,
+        changePct = deltaPctValue,
+        hasChangeData = hasChangeBool
+    )
+    val trendColor = marketColors.trendColor(trendDirection)
+    val trendBg = marketColors.trendContainerColor(trendDirection)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        dragHandle = {
+            androidx.compose.material3.BottomSheetDefaults.DragHandle(
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp)
+                .padding(bottom = 20.dp)
         ) {
             // Header
             Row(
@@ -173,7 +193,7 @@ fun AssetDetailSheet(
                     category = asset.category,
                     fallbackText = asset.badgeText,
                     accentHex = asset.accentHex,
-                    size = 46.dp
+                    size = 42.dp
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -202,9 +222,9 @@ fun AssetDetailSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // Hero Price
+            // Hero Price + Period Delta vs 24h Delta
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom,
@@ -269,43 +289,61 @@ fun AssetDetailSheet(
                     }
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = trendBg
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        val badgeText = if (!hasDisplayChange) {
-                            strings.change24hUnavailable
-                        } else if (isOilUsd) {
-                            val deltaStr = NumberFormatters.formatUsdDeltaWithArrow(
-                                rangeChangePrimary,
-                                rangeChangePct,
-                                prefs.usePersianDigits
-                            )
-                            val pctStr = NumberFormatters.formatPercent(rangeChangePct, prefs.usePersianDigits)
-                            "$deltaStr ($pctStr)"
+                    if (hasChangeBool) {
+                        val rangeLabelText = if (isPeriodDelta) {
+                            "${strings.periodChangeLabel} (${if (isFa) selectedRange.labelFa else selectedRange.labelEn})"
                         } else {
-                            val deltaStr = NumberFormatters.formatDeltaWithArrow(
-                                rangeChangePrimary,
-                                rangeChangePct,
-                                prefs.usePersianDigits
-                            )
-                            val pctStr = NumberFormatters.formatPercent(rangeChangePct, prefs.usePersianDigits)
-                            "$deltaStr ($pctStr)"
+                            strings.change24hLabel
                         }
                         Text(
-                            text = badgeText,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = trendColor,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            text = rangeLabelText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = trendBg,
+                        modifier = Modifier.testTag("detail_trend_badge")
+                    ) {
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            val badgeText = if (!hasChangeBool) {
+                                strings.change24hUnavailable
+                            } else if (isOilUsd) {
+                                val deltaStr = NumberFormatters.formatUsdDeltaWithArrow(
+                                    deltaPrimaryValue,
+                                    deltaPctValue,
+                                    prefs.usePersianDigits
+                                )
+                                val pctStr = NumberFormatters.formatPercent(deltaPctValue, prefs.usePersianDigits)
+                                "$deltaStr ($pctStr)"
+                            } else {
+                                val deltaStr = NumberFormatters.formatDeltaWithArrow(
+                                    deltaPrimaryValue,
+                                    deltaPctValue,
+                                    prefs.usePersianDigits
+                                )
+                                val pctStr = NumberFormatters.formatPercent(deltaPctValue, prefs.usePersianDigits)
+                                "$deltaStr ($pctStr)"
+                            }
+                            Text(
+                                text = badgeText,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = trendColor,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // Interactive Chart Container + Real Date Span Footer
+            // Interactive Chart Container + Mode Switcher + Y-Axis & Real Date Span Footer
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
@@ -313,10 +351,77 @@ fun AssetDetailSheet(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
+                    // Chart Header Bar: Metadata (Range + Obs Count + Gap indicator) + Line/Bar Switcher
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            val obsCountStr = NumberFormatters.applyDigits(
+                                preparedSeries.observationCount.toString(),
+                                prefs.usePersianDigits
+                            )
+                            val rangeName = if (isFa) selectedRange.labelFa else selectedRange.labelEn
+                            val metaLabel = if (preparedSeries.hasSufficientHistory) {
+                                "$rangeName · $obsCountStr ${strings.chartPointsSuffix}"
+                            } else {
+                                rangeName
+                            }
+                            Text(
+                                text = metaLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("chart_metadata_label")
+                            )
+                            if (preparedSeries.hasGaps) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = marketColors.gold.copy(alpha = 0.16f)
+                                ) {
+                                    Text(
+                                        text = strings.chartGapDetectedNotice,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = marketColors.gold,
+                                        modifier = Modifier
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            .testTag("chart_gap_badge")
+                                    )
+                                }
+                            }
+                        }
+
+                        // Line / Bar Mode Switcher
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            ChartModeChip(
+                                selected = chartMode == ChartDisplayMode.LINE,
+                                label = strings.chartModeLine,
+                                icon = Icons.AutoMirrored.Outlined.ShowChart,
+                                hairline = marketColors.hairline,
+                                onClick = { chartMode = ChartDisplayMode.LINE },
+                                modifier = Modifier.testTag("chart_mode_line")
+                            )
+                            ChartModeChip(
+                                selected = chartMode == ChartDisplayMode.BAR,
+                                label = strings.chartModeBar,
+                                icon = Icons.Outlined.BarChart,
+                                hairline = marketColors.hairline,
+                                onClick = { chartMode = ChartDisplayMode.BAR },
+                                modifier = Modifier.testTag("chart_mode_bar")
+                            )
+                        }
+                    }
+
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(180.dp),
+                            .height(126.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         when {
@@ -328,18 +433,20 @@ fun AssetDetailSheet(
                                     modifier = Modifier.padding(16.dp)
                                 )
                             }
-                            isHistoryLoading && historyPoints.isEmpty() -> {
+                            isHistoryLoading && !preparedSeries.hasSufficientHistory -> {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(28.dp),
                                     strokeWidth = 2.5.dp,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
-                            historyPoints.size < 2 -> {
+                            !preparedSeries.hasSufficientHistory -> {
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.padding(16.dp)
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier
+                                        .padding(12.dp)
+                                        .testTag("history_unavailable_state")
                                 ) {
                                     Text(
                                         text = strings.historyUnavailable,
@@ -359,23 +466,28 @@ fun AssetDetailSheet(
                             }
                             else -> {
                                 InteractiveHistoryChart(
-                                    points = historyPoints,
+                                    series = preparedSeries,
+                                    mode = chartMode,
                                     lineColor = trendColor,
                                     gridColor = marketColors.hairline,
+                                    axisLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                     selectedIndex = scrubbedIndex,
+                                    isUsdPerBarrel = isOilUsd,
+                                    usePersianDigits = prefs.usePersianDigits,
                                     onSelectIndex = { scrubbedIndex = it },
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(180.dp)
-                                        .padding(top = 8.dp, bottom = 4.dp)
+                                        .height(126.dp)
+                                        .padding(top = 4.dp, bottom = 2.dp)
                                 )
                             }
                         }
                     }
 
-                    if (historyPoints.size >= 2) {
-                        val firstPt = historyPoints.first()
-                        val lastPt = historyPoints.last()
+                    if (preparedSeries.hasSufficientHistory) {
+                        val firstPt = preparedSeries.points.first()
+                        val lastPt = preparedSeries.points.last()
+                        val midTs = (firstPt.timestampSec + lastPt.timestampSec) / 2L
                         val showYear = selectedRange == TimeRange.Y1 || selectedRange == TimeRange.M1
                         val showTime = selectedRange == TimeRange.H24
 
@@ -383,7 +495,7 @@ fun AssetDetailSheet(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                                    .padding(start = 58.dp, end = 14.dp, top = 4.dp, bottom = 8.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -399,7 +511,7 @@ fun AssetDetailSheet(
                                 )
                                 Text(
                                     text = NumberFormatters.formatChartJalaliDate(
-                                        historyPoints[historyPoints.size / 2].timestampSec,
+                                        midTs,
                                         prefs.usePersianDigits,
                                         includeTime = showTime,
                                         includeYear = showYear
@@ -423,7 +535,7 @@ fun AssetDetailSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // TimeRange Selector
             Row(
@@ -442,7 +554,7 @@ fun AssetDetailSheet(
                         ),
                         modifier = Modifier
                             .weight(1f)
-                            .height(40.dp)
+                            .height(44.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .clickable { onSelectRange(range) }
                             .testTag("range_${range.name}")
@@ -460,7 +572,7 @@ fun AssetDetailSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Dynamic Range High / Low / Real History Source
             val statusNotes = buildList {
@@ -611,3 +723,51 @@ private fun StatPillCard(
         }
     }
 }
+
+@Composable
+private fun ChartModeChip(
+    selected: Boolean,
+    label: String,
+    icon: ImageVector,
+    hairline: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (selected) MaterialTheme.colorScheme.primary else hairline
+        ),
+        modifier = modifier
+            .height(32.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .minimumInteractiveComponentSize()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp)
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
+    }
+}
+

@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">نرخ‌نما</string>
+    <string name="widget_description">نرخ‌نما — واچ‌لیست زنده (یورو، پوند، درهم)</string>
+    <string name="widget_single_description">نرخ‌نما — نرخ شاخص (دلار آمریکا)</string>
+    <string name="widget_crypto_description">نرخ‌نما — رمزارزها (بیت‌کوین، اتریوم، تتر)</string>
+    <string name="widget_2x1_description">نرخ‌نما — ویجت ۲×۱ (دلار، یورو، طلا)</string>
+    <string name="widget_lockscreen_description">نرخ‌نما — ویجت لاک‌اسکرین (شفاف)</string>
+    <string name="widget_tap_to_open">برای باز کردن نرخ‌نما لمس کنید</string>
+</resources>

@@ -55,7 +55,9 @@ class ChandAppRobolectricTest {
     @Test
     fun `cold start launches ChandApplication and MainActivity cleanly in Persian RTL by default`() {
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("Chand?!").assertExists()
+        composeRule.onNodeWithText(FaStrings.appTitle).assertExists()
+        assertEquals("نرخ‌نما", FaStrings.appTitle)
+        assertEquals("Nerkhnama", EnStrings.appTitle)
         composeRule.onNodeWithText(FaStrings.marketTab).assertExists()
         composeRule.onNodeWithText(FaStrings.converterTab).assertExists()
 
@@ -90,7 +92,12 @@ class ChandAppRobolectricTest {
     @Test
     fun `app identity and BuildConfig GitHub repository are configured`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        assertEquals("Chand?!", context.getString(R.string.app_name))
+        assertEquals("Nerkhnama", context.getString(R.string.app_name))
+        val faConfig = android.content.res.Configuration(context.resources.configuration).apply {
+            setLocale(java.util.Locale.forLanguageTag("fa"))
+        }
+        val faContext = context.createConfigurationContext(faConfig)
+        assertEquals("نرخ‌نما", faContext.getString(R.string.app_name))
         val expectedAppId = if (BuildConfig.DEBUG) "ir.thepoo7an.chand.debug" else "ir.thepoo7an.chand"
         assertEquals(expectedAppId, BuildConfig.APPLICATION_ID)
         assertEquals(

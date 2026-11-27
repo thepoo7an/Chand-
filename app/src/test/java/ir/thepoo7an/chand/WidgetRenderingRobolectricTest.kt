@@ -381,7 +381,7 @@ class WidgetRenderingRobolectricTest {
         val fallbackView = shadowAppWidgetManager.getViewFor(99)
         assertNotNull("Expected fallback RemoteViews to be published", fallbackView)
         val texts = collectVisibleTexts(fallbackView!!)
-        assertTrue("Expected app title in fallback view, got $texts", texts.any { it.contains("Chand?!") })
+        assertTrue("Expected app title in fallback view, got $texts", texts.any { it.contains("Nerkhnama") || it.contains("نرخ‌نما") })
         assertFalse("Fallback view must not contain a loading ProgressBar", fallbackView.findViewById<View>(android.R.id.progress) != null)
     }
 }

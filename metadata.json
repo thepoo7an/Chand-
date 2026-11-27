@@ -1,6 +1,6 @@
 {
-  "name": "Chand?!",
-  "description": "AMOLED live currency, gold & crypto tracker in Iranian Toman",
+  "name": "Nerkhnama",
+  "description": "Nerkhnama — AMOLED live currency, gold, crude oil & crypto tracker in Iranian Toman",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -56,6 +56,8 @@ import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.network.MarketValidationConfig
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import ir.thepoo7an.chand.ui.strings.stringsFor
+import ir.thepoo7an.chand.ui.theme.PriceTrendDirection
+import ir.thepoo7an.chand.ui.theme.resolvePriceTrend
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -66,16 +68,26 @@ private object WidgetColors {
     val glassDivider = ColorProvider(day = Color(0x240F172A), night = Color(0x26FFFFFF))
     val title = ColorProvider(day = Color(0xFF111317), night = Color(0xFFFFFFFF))
     val sub = ColorProvider(day = Color(0xFF525B69), night = Color(0xFFCBD5E1))
-    val gain = ColorProvider(day = Color(0xFF059669), night = Color(0xFF34D399))
-    val loss = ColorProvider(day = Color(0xFFDC2626), night = Color(0xFFF87171))
+    // Inverted Iranian market price change colors: Up = Red, Down = Green, Neutral = Neutral gray
+    val priceUp = ColorProvider(day = Color(0xFFDC2626), night = Color(0xFFF87171))
+    val priceDown = ColorProvider(day = Color(0xFF059669), night = Color(0xFF34D399))
+    val priceNeutral = sub
+    // System status colors remain standard semantic Green / Amber / Gray
+    val statusLive = ColorProvider(day = Color(0xFF059669), night = Color(0xFF34D399))
     val warn = ColorProvider(day = Color(0xFFD97706), night = Color(0xFFFBBF24))
     val solidBadgeBg = ColorProvider(day = Color(0xFFF3F1EC), night = Color(0xFF161D28))
     val glassBadgeBg = ColorProvider(day = Color(0x260F172A), night = Color(0x29FFFFFF))
 
     fun freshnessColor(freshness: DataFreshness): androidx.glance.unit.ColorProvider = when (freshness) {
-        DataFreshness.LIVE -> gain
+        DataFreshness.LIVE -> statusLive
         DataFreshness.DELAYED, DataFreshness.CACHED -> warn
         DataFreshness.UNAVAILABLE -> sub
+    }
+
+    fun trendColor(direction: PriceTrendDirection): androidx.glance.unit.ColorProvider = when (direction) {
+        PriceTrendDirection.UP -> priceUp
+        PriceTrendDirection.DOWN -> priceDown
+        PriceTrendDirection.NEUTRAL -> priceNeutral
     }
 }
 
@@ -304,7 +316,7 @@ private fun SingleHeroWidgetContent(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "Chand?!",
+                        text = if (isFa) "نرخ‌نما" else "Nerkhnama",
                         style = TextStyle(
                             color = WidgetColors.title,
                             fontSize = 16.sp,
@@ -323,7 +335,13 @@ private fun SingleHeroWidgetContent(
                 }
             }
         } else {
-            val isGain = asset.change24hPercent >= 0.0
+            val isUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
+            val hasChange = !isUnavailable && (!asset.isUsdPerBarrel || asset.isChange24hAvailable)
+            val trendDirection = resolvePriceTrend(
+                changeAmount = if (asset.isUsdPerBarrel) asset.change24hUsd else asset.change24hToman,
+                changePct = asset.change24hPercent,
+                hasChangeData = hasChange
+            )
             val effectiveFreshness = WidgetStatusHelper.resolveFreshness(
                 displayedAssets = listOf(asset),
                 snapshotFreshness = snapshotFreshness,
@@ -384,7 +402,6 @@ private fun SingleHeroWidgetContent(
 
                 Spacer(modifier = GlanceModifier.defaultWeight())
 
-                val isUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
                 val deltaText = when {
                     isUnavailable -> "—"
                     asset.isUsdPerBarrel && !asset.isChange24hAvailable -> "—"
@@ -398,13 +415,7 @@ private fun SingleHeroWidgetContent(
                 Text(
                     text = deltaText,
                     style = TextStyle(
-                        color = if (isUnavailable || (asset.isUsdPerBarrel && !asset.isChange24hAvailable)) {
-                            WidgetColors.sub
-                        } else if (isGain) {
-                            WidgetColors.gain
-                        } else {
-                            WidgetColors.loss
-                        },
+                        color = WidgetColors.trendColor(trendDirection),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
                     )
@@ -557,9 +568,13 @@ private fun Compact2x1WidgetContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 rows.forEachIndexed { idx, asset ->
-                    val rowUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || asset.priceToman <= 0.0
-                    val isGain = asset.change24hPercent >= 0.0
-                    val trendColor = if (rowUnavailable) WidgetColors.sub else if (isGain) WidgetColors.gain else WidgetColors.loss
+                    val rowUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
+                    val trendDirection = resolvePriceTrend(
+                        changeAmount = asset.change24hToman,
+                        changePct = asset.change24hPercent,
+                        hasChangeData = !rowUnavailable
+                    )
+                    val trendColor = WidgetColors.trendColor(trendDirection)
                     val shortLabel = when (asset.id) {
                         "USD" -> if (isFa) "دلار" else "USD"
                         "EUR" -> if (isFa) "یورو" else "EUR"
@@ -568,8 +583,8 @@ private fun Compact2x1WidgetContent(
                     }
                     val arrowSymbol = when {
                         rowUnavailable -> "—"
-                        asset.change24hToman > 0.001 || asset.change24hPercent > 0.005 -> "↑"
-                        asset.change24hToman < -0.001 || asset.change24hPercent < -0.005 -> "↓"
+                        trendDirection == PriceTrendDirection.UP -> "↑"
+                        trendDirection == PriceTrendDirection.DOWN -> "↓"
                         else -> "•"
                     }
 
@@ -731,7 +746,12 @@ private fun MultiRowWidgetContent(
             ) {
                 rows.forEachIndexed { idx, asset ->
                     val rowUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
-                    val isGain = asset.change24hPercent >= 0.0
+                    val hasChange = !rowUnavailable && (!asset.isUsdPerBarrel || asset.isChange24hAvailable)
+                    val trendDirection = resolvePriceTrend(
+                        changeAmount = if (asset.isUsdPerBarrel) asset.change24hUsd else asset.change24hToman,
+                        changePct = asset.change24hPercent,
+                        hasChangeData = hasChange
+                    )
                     Row(
                         modifier = GlanceModifier
                             .fillMaxWidth()
@@ -775,7 +795,7 @@ private fun MultiRowWidgetContent(
                                     )
                                 },
                                 style = TextStyle(
-                                    color = if (rowUnavailable || (asset.isUsdPerBarrel && !asset.isChange24hAvailable)) WidgetColors.sub else if (isGain) WidgetColors.gain else WidgetColors.loss,
+                                    color = WidgetColors.trendColor(trendDirection),
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Medium
                                 ),
@@ -934,7 +954,7 @@ private fun LockScreenWidgetContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "CHAND",
+                    text = if (isFa) "نرخ‌نما" else "NERKHNAMA",
                     style = TextStyle(
                         color = LockWidgetColors.pureWhite,
                         fontSize = 12.sp,
@@ -997,7 +1017,7 @@ private fun LockScreenWidgetContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "CHAND",
+                        text = if (isFa) "نرخ‌نما" else "NERKHNAMA",
                         style = TextStyle(
                             color = LockWidgetColors.softWhite,
                             fontSize = if (isTall) 11.sp else 10.sp,

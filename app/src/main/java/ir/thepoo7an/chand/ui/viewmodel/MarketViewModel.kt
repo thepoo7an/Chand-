@@ -2,6 +2,8 @@ package ir.thepoo7an.chand.ui.viewmodel
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import ir.thepoo7an.chand.data.MarketRepository
 import ir.thepoo7an.chand.data.PreferencesRepository
@@ -50,14 +52,48 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
-class MarketViewModel(application: Application) : AndroidViewModel(application) {
+class MarketViewModel(
+    application: Application,
+    private val prefsRepo: PreferencesRepository,
+    private val repository: MarketRepository,
+    private val autoStart: Boolean = true
+) : AndroidViewModel(application) {
+
+    constructor(application: Application) : this(
+        application = application,
+        prefsRepo = PreferencesRepository(application.applicationContext),
+        repository = createDefaultRepository(application.applicationContext),
+        autoStart = true
+    )
 
     companion object {
         const val TOMAN_ASSET_ID = "IRT"
-    }
 
-    private val prefsRepo = PreferencesRepository(application.applicationContext)
-    private val repository = MarketRepository(application.applicationContext, prefsRepo)
+        private fun createDefaultRepository(context: android.content.Context): MarketRepository {
+            val prefsRepo = PreferencesRepository(context)
+            return MarketRepository(context, prefsRepo)
+        }
+
+        fun provideFactory(
+            application: Application,
+            prefsRepo: PreferencesRepository,
+            repository: MarketRepository,
+            autoStart: Boolean = true
+        ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                if (modelClass.isAssignableFrom(MarketViewModel::class.java)) {
+                    return MarketViewModel(
+                        application = application,
+                        prefsRepo = prefsRepo,
+                        repository = repository,
+                        autoStart = autoStart
+                    ) as T
+                }
+                throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
+            }
+        }
+    }
 
     val preferences: StateFlow<AppPreferences> = repository.preferencesFlow.stateIn(
         scope = viewModelScope,
@@ -153,15 +189,18 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     private var pollingJob: Job? = null
+    private var refreshJob: Job? = null
     private var historyJob: Job? = null
     private var updateDownloadJob: Job? = null
     private var pendingInstallAfterPermission: Boolean = false
 
     init {
-        loadInitialData()
-        observeNetworkRestoration()
-        syncLiveConfigSilently()
-        checkForUpdatesSilently()
+        if (autoStart) {
+            loadInitialData()
+            observeNetworkRestoration()
+            syncLiveConfigSilently()
+            checkForUpdatesSilently()
+        }
     }
 
     private fun observeNetworkRestoration() {
@@ -224,14 +263,18 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun loadInitialData() {
+    fun loadInitialData() {
         viewModelScope.launch {
             try {
                 repository.hydrateLiveConfig()
                 val cached = repository.loadCached()
                 if (cached != null && cached.assets.isNotEmpty()) {
                     _uiState.value = MarketUiState.Ready(
-                        assets = cached.assets.map { it.copy(freshness = if (it.hasUsablePrimaryPrice) DataFreshness.CACHED else DataFreshness.UNAVAILABLE) },
+                        assets = cached.assets.map {
+                            it.copy(
+                                freshness = if (it.hasUsablePrimaryPrice) DataFreshness.CACHED else DataFreshness.UNAVAILABLE
+                            )
+                        },
                         lastUpdatedMillis = cached.updatedAtMillis,
                         isRefreshing = true,
                         sourceSummary = cached.sourceSummary,
@@ -243,7 +286,7 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
             } catch (_: Throwable) {
                 // Ignore corrupted/missing cache on first launch
             }
-            refreshNow()
+            refreshNow(silent = false)
         }
     }
 
@@ -273,55 +316,73 @@ class MarketViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun refreshNow(silent: Boolean = false) {
-        viewModelScope.launch {
-            if (!silent) {
-                _uiState.update { state ->
-                    when (state) {
-                        is MarketUiState.Ready -> state.copy(isRefreshing = true)
-                        is MarketUiState.Error -> MarketUiState.Loading
-                        MarketUiState.Loading -> state
-                    }
+        if (!silent) {
+            _uiState.update { state ->
+                when (state) {
+                    is MarketUiState.Ready -> state.copy(isRefreshing = true)
+                    is MarketUiState.Error -> MarketUiState.Loading
+                    MarketUiState.Loading -> state
                 }
             }
+        }
 
-            val sync = try {
-                repository.refreshMarket()
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (_: Throwable) {
-                null
-            }
+        if (refreshJob?.isActive == true) {
+            return
+        }
 
-            if (sync != null && sync.assets.isNotEmpty()) {
-                _uiState.value = MarketUiState.Ready(
-                    assets = sync.assets,
-                    lastUpdatedMillis = sync.updatedAtMillis,
-                    isRefreshing = false,
-                    sourceSummary = sync.sourceSummary,
-                    freshness = sync.freshness,
-                    errorBanner = when {
-                        sync.freshness == DataFreshness.LIVE -> null
-                        sync.freshness == DataFreshness.DELAYED -> "delayed"
-                        sync.sourceSummary.contains(TomanRateBasis.OFFLINE_REFERENCE.labelEn) -> "offline_reference"
-                        else -> "offline"
+        refreshJob = viewModelScope.launch {
+            try {
+                val sync = try {
+                    repository.refreshMarket()
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Throwable) {
+                    null
+                }
+
+                val existingReady = _uiState.value as? MarketUiState.Ready
+                val existingHasUsableCache = existingReady?.assets?.any { it.hasUsablePrimaryPrice } == true
+                val incomingUsable = sync != null && sync.assets.isNotEmpty() &&
+                    (sync.freshness != DataFreshness.UNAVAILABLE || !existingHasUsableCache)
+
+                if (incomingUsable && sync != null) {
+                    _uiState.value = MarketUiState.Ready(
+                        assets = sync.assets,
+                        lastUpdatedMillis = sync.updatedAtMillis,
+                        isRefreshing = false,
+                        sourceSummary = sync.sourceSummary,
+                        freshness = sync.freshness,
+                        errorBanner = when {
+                            sync.freshness == DataFreshness.LIVE -> null
+                            sync.freshness == DataFreshness.DELAYED -> "delayed"
+                            sync.sourceSummary.contains(TomanRateBasis.OFFLINE_REFERENCE.labelEn) -> "offline_reference"
+                            else -> "offline"
+                        }
+                    )
+                    _selectedAssetForDetail.update { openAsset ->
+                        openAsset?.let { asset -> sync.assets.firstOrNull { it.id == asset.id } ?: asset }
                     }
-                )
-                // Also refresh currently open detail/source breakdown asset if visible
-                _selectedAssetForDetail.update { openAsset ->
-                    openAsset?.let { asset -> sync.assets.firstOrNull { it.id == asset.id } ?: asset }
+                    _selectedAssetForSourceBreakdown.update { openAsset ->
+                        openAsset?.let { asset -> sync.assets.firstOrNull { it.id == asset.id } ?: asset }
+                    }
+                } else {
+                    _uiState.update { state ->
+                        when (state) {
+                            is MarketUiState.Ready -> state.copy(
+                                isRefreshing = false,
+                                freshness = DataFreshness.CACHED,
+                                errorBanner = "offline"
+                            )
+                            is MarketUiState.Error, MarketUiState.Loading -> MarketUiState.Error("network_unavailable")
+                        }
+                    }
                 }
-                _selectedAssetForSourceBreakdown.update { openAsset ->
-                    openAsset?.let { asset -> sync.assets.firstOrNull { it.id == asset.id } ?: asset }
-                }
-            } else {
+            } finally {
                 _uiState.update { state ->
-                    when (state) {
-                        is MarketUiState.Ready -> state.copy(
-                            isRefreshing = false,
-                            freshness = DataFreshness.CACHED,
-                            errorBanner = "offline"
-                        )
-                        is MarketUiState.Error, MarketUiState.Loading -> MarketUiState.Error("network_unavailable")
+                    if (state is MarketUiState.Ready && state.isRefreshing) {
+                        state.copy(isRefreshing = false)
+                    } else {
+                        state
                     }
                 }
             }

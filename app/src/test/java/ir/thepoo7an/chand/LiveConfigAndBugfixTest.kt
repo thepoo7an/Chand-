@@ -30,6 +30,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -38,11 +39,16 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36], application = ChandApplication::class)
+@Config(sdk = [36])
 class LiveConfigAndBugfixTest {
 
     @get:Rule
     val tmpDir = TemporaryFolder()
+
+    @Before
+    fun setUp() {
+        LiveConfigRegistry.resetToDefault()
+    }
 
     @After
     fun tearDown() {

@@ -15,6 +15,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
+import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.RemoteAppConfig
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.network.LiveConfigRegistry
@@ -216,6 +217,11 @@ class PreferencesRepository(
     }
 
     suspend fun saveCachedSnapshot(snapshot: CachedMarketSnapshot) {
+        if (snapshot.freshness == DataFreshness.UNAVAILABLE ||
+            snapshot.assets.none { it.hasUsablePrimaryPrice && it.freshness != DataFreshness.UNAVAILABLE }
+        ) {
+            return
+        }
         val encoded = json.encodeToString(snapshot)
         dataStore.edit { prefs ->
             prefs[Keys.CACHED_SNAPSHOT] = encoded

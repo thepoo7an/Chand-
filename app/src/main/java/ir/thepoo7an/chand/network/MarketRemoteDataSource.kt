@@ -765,9 +765,22 @@ class MarketRemoteDataSource(
                                 corroboratingUsdSeries = corroboratingRaw
                             )
                             if (combined.size >= 3) {
-                                val aligned = scalePointsToCurrent(combined, liveAppendPrice)
+                                val unitFactorVsXau = when (asset.id) {
+                                    "GOLD_18K" -> (1.0 / MarketValidationConfig.TROY_OUNCE_GRAMS) *
+                                        (MarketValidationConfig.GOLD_18K_FINENESS_PER_MILLE / 1000.0)
+                                    "GOLD_24K" -> 1.0 / MarketValidationConfig.TROY_OUNCE_GRAMS
+                                    "GOLD_MESGHAL" -> (MarketValidationConfig.MESGHAL_18K_EQUIVALENT_GRAMS /
+                                        MarketValidationConfig.TROY_OUNCE_GRAMS) *
+                                        (MarketValidationConfig.GOLD_18K_FINENESS_PER_MILLE / 1000.0)
+                                    else -> 1.0
+                                }
+                                val unitConverted = if (unitFactorVsXau == 1.0) {
+                                    combined
+                                } else {
+                                    combined.map { it.copy(priceToman = it.priceToman * unitFactorVsXau) }
+                                }
                                 return@coroutineScope AssetHistoryResult(
-                                    points = aligned,
+                                    points = appendLivePointIfNewer(unitConverted, nowSec, liveAppendPrice, scaleToLast = false),
                                     sourceLabel = "$goldSrc + $usdSrc",
                                     isRealData = true
                                 )
@@ -821,27 +834,22 @@ class MarketRemoteDataSource(
                             )
                             if (combined.size >= 3) {
                                 return@coroutineScope AssetHistoryResult(
-                                    points = scalePointsToCurrent(combined, liveAppendPrice),
+                                    points = appendLivePointIfNewer(combined, nowSec, liveAppendPrice, scaleToLast = false),
                                     sourceLabel = "$fxSrc + $usdSrc",
                                     isRealData = true
                                 )
                             }
                         }
-                    }
-
-                    // 24H Fiat or USD -> Real hourly USDT/TMN candles aligned smoothly to asset.priceToman
-                    val (usdPts, usdSrc) = fetchUsdTomanHistory(range, fromSec, nowSec)
-                    if (usdPts.size >= 4) {
-                        val aligned = if (asset.symbol == "USD" && usdSrc == "TGJU") {
-                            appendLivePointIfNewer(usdPts, nowSec, liveAppendPrice, scaleToLast = false)
-                        } else {
-                            scalePointsToCurrent(usdPts, liveAppendPrice)
+                    } else {
+                        // 24H / fallback USD -> Real USD/TMN candles without retroactively rescaling history
+                        val (usdPts, usdSrc) = fetchUsdTomanHistory(range, fromSec, nowSec)
+                        if (usdPts.size >= 4) {
+                            return@coroutineScope AssetHistoryResult(
+                                points = appendLivePointIfNewer(usdPts, nowSec, liveAppendPrice, scaleToLast = false),
+                                sourceLabel = usdSrc,
+                                isRealData = true
+                            )
                         }
-                        return@coroutineScope AssetHistoryResult(
-                            points = aligned,
-                            sourceLabel = usdSrc,
-                            isRealData = true
-                        )
                     }
 
                     if (slug != null) {
@@ -1214,10 +1222,10 @@ class MarketRemoteDataSource(
         if (points.isEmpty() || currentPrice <= 0.0) return points
         val base = if (scaleToLast) scalePointsToCurrent(points, currentPrice) else points
         val lastTs = base.last().timestampSec
-        return if (nowSec - lastTs > 600L) {
-            base + AssetHistoryPoint(nowSec, currentPrice)
-        } else {
-            base.dropLast(1) + AssetHistoryPoint(lastTs, currentPrice)
+        return when {
+            nowSec - lastTs > 600L -> base + AssetHistoryPoint(nowSec, currentPrice)
+            scaleToLast -> base.dropLast(1) + AssetHistoryPoint(lastTs, currentPrice)
+            else -> base
         }
     }
 
