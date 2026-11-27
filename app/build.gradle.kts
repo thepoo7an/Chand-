@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
@@ -54,7 +56,7 @@ android {
     // Override with LIVE_CONFIG_PUBLIC_KEYS (env) or -PliveConfigPublicKeys=... for forks.
     val liveConfigKeysFile = rootProject.file("gradle/live-config-keys.properties")
     val liveConfigKeysFromFile = if (liveConfigKeysFile.exists()) {
-      java.util.Properties().apply {
+      Properties().apply {
         liveConfigKeysFile.inputStream().use { stream -> load(stream) }
       }.getProperty("liveConfigPublicKeys").orEmpty()
     } else {
