@@ -90,10 +90,13 @@ jobs:
         if: steps.unit_tests.outcome == 'failure'
         run: |
           log="$RUNNER_TEMP/gradle-tests.log"
-          matches=$(grep -E "^e: | FAILED|Caused by:|Test.*failed" "$log" || true)
-          if [ -z "$matches" ]; then matches=$(tail -n 15 "$log"); fi
-          printf '%s\n' "$matches" | head -10 \
-            | while IFS= read -r line; do printf '::error::%s\n' "$line"; done
+          # One annotation per failing test, with its message/stack joined onto a single line
+          # (GitHub only renders single-line annotations from `::error::`).
+          grep -n " FAILED$" "$log" | head -8 | cut -d: -f1 | while IFS= read -r n; do
+            sed -n "${n},$((n + 6))p" "$log" | tr '\n' '|' | sed 's/%/%25/g'
+            echo
+          done | sed 's/^/::error::/'
+          grep -E "^e: " "$log" | head -4 | sed 's/%/%25/g' | sed 's/^/::error::/'
           exit 1
 
       - name: Build Debug APK
