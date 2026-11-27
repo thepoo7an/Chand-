@@ -10,6 +10,12 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.SystemClock
 import androidx.glance.GlanceId
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
@@ -18,6 +24,7 @@ import ir.thepoo7an.chand.data.PreferencesRepository
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
 import ir.thepoo7an.chand.network.InFlightRequestDeduplicator
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
+import ir.thepoo7an.chand.util.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,20 +33,22 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Coordinates instant widget & market updates whenever the device connects to the internet.
- * Uses a persistent default NetworkCallback while the process is alive AND schedules a zero-dependency
- * system JobScheduler task with NETWORK_TYPE_ANY when offline so Android wakes the widget sync the
- * moment connectivity returns.
+ * Uses a persistent default NetworkCallback while the process is alive, schedules a one-shot
+ * `JobScheduler` task with NETWORK_TYPE_ANY while offline so Android wakes the widget sync the
+ * moment connectivity returns, and keeps the 30-minute periodic refresh in a **persisted
+ * WorkManager** job so it survives reboots.
  */
 object WidgetSyncCoordinator {
 
     const val CONNECTIVITY_JOB_ID = 7401
-    private const val CONNECTIVITY_PERIODIC_JOB_ID = 7402
-    private const val PERIODIC_SYNC_INTERVAL_MS = 30L * 60L * 1000L
+    const val PERIODIC_WORK_NAME = "chand_widget_periodic_sync"
+    private const val PERIODIC_SYNC_INTERVAL_MINUTES = 30L
     private const val MIN_SYNC_GAP_MS = 8_000L
 
     private data class WidgetBinding(
@@ -127,7 +136,11 @@ object WidgetSyncCoordinator {
 
     private fun handleNetworkConnected(appContext: Context) {
         val transitionedFromOffline = wasOffline.getAndSet(false)
-        _networkRestoredEvents.tryEmit(System.currentTimeMillis())
+        // Only announce a genuine offline -> online transition. Emitting on every capability
+        // change made flaky networks trigger a refresh chain on the in-app polling loop.
+        if (transitionedFromOffline) {
+            _networkRestoredEvents.tryEmit(System.currentTimeMillis())
+        }
 
         scope.launch {
             val prefsRepo = PreferencesRepository(appContext)
@@ -215,7 +228,8 @@ object WidgetSyncCoordinator {
                 }
             } catch (ce: CancellationException) {
                 throw ce
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                AppLog.e("Widget sync failed; scheduling a connectivity retry", t)
                 schedulePendingConnectivitySync(appContext)
                 false
             }
@@ -265,28 +279,39 @@ object WidgetSyncCoordinator {
         runCatching { scheduler.cancel(CONNECTIVITY_JOB_ID) }
     }
 
+    /**
+     * Schedules the 30-minute background widget refresh through WorkManager so it is persisted
+     * across reboots and app upgrades (`JobScheduler` with `setPersisted(false)` is not).
+     * `ExistingPeriodicWorkPolicy.KEEP` preserves the running window, matching the previous
+     * "already scheduled -> do nothing" behaviour.
+     */
     fun schedulePeriodicWidgetSync(context: Context) {
         val appContext = context.applicationContext
-        val scheduler = appContext.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler
-            ?: return
-        if (scheduler.getPendingJob(CONNECTIVITY_PERIODIC_JOB_ID) != null) return
+        runCatching {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+            val request = PeriodicWorkRequestBuilder<WidgetPeriodicSyncWorker>(
+                PERIODIC_SYNC_INTERVAL_MINUTES,
+                TimeUnit.MINUTES
+            )
+                .setConstraints(constraints)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15L, TimeUnit.MINUTES)
+                .build()
 
-        val jobInfo = JobInfo.Builder(
-            CONNECTIVITY_PERIODIC_JOB_ID,
-            ComponentName(appContext, WidgetConnectivityJobService::class.java)
-        )
-            .setPeriodic(PERIODIC_SYNC_INTERVAL_MS)
-            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-            .setPersisted(false)
-            .build()
-
-        runCatching { scheduler.schedule(jobInfo) }
+            WorkManager.getInstance(appContext).enqueueUniquePeriodicWork(
+                PERIODIC_WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                request
+            )
+        }
     }
 
     fun cancelPeriodicWidgetSync(context: Context) {
-        val scheduler = context.applicationContext.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler
-            ?: return
-        runCatching { scheduler.cancel(CONNECTIVITY_PERIODIC_JOB_ID) }
+        runCatching {
+            WorkManager.getInstance(context.applicationContext)
+                .cancelUniqueWork(PERIODIC_WORK_NAME)
+        }
     }
 
     fun ensurePeriodicSyncIfWidgetsExist(context: Context) {

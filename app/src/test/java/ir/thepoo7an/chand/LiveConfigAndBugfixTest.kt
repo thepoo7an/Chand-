@@ -118,6 +118,34 @@ class LiveConfigAndBugfixTest {
     }
 
     @Test
+    fun `isSafeHttpsUrl rejects credential smuggling, private hosts, IP literals and malformed labels`() {
+        // Accepted: real, public, mirror-style HTTPS hosts (the mirror feature must keep working).
+        assertTrue(LiveConfigRegistry.isSafeHttpsUrl("https://mirror.example.com/v1/markets"))
+        assertTrue(LiveConfigRegistry.isSafeHttpsUrl("https://cdn.provider.example.net/path?q=1"))
+        assertTrue(LiveConfigRegistry.isSafeHttpsUrl("https://api.example.com:8443/data"))
+
+        // Rejected: credentials, private/loopback hosts, IP literals, IPv6, malformed labels.
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://user:pass@mirror.example.com/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://mirror.example.com@evil.test/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://127.0.0.1/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://10.0.0.5:8080/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://192.168.1.7/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://169.254.169.254/latest/meta-data"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://172.20.0.1/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://[::1]/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://localhost/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://api.localhost/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://printer.local/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://svc.internal/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://bad..example.com/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://-bad.example.com/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://example.com:notaport/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://example.com:99999/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("https://example.com\\@evil.test/x"))
+        assertFalse(LiveConfigRegistry.isSafeHttpsUrl("http://mirror.example.com/x"))
+    }
+
+    @Test
     fun `RemoteConfigService orders candidates custom HTTPS then jsDelivr then GitHub Raw and rejects older APK incompatibility`() = runTest {
         val candidates = RemoteConfigService.buildCandidateUrls(
             repoSlug = "thepoo7an/chand-iran-currency-gold-crypto",

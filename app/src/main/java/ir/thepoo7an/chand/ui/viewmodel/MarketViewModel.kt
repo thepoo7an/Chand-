@@ -32,6 +32,7 @@ import ir.thepoo7an.chand.network.RemoteConfigUiState
 import ir.thepoo7an.chand.network.TomanRateBasis
 import ir.thepoo7an.chand.network.UpdateErrorReason
 import ir.thepoo7an.chand.network.UpdateSecurityValidator
+import ir.thepoo7an.chand.util.AppLog
 import ir.thepoo7an.chand.widget.WidgetSyncCoordinator
 import javax.net.ssl.SSLException
 import kotlinx.coroutines.CancellationException
@@ -244,8 +245,9 @@ class MarketViewModel(
                 }
             } catch (ce: CancellationException) {
                 throw ce
-            } catch (_: Throwable) {
-                // Silent remote config sync must never disrupt startup
+            } catch (t: Throwable) {
+                // Silent remote config sync must never disrupt startup, but it must be diagnosable.
+                AppLog.w("Background live-config sync failed", t)
             }
         }
     }
@@ -270,8 +272,9 @@ class MarketViewModel(
                 }
             } catch (ce: CancellationException) {
                 throw ce
-            } catch (_: Throwable) {
-                // Silent background check must never crash startup
+            } catch (t: Throwable) {
+                // Silent background check must never crash startup, but it must be diagnosable.
+                AppLog.w("Background update check failed", t)
             }
         }
     }
@@ -349,7 +352,8 @@ class MarketViewModel(
                     repository.refreshMarket()
                 } catch (ce: CancellationException) {
                     throw ce
-                } catch (_: Throwable) {
+                } catch (t: Throwable) {
+                    AppLog.e("Market refresh failed", t)
                     null
                 }
 

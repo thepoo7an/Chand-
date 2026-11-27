@@ -2,13 +2,18 @@ name: CI
 
 on:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
-    name: Test & Build Debug APK
+    name: Test, Lint & Build Debug + Release APK
     runs-on: ubuntu-latest
 
     steps:
@@ -21,7 +26,9 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Gradle 9.3.1
+      # Caches the Gradle 9.3.1 distribution + dependency caches; the build itself runs through
+      # the checked-in wrapper so CI and local builds use the exact same Gradle version.
+      - name: Set up Gradle (wrapper version cache)
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.3.1'
@@ -46,19 +53,84 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
+      # The release variant is minified (R8) and heavily reliant on keep rules for Glance, Moshi
+      # codegen, kotlinx-serialization and WorkManager. Building it on every PR catches shrinking
+      # regressions before they reach `main`, using a throwaway CI-only signing key.
+      - name: Prepare ephemeral CI release keystore
+        run: |
+          CI_KEYSTORE="$GITHUB_WORKSPACE/ci-release-key.jks"
+          CI_STORE_PASS="chand-ci-$RANDOM-$RANDOM"
+          rm -f "$CI_KEYSTORE"
+          keytool -genkeypair -noprompt \
+            -keystore "$CI_KEYSTORE" \
+            -storepass "$CI_STORE_PASS" \
+            -alias upload \
+            -keypass "$CI_STORE_PASS" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 30 \
+            -dname "CN=Chand CI,O=Chand,C=US"
+          echo "KEYSTORE_PATH=$CI_KEYSTORE" >> "$GITHUB_ENV"
+          echo "STORE_PASSWORD=$CI_STORE_PASS" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$CI_STORE_PASS" >> "$GITHUB_ENV"
+
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
 
       - name: Run unit & Robolectric tests
+        id: unit_tests
+        continue-on-error: true
         run: |
-          if ! gradle :app:testDebugUnitTest --stacktrace; then
-            echo "::error::Unit & Robolectric tests failed (gradle :app:testDebugUnitTest)."
-            exit 1
-          fi
+          set -o pipefail
+          ./gradlew :app:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/gradle-tests.log"
+
+      # Raw job logs are not always retrievable through the API; surface the actionable
+      # compiler/test errors as annotations so a failure is diagnosable from the PR page.
+      - name: Summarise test failures as annotations
+        if: steps.unit_tests.outcome == 'failure'
+        run: |
+          # JUnit XML carries the assertion message/stack, which Gradle's console summary omits.
+          for x in app/build/test-results/testDebugUnitTest/TEST-*.xml; do
+            [ -f "$x" ] || continue
+            awk '/<testcase / { if (match($0, /name="[^"]*"/)) n = substr($0, RSTART + 6, RLENGTH - 7) }
+                 /<failure /  { if (match($0, /message="[^"]*"/)) {
+                                  m = substr($0, RSTART + 9, RLENGTH - 10)
+                                  gsub(/[\r\n]+/, " ", m)
+                                  print n " :: " m } }' "$x"
+          done | head -8 | cut -c1-1200 | sed 's/%/%25/g' | sed 's/^/::error::/'
+          grep -E "^e: " "$RUNNER_TEMP/gradle-tests.log" | head -3 | sed 's/%/%25/g' | sed 's/^/::error::/'
+          exit 1
 
       - name: Build Debug APK
-        run: |
-          if ! gradle :app:assembleDebug --stacktrace; then
-            echo "::error::Debug APK build failed (gradle :app:assembleDebug)."
-            exit 1
-          fi
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Build minified Release APKs (R8 / keep-rule verification)
+        run: ./gradlew :app:assembleRelease -PenableAbiSplits=true --stacktrace
+
+      # Non-blocking for now: this repository has no lint baseline yet. Flip to blocking
+      # (remove continue-on-error) once the report is clean.
+      - name: Run Android Lint
+        continue-on-error: true
+        run: ./gradlew :app:lintDebug --stacktrace
+
+      - name: Upload test & lint reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: chand-ci-reports
+          path: |
+            app/build/reports/tests/**
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.txt
+            app/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload R8 mapping (release build)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: chand-ci-mapping
+          path: app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: ignore
+          retention-days: 14

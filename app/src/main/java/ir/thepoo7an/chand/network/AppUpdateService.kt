@@ -279,8 +279,6 @@ class AppUpdateService(
                 )
             }
 
-            val hasTrustedHttpsApk = apkAsset != null &&
-                UpdateSecurityValidator.isSafeExternalHttpsUrl(apkAsset.browserDownloadUrl, trustedHosts)
             val fallbackUrl = apkAsset?.browserDownloadUrl?.takeIf { it.isNotBlank() } ?: safeReleasePageUrl
 
             AppUpdateState.UpdateAvailable(
@@ -296,10 +294,13 @@ class AppUpdateService(
                     matchedApkName = apkAsset?.name ?: "Chand-release.apk",
                     matchedApkSizeBytes = apkAsset?.size ?: 0L,
                     publishedAtIso = release.publishedAt,
+                    // No trusted `chand-update-metadata.json` in this release means there is no
+                    // SHA-256 checksum to verify against, so the APK is deliberately
+                    // browser-download only and never handed to the in-app installer.
                     hasDirectApkAsset = false,
                     expectedPackageName = UpdateSecurityValidator.EXPECTED_PACKAGE_NAME,
                     expectedSha256 = "",
-                    hasVerifiedMetadata = hasTrustedHttpsApk && false
+                    hasVerifiedMetadata = false
                 )
             )
         }

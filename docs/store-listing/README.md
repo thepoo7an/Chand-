@@ -22,5 +22,5 @@ This directory contains ready-to-upload, store-agnostic branding copy and visual
 
 - **No Store SDKs:** `app/build.gradle.kts` does NOT include `com.farsitel.bazaar`, `ir.myket`, or any store billing/update/analytics SDK.
 - **No Ads or Trackers:** Zero ad networks, zero Firebase/Crashlytics/telemetry dependencies, and the optional Support Development card is hidden by default (`showSupportCard = false`).
-- **Minimal Permissions:** `AndroidManifest.xml` declares only `INTERNET`, `ACCESS_NETWORK_STATE`, and the pre-existing `REQUEST_INSTALL_PACKAGES` (required solely for optional GitHub release in-app updates). Note that `cafebazaar-fa.md` and `myket-fa.md` publish standard release APKs directly via the CI workflow (`.github/workflows/release-apk.yml`).
+- **Minimal Permissions:** `AndroidManifest.xml` declares only `INTERNET`, `ACCESS_NETWORK_STATE`, `POST_NOTIFICATIONS` (price alerts on Android 13+), and the pre-existing `REQUEST_INSTALL_PACKAGES` (required solely for optional GitHub release in-app updates). No location, camera, contacts, storage or telephony permissions. Note that `cafebazaar-fa.md` and `myket-fa.md` publish standard release APKs directly via the CI workflow (`.github/workflows/release-apk.yml`).
 - **License:** MIT (`thepoo7an/chand-iran-currency-gold-crypto`).

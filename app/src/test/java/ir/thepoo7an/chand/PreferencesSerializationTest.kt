@@ -256,6 +256,25 @@ class PreferencesSerializationTest {
     }
 
     @Test
+    fun `switching language never overrides an explicit Persian-digits choice`() = runTest {
+        val repo = createIsolatedPrefsRepo()
+        // Explicit choice while the UI is still in FA: Latin digits.
+        repo.setUsePersianDigits(false)
+        repo.setLanguage(AppLanguage.EN)
+        assertFalse(repo.getPreferences().usePersianDigits)
+        // Switching back to FA must keep the explicit choice instead of forcing ۱۲۳.
+        repo.setLanguage(AppLanguage.FA)
+        assertFalse(repo.getPreferences().usePersianDigits)
+
+        // Without an explicit choice the setting still follows the language.
+        val untouched = createIsolatedPrefsRepo()
+        untouched.setLanguage(AppLanguage.EN)
+        assertFalse(untouched.getPreferences().usePersianDigits)
+        untouched.setLanguage(AppLanguage.FA)
+        assertTrue(untouched.getPreferences().usePersianDigits)
+    }
+
+    @Test
     fun `live config, dismissal flags, and resetLiveConfig round-trip cleanly in DataStore`() = runTest {
         val repo = createIsolatedPrefsRepo()
         try {

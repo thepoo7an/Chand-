@@ -10,6 +10,7 @@ import ir.thepoo7an.chand.model.RemoteFeaturesConfig
 import ir.thepoo7an.chand.model.RemoteLiveChange
 import ir.thepoo7an.chand.model.RemoteLiveNotice
 import ir.thepoo7an.chand.model.RemoteValidationConfig
+import ir.thepoo7an.chand.util.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,12 +55,51 @@ object LiveConfigRegistry {
         return true
     }
 
+    private val IPV4_LITERAL_REGEX = Regex("^[0-9.]+$")
+    private val PRIVATE_IPV4_REGEX =
+        Regex("^(10\\.|127\\.|0\\.|169\\.254\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.)")
+    private val DNS_LABEL_REGEX = Regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+    /**
+     * Accepts only absolute `https://` URLs with a real DNS host. Deliberately *not* an
+     * allowlist — endpoint mirrors are the whole point of the live config — but rejects the
+     * shapes that enable credential smuggling, SSRF probes, and trick hosts.
+     */
     fun isSafeHttpsUrl(raw: String): Boolean {
         val trimmed = raw.trim()
         if (trimmed.isBlank()) return false
+        if (trimmed.any { it.isWhitespace() || it == '\\' || it == '\u0000' }) return false
         if (!trimmed.startsWith("https://", ignoreCase = true)) return false
-        val hostPart = trimmed.substringAfter("://").substringBefore("/").substringBefore("?")
-        return hostPart.isNotBlank() && "." in hostPart && !hostPart.contains(" ")
+
+        val authority = trimmed
+            .substringAfter("://", "")
+            .substringBefore("/")
+            .substringBefore("?")
+            .substringBefore("#")
+        if (authority.isBlank() || authority.length > 260) return false
+        // `user:pass@host` would let a config hide the real target behind credentials.
+        if (authority.contains('@')) return false
+        // IPv6 literals are not used by any supported provider; reject to keep parsing simple.
+        if (authority.startsWith("[") || authority.count { it == ':' } > 1) return false
+
+        val hostPart = authority.substringBefore(":").trim().lowercase(Locale.US)
+        val portPart = authority.substringAfter(":", "")
+        if (authority.contains(':')) {
+            if (portPart.isEmpty() || portPart.any { !it.isDigit() }) return false
+            val port = portPart.toIntOrNull() ?: return false
+            if (port !in 1..65535) return false
+        }
+
+        if (hostPart.isBlank() || hostPart.length > 253) return false
+        if (hostPart.endsWith(".") || ".." in hostPart) return false
+        if (hostPart == "localhost" || hostPart.endsWith(".localhost")) return false
+        if (hostPart.endsWith(".local") || hostPart.endsWith(".internal")) return false
+        // Reject bare/private/link-local IPv4 literals (loopback, RFC1918, metadata endpoints).
+        if (IPV4_LITERAL_REGEX.matches(hostPart)) return false
+        if (PRIVATE_IPV4_REGEX.containsMatchIn(hostPart)) return false
+        if (!hostPart.contains('.')) return false
+
+        return hostPart.split('.').all { DNS_LABEL_REGEX.matches(it) }
     }
 
     internal fun sanitizeConfig(raw: RemoteAppConfig): RemoteAppConfig {
@@ -317,9 +357,12 @@ class RemoteConfigService(
             }
 
             parsedIncompatible ?: if (sawHttp404Only) {
+                AppLog.w("No live config published at any candidate URL (HTTP 404)")
                 RemoteConfigSyncResult.NotConfiguredOrMissing
             } else {
-                RemoteConfigSyncResult.Error(lastError.ifBlank { "sync_failed" })
+                val reason = lastError.ifBlank { "sync_failed" }
+                AppLog.w("Live config sync failed: $reason")
+                RemoteConfigSyncResult.Error(reason)
             }
         }
     }

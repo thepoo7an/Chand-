@@ -1,13 +1,21 @@
 package ir.thepoo7an.chand.alerts
 
+import android.Manifest
+import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import ir.thepoo7an.chand.MainActivity
 import ir.thepoo7an.chand.R
 import ir.thepoo7an.chand.model.AlertTriggerMatch
@@ -18,13 +26,90 @@ import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import ir.thepoo7an.chand.ui.strings.stringsFor
 
 /**
- * Posts high-priority price alert notifications without requiring any extra manifest permissions.
- * Respects OS-level notification settings gracefully via [NotificationManagerCompat.areNotificationsEnabled].
+ * Posts high-priority price alert notifications and owns the `POST_NOTIFICATIONS` runtime
+ * permission flow (Android 13+). Respects OS-level notification settings via
+ * [NotificationManagerCompat.areNotificationsEnabled] and never reports success when the
+ * notification was not actually handed to the system.
  */
 object PriceAlertNotifier {
 
     const val CHANNEL_ID = "price_alerts"
     private const val TEST_NOTIFICATION_ID = 70_000
+    const val NOTIFICATION_PERMISSION_REQUEST_CODE = 9_301
+
+    /** True when the app is allowed to post notifications (permission granted + app not muted). */
+    fun areNotificationsEnabled(context: Context): Boolean {
+        if (!hasNotificationPermission(context)) return false
+        return runCatching {
+            NotificationManagerCompat.from(context).areNotificationsEnabled()
+        }.getOrDefault(false)
+    }
+
+    /** True when POST_NOTIFICATIONS is granted; always true below Android 13. */
+    fun hasNotificationPermission(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * App notification settings screen. Used as the actionable fallback when the user disabled
+     * notifications at OS level (permission request alone cannot re-enable a muted app).
+     */
+    fun createNotificationSettingsIntent(context: Context): Intent =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        } else {
+            // API 24–25 has no dedicated notification-settings screen.
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.parse("package:${context.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+    /**
+     * Requests POST_NOTIFICATIONS when it was never granted, otherwise opens the system
+     * notification settings so the user can un-mute the app. Safe to call from a click handler.
+     */
+    fun ensureNotificationsAllowed(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !hasNotificationPermission(context)
+        ) {
+            val activity = context.findActivity()
+            if (activity != null && !activity.isFinishing) {
+                runCatching {
+                    ActivityCompat.requestPermissions(
+                        activity,
+                        arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                        NOTIFICATION_PERMISSION_REQUEST_CODE
+                    )
+                }
+                return
+            }
+        }
+        runCatching { context.startActivity(createNotificationSettingsIntent(context)) }
+            .onFailure {
+                // Some OEM launchers/ROMs do not expose the notification-settings screen.
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(Uri.parse("package:${context.packageName}"))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            }
+    }
+
+    private fun Context.findActivity(): Activity? {
+        var current: Context? = this
+        while (current is ContextWrapper) {
+            if (current is Activity) return current
+            current = current.baseContext
+        }
+        return null
+    }
 
     fun ensureChannel(context: Context, language: AppLanguage) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -41,9 +126,6 @@ object PriceAlertNotifier {
         }
         manager.createNotificationChannel(channel)
     }
-
-    fun areNotificationsEnabled(context: Context): Boolean =
-        runCatching { NotificationManagerCompat.from(context).areNotificationsEnabled() }.getOrDefault(false)
 
     fun postAlertNotification(
         context: Context,
@@ -116,7 +198,9 @@ object PriceAlertNotifier {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            // Monochrome vector is required for a correct status-bar silhouette; launcher
+            // mipmaps render as a blank/grey blob as small icons.
+            .setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))

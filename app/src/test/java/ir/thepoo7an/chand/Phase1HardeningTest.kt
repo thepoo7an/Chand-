@@ -240,18 +240,25 @@ class Phase1HardeningTest {
         )
         assertTrue(lockXmlResId != 0)
         val parser = context.resources.getXml(lockXmlResId)
-        var widgetCategory: String? = null
+        var widgetCategory = 0
         while (parser.next() != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
             if (parser.eventType == org.xmlpull.v1.XmlPullParser.START_TAG &&
                 parser.name == "appwidget-provider"
             ) {
-                widgetCategory = parser.getAttributeValue(
+                // `widgetCategory` is a compiled flag attribute, so the binary XML surfaces it as
+                // an int (0x1 = home_screen) rather than the raw string from the source file.
+                widgetCategory = parser.getAttributeIntValue(
                     "http://schemas.android.com/apk/res/android",
-                    "widgetCategory"
+                    "widgetCategory",
+                    0
                 )
             }
         }
-        assertEquals("home_screen", widgetCategory)
+        assertEquals(
+            "Expected the pre-Android-12 fallback to declare home_screen (0x1)",
+            1,
+            widgetCategory
+        )
 
         composeRule.setContent {
             ChandTheme(language = AppLanguage.EN) {

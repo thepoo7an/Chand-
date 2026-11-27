@@ -1,6 +1,5 @@
 package ir.thepoo7an.chand.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -69,6 +68,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import ir.thepoo7an.chand.alerts.PriceAlertNotifier
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
@@ -82,6 +83,9 @@ import ir.thepoo7an.chand.ui.theme.LightBg
 import ir.thepoo7an.chand.ui.theme.LightBgBottom
 import ir.thepoo7an.chand.ui.theme.LocalMarketColors
 import kotlinx.coroutines.launch
+
+/** Outcome of the manual "Test alert" action, surfaced honestly in the UI. */
+private enum class AlertTestNotice { SENT, FAILED }
 
 @Composable
 fun AlertsScreen(
@@ -112,7 +116,21 @@ fun AlertsScreen(
     var editingAlert by remember { mutableStateOf<PriceAlert?>(null) }
     var showEditorSheet by remember { mutableStateOf(false) }
     var preselectedAssetId by remember { mutableStateOf("USD") }
-    var testNoticeVisible by remember { mutableStateOf(false) }
+    var testNotice by remember { mutableStateOf<AlertTestNotice?>(null) }
+
+    // Mirrors the real OS state so the permission dialog / settings round-trip is reflected
+    // without recomposing the whole screen.
+    var notificationsEnabled by remember(context, notificationsEnabledOverride) {
+        mutableStateOf(
+            notificationsEnabledOverride ?: PriceAlertNotifier.areNotificationsEnabled(context)
+        )
+    }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (notificationsEnabledOverride == null) {
+            notificationsEnabled = PriceAlertNotifier.areNotificationsEnabled(context)
+        }
+    }
 
     LaunchedEffect(initialAssetIdForCreation) {
         if (!initialAssetIdForCreation.isNullOrBlank()) {
@@ -122,9 +140,6 @@ fun AlertsScreen(
             onConsumeInitialAssetId()
         }
     }
-
-    val notificationsEnabled = notificationsEnabledOverride
-        ?: remember(context) { PriceAlertNotifier.areNotificationsEnabled(context) }
 
     val bgBrush = when (prefs.themeMode) {
         ThemeMode.LIGHT -> Brush.verticalGradient(listOf(LightBg, LightBgBottom))
@@ -160,7 +175,7 @@ fun AlertsScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = strings.marketTab,
+                        contentDescription = strings.backAction,
                         tint = MaterialTheme.colorScheme.onBackground
                     )
                 }
@@ -191,8 +206,14 @@ fun AlertsScreen(
                 OutlinedButton(
                     onClick = {
                         scope.launch {
-                            onSendTestAlert()
-                            testNoticeVisible = true
+                            val delivered = onSendTestAlert()
+                            notificationsEnabled = notificationsEnabledOverride
+                                ?: PriceAlertNotifier.areNotificationsEnabled(context)
+                            testNotice = if (delivered) {
+                                AlertTestNotice.SENT
+                            } else {
+                                AlertTestNotice.FAILED
+                            }
                         }
                     },
                     shape = RoundedCornerShape(14.dp),
@@ -218,6 +239,11 @@ fun AlertsScreen(
                         editingAlert = null
                         preselectedAssetId = tomanAssets.firstOrNull()?.id ?: "USD"
                         showEditorSheet = true
+                        // Ask for POST_NOTIFICATIONS up-front so a freshly created alert can
+                        // actually be delivered instead of failing silently in the background.
+                        if (!notificationsEnabled) {
+                            PriceAlertNotifier.ensureNotificationsAllowed(context)
+                        }
                     },
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
@@ -239,15 +265,19 @@ fun AlertsScreen(
                 }
             }
 
-            AnimatedVisibility(visible = testNoticeVisible) {
+            testNotice?.let { notice ->
+                val delivered = notice == AlertTestNotice.SENT
+                val accent = if (delivered) marketColors.gain else marketColors.loss
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = marketColors.gainContainer,
-                    border = BorderStroke(1.dp, marketColors.gain.copy(alpha = 0.35f)),
+                    color = if (delivered) marketColors.gainContainer else marketColors.lossContainer,
+                    border = BorderStroke(1.dp, accent.copy(alpha = 0.35f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 8.dp)
-                        .testTag("alert_test_sent_banner")
+                        .testTag(
+                            if (delivered) "alert_test_sent_banner" else "alert_test_failed_banner"
+                        )
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -255,15 +285,23 @@ fun AlertsScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Outlined.CheckCircle,
+                            imageVector = if (delivered) {
+                                Icons.Outlined.CheckCircle
+                            } else {
+                                Icons.Outlined.NotificationsOff
+                            },
                             contentDescription = null,
-                            tint = marketColors.gain,
+                            tint = accent,
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = strings.alertTestSentNotice,
+                            text = if (delivered) {
+                                strings.alertTestSentNotice
+                            } else {
+                                strings.alertTestFailedNotice
+                            },
                             style = MaterialTheme.typography.labelMedium,
-                            color = marketColors.gain,
+                            color = accent,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -278,6 +316,7 @@ fun AlertsScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 8.dp)
+                        .clickable { PriceAlertNotifier.ensureNotificationsAllowed(context) }
                         .testTag("alerts_notifications_disabled_banner")
                 ) {
                     Row(
@@ -294,7 +333,15 @@ fun AlertsScreen(
                         Text(
                             text = strings.alertNotificationsDisabledBanner,
                             style = MaterialTheme.typography.labelSmall,
-                            color = marketColors.gold
+                            color = marketColors.gold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = strings.alertEnableNotificationsAction,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = marketColors.gold,
+                            modifier = Modifier.testTag("alert_enable_notifications_action")
                         )
                     }
                 }

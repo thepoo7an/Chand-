@@ -283,8 +283,13 @@ class OilApiService(
             "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?range={range}&interval={interval}"
         )
 
+        /**
+         * The key is baked in at build time (`EIA_API_KEY` env var or `-PeiaApiKey=` Gradle
+         * property). Android app processes never inherit shell environment variables, so reading
+         * `System.getenv` here would always return an empty string in a shipped APK.
+         */
         private fun resolveConfiguredEiaApiKey(): String =
-            System.getenv("EIA_API_KEY")?.trim().orEmpty()
+            ir.thepoo7an.chand.BuildConfig.EIA_API_KEY.trim()
 
         internal fun parseYahooChartQuotePayload(
             raw: String,

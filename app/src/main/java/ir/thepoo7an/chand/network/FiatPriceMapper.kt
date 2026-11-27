@@ -508,20 +508,23 @@ internal object FiatPriceMapper {
         var tgjuLowToman = tgjuQuote?.lowToman
         var tgjuChangeToman = tgjuQuote?.changeToman
 
-        // Normalize 100-unit (JPY) and 1000-unit (IQD) TGJU quotes against real FX cross-rate
-        if (tgjuPriceToman != null && crossPriceToman != null && crossPriceToman > 0.0) {
-            val ratio = tgjuPriceToman / crossPriceToman
-            if (ratio in 50.0..200.0) {
-                tgjuPriceToman /= 100.0
-                tgjuHighToman = tgjuHighToman?.let { it / 100.0 }
-                tgjuLowToman = tgjuLowToman?.let { it / 100.0 }
-                tgjuChangeToman = tgjuChangeToman?.let { it / 100.0 }
-            } else if (ratio in 500.0..2000.0) {
-                tgjuPriceToman /= 1000.0
-                tgjuHighToman = tgjuHighToman?.let { it / 1000.0 }
-                tgjuLowToman = tgjuLowToman?.let { it / 1000.0 }
-                tgjuChangeToman = tgjuChangeToman?.let { it / 1000.0 }
-            }
+        // TGJU publishes JPY per 100 units and IQD per 1000 units, so exactly those two symbols
+        // need a deterministic scale correction (the same rule used by `tgjuTableScaleForSlug`).
+        // Every other symbol keeps the raw quote: a real 100x divergence must surface as a
+        // `disputed` cross-source mismatch instead of being silently rescaled into a plausible
+        // (but wrong) price.
+        val tgjuUnitDivisor = when {
+            spec.tgjuKey.equals("price_jpy", ignoreCase = true) ||
+                spec.symbol.equals("JPY", ignoreCase = true) -> 100.0
+            spec.tgjuKey.equals("price_iqd", ignoreCase = true) ||
+                spec.symbol.equals("IQD", ignoreCase = true) -> 1000.0
+            else -> 1.0
+        }
+        if (tgjuUnitDivisor > 1.0 && tgjuPriceToman != null) {
+            tgjuPriceToman /= tgjuUnitDivisor
+            tgjuHighToman = tgjuHighToman?.let { it / tgjuUnitDivisor }
+            tgjuLowToman = tgjuLowToman?.let { it / tgjuUnitDivisor }
+            tgjuChangeToman = tgjuChangeToman?.let { it / tgjuUnitDivisor }
         }
 
         val tgjuTs = tgjuQuote?.timestampMillis?.coerceAtLeast(0L) ?: 0L
