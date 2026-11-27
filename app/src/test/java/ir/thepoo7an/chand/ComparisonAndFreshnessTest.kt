@@ -2,10 +2,12 @@ package ir.thepoo7an.chand
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.glance.GlanceId
@@ -321,7 +323,9 @@ class ComparisonAndFreshnessTest {
         composeRule.onNodeWithTag("freshness_chip_USD", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithTag("comparison_badge_USD", useUnmergedTree = true)
             .assertExists()
-            .performClick()
+            // Invoke the click semantics directly: touch injection is unreliable for nodes that
+            // the (Robolectric) card layout clips, and the wiring is what this test covers.
+            .performSemanticsAction(SemanticsActions.OnClick)
         assertEquals("USD", openedPriceAsset?.id)
     }
 
