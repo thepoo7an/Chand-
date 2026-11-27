@@ -90,8 +90,10 @@ jobs:
         if: steps.unit_tests.outcome == 'failure'
         run: |
           log="$RUNNER_TEMP/gradle-tests.log"
-          { grep -E "^e: " "$log"; grep -A2 -E " FAILED$" "$log" | grep -vE "^--$"; } \
-            | head -10 | while IFS= read -r line; do printf '::error::%s\n' "$line"; done
+          matches=$(grep -E "^e: | FAILED|Caused by:|Test.*failed" "$log" || true)
+          if [ -z "$matches" ]; then matches=$(tail -n 15 "$log"); fi
+          printf '%s\n' "$matches" | head -10 \
+            | while IFS= read -r line; do printf '::error::%s\n' "$line"; done
           exit 1
 
       - name: Build Debug APK
