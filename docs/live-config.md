@@ -204,8 +204,9 @@ If a private key leaks: add the replacement key (step 1), publish a config signe
 
 Two independent safety nets keep a bad publication from bricking the price feed:
 
-**1. Expiry (`expiresAtIso`).** After the timestamp passes, a config is no longer applied and an
+**1. Expiry (`expiresAtIso`).** At and after the timestamp, a config is no longer applied and an
 already-applied one is discarded on the next hydration (`PreferencesRepository.hydrateLiveConfig`).
+The check is fail-closed: the expiry instant itself is already too late.
 Blank or unparsable values mean "no expiry" — a typo must never silently disable the config. The
 field is inside the signed payload, so changing the expiry requires re-signing.
 

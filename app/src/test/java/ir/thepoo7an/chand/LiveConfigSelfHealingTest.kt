@@ -68,10 +68,18 @@ class LiveConfigSelfHealingTest {
     // --- expiry ---------------------------------------------------------------------------
 
     @Test
-    fun `expiry only triggers for a parseable timestamp in the past`() {
+    fun `expiry only triggers for a parseable timestamp that has been reached`() {
         val now = 1_764_201_600_000L // 2025-11-27T00:00:00Z
         assertTrue(LiveConfigRegistry.isExpired(remoteConfig(1, "2025-11-01T00:00:00Z"), now))
         assertFalse(LiveConfigRegistry.isExpired(remoteConfig(1, "2026-01-01T00:00:00Z"), now))
+        // Fail closed: the expiry instant itself is already stale, one millisecond earlier is fine.
+        assertTrue(
+            "the expiry instant is already expired",
+            LiveConfigRegistry.isExpired(remoteConfig(1, "2025-11-27T00:00:00Z"), now)
+        )
+        assertFalse(
+            LiveConfigRegistry.isExpired(remoteConfig(1, "2025-11-27T00:00:00Z"), now - 1)
+        )
         assertFalse("blank expiresAtIso means no expiry", LiveConfigRegistry.isExpired(remoteConfig(1), now))
         assertFalse(
             "unparsable expiry must not silently kill the config",

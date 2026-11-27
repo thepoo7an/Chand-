@@ -85,10 +85,14 @@ object LiveConfigRegistry {
         return null
     }
 
-    /** True only when the config carries a valid `expiresAtIso` that is already in the past. */
+    /**
+     * True only when the config carries a valid `expiresAtIso` that has already been reached.
+     * The comparison is fail-closed (`>=`): the expiry instant itself is no longer served, so a
+     * publisher never has to reason about a one-millisecond window of stale endpoints.
+     */
     fun isExpired(config: RemoteAppConfig, nowMillis: Long = System.currentTimeMillis()): Boolean {
         val expiresAt = parseInstantMillis(config.expiresAtIso) ?: return false
-        return nowMillis > expiresAt
+        return nowMillis >= expiresAt
     }
 
     private val IPV4_LITERAL_REGEX = Regex("^[0-9.]+$")
