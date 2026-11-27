@@ -10,6 +10,10 @@ package ir.thepoo7an.chand.data
  *
  * A snapshot that is older than the soft TTL is served immediately and revalidated in the
  * background, which is exactly the stale-while-revalidate contract the UI and widgets expect.
+ *
+ * Note the two distinct entry points: [isFresh] takes a snapshot timestamp, [isAgeFresh] takes an
+ * already computed age. They are deliberately *not* overloads of one another — two `Long`
+ * parameters would silently bind the timestamp to the age argument.
  */
 object SnapshotPolicy {
 
@@ -29,15 +33,15 @@ object SnapshotPolicy {
     }
 
     /** True when a snapshot of this age may be served without revalidating. */
-    fun isFresh(ageMillis: Long, softTtlMillis: Long = SOFT_TTL_MS): Boolean =
+    fun isAgeFresh(ageMillis: Long, softTtlMillis: Long = SOFT_TTL_MS): Boolean =
         ageMillis >= 0L && ageMillis < softTtlMillis
 
-    /** Convenience overload for callers that hold the snapshot timestamp. */
+    /** True when the snapshot fetched at [updatedAtMillis] may be served without revalidating. */
     fun isFresh(
         updatedAtMillis: Long,
         nowMillis: Long,
         softTtlMillis: Long = SOFT_TTL_MS
-    ): Boolean = isFresh(ageMillis(updatedAtMillis, nowMillis), softTtlMillis)
+    ): Boolean = isAgeFresh(ageMillis(updatedAtMillis, nowMillis), softTtlMillis)
 
     /** True when the network must be asked again; a missing snapshot always needs a fetch. */
     fun shouldRevalidate(

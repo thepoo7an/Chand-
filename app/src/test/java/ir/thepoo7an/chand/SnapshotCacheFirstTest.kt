@@ -79,7 +79,11 @@ class SnapshotCacheFirstTest {
         assertEquals(Long.MAX_VALUE, SnapshotPolicy.ageMillis(NOW + 60_000L, NOW))
 
         assertFalse(SnapshotPolicy.isFresh(0L, NOW))
-        assertFalse("a backwards clock jump must not pin a snapshot as fresh", SnapshotPolicy.isFresh(NOW + 60_000L, NOW))
+        assertFalse(
+            "a backwards clock jump must not pin a snapshot as fresh",
+            SnapshotPolicy.isFresh(NOW + 60_000L, NOW)
+        )
+        assertFalse(SnapshotPolicy.isAgeFresh(Long.MAX_VALUE))
         assertTrue(SnapshotPolicy.shouldRevalidate(null, NOW))
         assertTrue(SnapshotPolicy.shouldRevalidate(0L, NOW))
         assertTrue(SnapshotPolicy.shouldRevalidate(NOW + 60_000L, NOW))
@@ -88,6 +92,12 @@ class SnapshotCacheFirstTest {
     @Test
     fun `the soft TTL boundary belongs to the stale side`() {
         assertEquals(SnapshotPolicy.SOFT_TTL_MS, SnapshotPolicy.ageMillis(NOW - SnapshotPolicy.SOFT_TTL_MS, NOW))
+        assertTrue(SnapshotPolicy.isAgeFresh(SnapshotPolicy.SOFT_TTL_MS - 1L))
+        assertFalse(SnapshotPolicy.isAgeFresh(SnapshotPolicy.SOFT_TTL_MS))
+        assertFalse(SnapshotPolicy.isAgeFresh(SnapshotPolicy.SOFT_TTL_MS + 1L))
+        assertTrue(SnapshotPolicy.isAgeFresh(0L))
+        assertFalse(SnapshotPolicy.isAgeFresh(-1L))
+
         assertTrue(SnapshotPolicy.isFresh(NOW - SnapshotPolicy.SOFT_TTL_MS + 1L, NOW))
         assertFalse(SnapshotPolicy.isFresh(NOW - SnapshotPolicy.SOFT_TTL_MS, NOW))
         assertTrue(SnapshotPolicy.isFresh(NOW, NOW))
