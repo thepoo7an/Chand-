@@ -79,6 +79,7 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
   - **2×2 Crypto Watch Widget** (`BTC • ETH • USDT`)
   - **Transparent Lock Screen Widget** (`keyguard|home_screen` on Android 12+ / API 31+, falling back to `home_screen` on Android 7–11; monochrome background-free typography inspired by Nothing OS)
 - **Instant Connectivity & 30-Minute Periodic Widget Sync:** Automatically refreshes widgets when moving from offline to online (`ConnectivityManager.NetworkCallback`) and keeps a persisted 30-minute `WorkManager` refresh running while widgets are placed (survives reboots).
+- **Cache-First Everywhere (Stale-While-Revalidate):** The app feed and all five widgets render the last known snapshot instantly and only revalidate when it is actually stale (30-second soft TTL), so reopening the app or the launcher never shows an empty screen or fires a pointless multi-provider fetch.
 - **AMOLED Pure Black, Dark & Light Themes + Bilingual UI:** Built natively in **Persian (RTL)** and **English (LTR)** with optional Persian digits (`۱۲۳`), 2-column Bento Grid or List view, and a built-in quick currency converter keypad.
 
 ---
@@ -96,6 +97,7 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
   - **ویجت ۴×۲ برگزیده‌ها** و **ویجت ۲×۲ رمزارزها** همراه با نمایش ساعت آخرین بروزرسانی.
   - **ویجت شفاف لاک‌اسکرین (Nothing Style):** بدون پس‌زمینه و با خوانایی بالا روی والپیپر صفحه قفل *(نیازمند اندروید ۱۲ به بالا / API 31+ برای صفحه قفل؛ در نسخه‌های قدیمی‌تر اندروید به‌عنوان ویجت صفحه اصلی در دسترس است)*.
 - **همگام‌سازی خودکار ویجت‌ها:** به‌محض اتصال گوشی به اینترنت یا هر ۳۰ دقیقه در پس‌زمینه (فقط در صورت وجود ویجت فعال) نرخ‌ها بروزرسانی می‌شوند.
+- **نمایش فوری از حافظهٔ موقت (Cache-First):** برنامه و هر پنج ویجت ابتدا آخرین نرخ‌های ذخیره‌شده را نشان می‌دهند و فقط وقتی داده کهنه باشد (بیش از ۳۰ ثانیه) در پس‌زمینه بروزرسانی می‌شوند؛ نه صفحهٔ خالی و نه درخواست اضافی.
 - **نمودار واقعی بازه‌های `۲۴ ساعت`، `۷ روز`، `۱ ماه` و `۱ سال`:** لمس روی نمودار برای مشاهده قیمت دقیق با **تاریخ شمسی** و نمایش روند اختصاصی هر ارز روی کارت‌ها.
 - **مبدل سریع ارز و طلا:** تبدیل فوری هر ارز، طلا، سکه یا رمزارز به تومان و سایر دارایی‌ها با صفحه‌کلید اختصاصی.
 - **تم مشکی مطلق AMOLED + فارسی (راست‌چین) و انگلیسی:** همراه با پشتیبانی از ارقام فارسی (`۱۲۳`) و قابلیت بررسی و دانلود نسخه جدید مستقیم از داخل تنظیمات.

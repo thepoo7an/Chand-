@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import ir.thepoo7an.chand.data.MarketRepository
+import ir.thepoo7an.chand.data.SnapshotPolicy
 import ir.thepoo7an.chand.data.PreferencesRepository
 import ir.thepoo7an.chand.alerts.PriceAlertEvaluator
 import ir.thepoo7an.chand.model.AppLanguage
@@ -60,7 +61,8 @@ class MarketViewModel(
     application: Application,
     private val prefsRepo: PreferencesRepository,
     private val repository: MarketRepository,
-    private val autoStart: Boolean = true
+    private val autoStart: Boolean = true,
+    private val clockMillis: () -> Long = { System.currentTimeMillis() }
 ) : AndroidViewModel(application) {
 
     constructor(application: Application) : this(
@@ -279,12 +281,21 @@ class MarketViewModel(
         }
     }
 
+    /**
+     * Cache-first start: the persisted snapshot is rendered immediately and the network is only
+     * consulted when it is actually stale. A snapshot younger than
+     * [SnapshotPolicy.SOFT_TTL_MS] means the process was just killed and remounted, so firing
+     * another multi-provider fetch would be pure waste — the auto-refresh loop (and the widget
+     * sync) revalidate on their own cadence.
+     */
     fun loadInitialData() {
         viewModelScope.launch {
+            var servesFreshCache = false
             try {
                 repository.hydrateLiveConfig()
                 val cached = repository.loadCached()
                 if (cached != null && cached.assets.isNotEmpty()) {
+                    servesFreshCache = SnapshotPolicy.isFresh(cached.updatedAtMillis, clockMillis())
                     _uiState.value = MarketUiState.Ready(
                         assets = cached.assets.map {
                             it.copy(
@@ -292,7 +303,7 @@ class MarketViewModel(
                             )
                         },
                         lastUpdatedMillis = cached.updatedAtMillis,
-                        isRefreshing = true,
+                        isRefreshing = !servesFreshCache,
                         sourceSummary = cached.sourceSummary,
                         freshness = DataFreshness.CACHED
                     )
@@ -301,6 +312,10 @@ class MarketViewModel(
                 throw ce
             } catch (_: Throwable) {
                 // Ignore corrupted/missing cache on first launch
+            }
+            if (servesFreshCache) {
+                AppLog.d("Skipping the startup refresh: the cached snapshot is still fresh")
+                return@launch
             }
             refreshNow(silent = false)
         }
