@@ -54,7 +54,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36], application = ChandApplication::class)
+// Robolectric default surface is 320x470dp, far smaller than any real phone; Compose UI
+// assertions such as `assertIsDisplayed` failed for bottom-sheet rows and card chips that
+// are visible on an actual device. Render at a realistic 411x891dp viewport instead.
+@Config(sdk = [36], qualifiers = "w411dp-h891dp", application = ChandApplication::class)
 class ComparisonAndFreshnessTest {
 
     @get:Rule

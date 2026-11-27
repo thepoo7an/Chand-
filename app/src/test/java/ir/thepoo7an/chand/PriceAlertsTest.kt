@@ -40,7 +40,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36], application = ChandApplication::class)
+// Robolectric default surface is 320x470dp, far smaller than any real phone; Compose UI
+// assertions such as `assertIsDisplayed` failed for bottom-sheet rows and card chips that
+// are visible on an actual device. Render at a realistic 411x891dp viewport instead.
+@Config(sdk = [36], qualifiers = "w411dp-h891dp", application = ChandApplication::class)
 class PriceAlertsTest {
 
     @get:Rule
@@ -251,9 +254,19 @@ class PriceAlertsTest {
         composeRule.onNodeWithTag("alert_save_button").performClick()
         composeRule.onNodeWithTag("alert_bounds_error").assertIsDisplayed()
         assertEquals(0, savedCalls)
+    }
 
-        composeRule.onNodeWithTag("alert_lower_input").performTextInput("")
-        // Replace invalid bounds using valid upper-only check by reopening
+    @Test
+    fun `AlertsScreen saves a valid upper-only alert when opened for a preselected asset`() {
+        var savedCalls = 0
+        var lastSavedUpper: Double? = null
+        val assets = listOf(
+            asset("USD", 115_000.0),
+            asset("GOLD_18K", 6_100_000.0)
+        )
+
+        // Compose only allows one setContent per test, so the "reopen with a preselected asset"
+        // flow lives in its own test instead of re-setting the content mid-test.
         composeRule.setContent {
             ChandTheme(language = AppLanguage.EN) {
                 AlertsScreen(
