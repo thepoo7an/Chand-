@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import ir.thepoo7an.chand.data.MarketRepository
 import ir.thepoo7an.chand.data.PreferencesRepository
+import ir.thepoo7an.chand.alerts.PriceAlertEvaluator
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.AssetCategory
@@ -14,9 +15,11 @@ import ir.thepoo7an.chand.model.AssetHistoryPoint
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.MarketUiState
+import ir.thepoo7an.chand.model.PriceAlert
 import ir.thepoo7an.chand.model.RemoteAppConfig
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.model.TimeRange
+import java.util.UUID
 import ir.thepoo7an.chand.network.AppUpdateDownloadState
 import ir.thepoo7an.chand.network.AppUpdateException
 import ir.thepoo7an.chand.network.AppUpdateInfo
@@ -99,6 +102,12 @@ class MarketViewModel(
         scope = viewModelScope,
         started = SharingStarted.Eagerly,
         initialValue = AppPreferences()
+    )
+
+    val priceAlerts: StateFlow<List<PriceAlert>> = repository.priceAlertsFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = emptyList()
     )
 
     val liveConfig: StateFlow<RemoteAppConfig> = repository.remoteConfigFlow.stateIn(
@@ -200,6 +209,10 @@ class MarketViewModel(
             observeNetworkRestoration()
             syncLiveConfigSilently()
             checkForUpdatesSilently()
+            viewModelScope.launch {
+                val existingAlerts = runCatching { repository.getPriceAlerts() }.getOrDefault(emptyList())
+                repository.syncAlertSchedule(existingAlerts)
+            }
         }
     }
 
@@ -450,6 +463,78 @@ class MarketViewModel(
             repository.setWidgetHeroAssetId(assetId)
         }
     }
+
+    fun setShowSupportCard(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setShowSupportCard(enabled)
+        }
+    }
+
+    fun toggleComparisonAsset(assetId: String) {
+        viewModelScope.launch {
+            repository.toggleComparisonAsset(assetId)
+        }
+    }
+
+    fun upsertPriceAlert(
+        existingId: String?,
+        assetId: String,
+        upperBoundToman: Double?,
+        lowerBoundToman: Double?,
+        isEnabled: Boolean = true
+    ) {
+        val cleanUpper = upperBoundToman?.takeIf { it.isFinite() && it > 0.0 }
+        val cleanLower = lowerBoundToman?.takeIf { it.isFinite() && it > 0.0 }
+        val candidate = PriceAlert(
+            id = existingId ?: UUID.randomUUID().toString(),
+            assetId = assetId,
+            upperBoundToman = cleanUpper,
+            lowerBoundToman = cleanLower,
+            isEnabled = isEnabled,
+            triggeredUpper = false,
+            triggeredLower = false,
+            lastTriggeredAtMillis = 0L,
+            createdAtMillis = System.currentTimeMillis()
+        )
+        if (!candidate.hasValidBounds) return
+        viewModelScope.launch {
+            val current = repository.getPriceAlerts().toMutableList()
+            val idx = current.indexOfFirst { it.id == candidate.id }
+            if (idx >= 0) {
+                current[idx] = candidate.copy(createdAtMillis = current[idx].createdAtMillis)
+            } else {
+                current.add(0, candidate)
+            }
+            repository.savePriceAlerts(current)
+        }
+    }
+
+    fun deletePriceAlert(alertId: String) {
+        viewModelScope.launch {
+            val updated = repository.getPriceAlerts().filterNot { it.id == alertId }
+            repository.savePriceAlerts(updated)
+        }
+    }
+
+    fun togglePriceAlertEnabled(alertId: String) {
+        viewModelScope.launch {
+            val updated = repository.getPriceAlerts().map { alert ->
+                if (alert.id == alertId) alert.copy(isEnabled = !alert.isEnabled) else alert
+            }
+            repository.savePriceAlerts(updated)
+        }
+    }
+
+    fun rearmPriceAlert(alertId: String) {
+        viewModelScope.launch {
+            val updated = repository.getPriceAlerts().map { alert ->
+                if (alert.id == alertId) PriceAlertEvaluator.rearm(alert) else alert
+            }
+            repository.savePriceAlerts(updated)
+        }
+    }
+
+    suspend fun sendTestPriceAlert(): Boolean = repository.sendTestAlert()
 
     fun setGithubRepoSlug(slug: String) {
         val trimmed = slug.trim()

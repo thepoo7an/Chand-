@@ -150,6 +150,7 @@ class HistoricalChartAccuracyTest {
         val gappedHistory = listOf(
             AssetHistoryPoint(baseTs, 88_000.0),
             AssetHistoryPoint(baseTs + 3600L, 88_500.0),
+            AssetHistoryPoint(baseTs + 3600L * 2L, 88_900.0),
             AssetHistoryPoint(baseTs + 3600L * 10L, 90_000.0),
             AssetHistoryPoint(baseTs + 3600L * 11L, 90_400.0)
         )

@@ -28,6 +28,9 @@ data class SourceBreakdownRow(
     val sourceTimestampMillis: Long,
     val hasValidTimestamp: Boolean,
     val timestampText: String,
+    val fetchedAtMillis: Long,
+    val hasValidFetchedAt: Boolean,
+    val fetchedAtText: String,
     val status: SourceBreakdownStatus,
     val statusLabel: String,
     val contributedToFinal: Boolean,
@@ -112,6 +115,7 @@ object MarketSourceBreakdownBuilder {
                     priceToman = asset.priceToman.takeIf { it > 0.0 },
                     rawPrice = if (isOilUsd) asset.priceUsd else asset.priceToman,
                     sourceTimestampMillis = asset.sourceTimestampMillis.coerceAtLeast(0L),
+                    fetchedAtMillis = asset.fetchedAtMillis.coerceAtLeast(0L),
                     isPrimary = true,
                     status = CandidateStatus.INCLUDED,
                     exclusionReason = null,
@@ -201,6 +205,15 @@ object MarketSourceBreakdownBuilder {
             strings.sourceTimestampUnavailable
         }
 
+        val fetchedTs = candidate.fetchedAtMillis
+        val isFutureFetchTs = fetchedTs > referenceNowMillis + MarketValidationConfig.FUTURE_TIMESTAMP_REJECT_TOLERANCE_MILLIS
+        val hasValidFetchedAt = fetchedTs > 0L && !isFutureFetchTs
+        val fetchedAtText = if (hasValidFetchedAt) {
+            NumberFormatters.formatJalaliDateTime(fetchedTs, usePersianDigits)
+        } else {
+            strings.sourceTimestampUnavailable
+        }
+
         val assetIsUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
         val hasReportedPrimaryPrice = if (isOilUsd) validPriceUsdBbl != null else validPriceToman != null
 
@@ -284,6 +297,9 @@ object MarketSourceBreakdownBuilder {
             sourceTimestampMillis = ts.coerceAtLeast(0L),
             hasValidTimestamp = hasValidTimestamp,
             timestampText = timestampText,
+            fetchedAtMillis = fetchedTs.coerceAtLeast(0L),
+            hasValidFetchedAt = hasValidFetchedAt,
+            fetchedAtText = fetchedAtText,
             status = status,
             statusLabel = statusLabel,
             contributedToFinal = contributed,

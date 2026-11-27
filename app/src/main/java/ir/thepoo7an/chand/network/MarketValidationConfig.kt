@@ -61,10 +61,15 @@ object MarketValidationConfig {
 
     /**
      * Returns the single-tick reverting spike threshold (%) calibrated by asset [category] and [range],
-     * incorporating any active online [LiveConfigRegistry] override.
-     * - 24H: 15% for every category.
-     * - 7D / 1M: 40% for crypto, 15% for fiat and gold.
-     * - 1Y: 40% for crypto, 25% for fiat and gold (coarse samples & macro regime shifts).
+     * incorporating any active online [LiveConfigRegistry] override:
+     * - `24H` (all categories): `15%`
+     * - `CRYPTO` (`7D` / `1M` / `1Y`): `40%`
+     * - `FIAT` (`7D` / `1M` / `1Y`): `15%` (`7D` / `1M`), `25%` (`1Y` macro regime shifts)
+     * - `GOLD` (`7D` / `1M` / `1Y`): `15%` (`7D` / `1M`), `25%` (`1Y` macro regime shifts)
+     * - `OIL` (`7D` / `1M` / `1Y`): `20%` (`7D` / `1M`), `35%` (`1Y`)
+     *
+     * Note: [HistoryNormalizer] only removes *isolated reverting spikes* (sharp move immediately
+     * undone by the next point) without corroboration; sustained market shocks are always preserved.
      */
     fun spikeThresholdPct(category: AssetCategory, range: TimeRange): Double {
         val overrides = LiveConfigRegistry.currentConfig().validation

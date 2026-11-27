@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -118,6 +119,8 @@ fun SettingsSheet(
     onCancelUpdateDownload: () -> Unit = {},
     onInstallUpdateApk: (File, AppUpdateInfo) -> Unit = { _, _ -> },
     onOpenUpdateCatalog: () -> Unit = {},
+    onSetShowSupportCard: (Boolean) -> Unit = {},
+    onToggleComparisonAsset: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -760,6 +763,89 @@ fun SettingsSheet(
                             )
                         }
                     }
+                }
+
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = marketColors.gold.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, marketColors.gold.copy(alpha = 0.35f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("lock_widget_pre12_notice")
+                    ) {
+                        Text(
+                            text = strings.lockScreenPreAndroid12Notice,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = marketColors.gold,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                        )
+                    }
+                }
+            }
+
+            // Multi-Source Price Comparison Section
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = strings.comparisonSectionTitle,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = strings.comparisonSectionSubtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AppPreferences.CONFIGURABLE_COMPARISON_IDS.forEach { assetId ->
+                        val enabled = assetId in prefs.comparisonAssetIds
+                        val chipLabel = when (assetId) {
+                            "GOLD_18K" -> if (isFa) "طلا ۱۸" else "18K"
+                            else -> assetId
+                        }
+                        SelectableOptionTile(
+                            label = chipLabel,
+                            selected = enabled,
+                            hairline = marketColors.hairline,
+                            onClick = { onToggleComparisonAsset(assetId) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("comparison_toggle_$assetId")
+                        )
+                    }
+                }
+            }
+
+            // Optional Support Development Card Toggle (hidden by default)
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                border = BorderStroke(1.dp, marketColors.hairline),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = strings.supportCardToggleLabel,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 10.dp)
+                    )
+                    Switch(
+                        checked = prefs.showSupportCard,
+                        onCheckedChange = onSetShowSupportCard,
+                        modifier = Modifier.testTag("support_card_switch")
+                    )
                 }
             }
 

@@ -9,9 +9,18 @@ import kotlin.math.abs
  * Shared history normalization pipeline applied uniformly across all remote and cached series
  * (TGJU, Wallex, Nobitex, Binance, CoinGecko, Frankfurter, CurrencyAPI):
  * 1. Filters invalid points (non-positive timestamps, non-positive or non-finite prices).
- * 2. Deduplicates timestamps (latest entry wins) and sorts chronologically ascending.
- * 3. Removes isolated single-tick spikes (> [spikeThresholdPct]% jump that immediately reverts),
+ * 2. Deduplicates timestamps deterministically (latest valid entry wins) and sorts ascending.
+ * 3. Removes isolated single-tick reverting spikes (> [spikeThresholdPct]% jump that immediately reverts),
  *    unless corroborated by another provider within [toleranceSec] and half the threshold.
+ *    Sustained jumps/shocks (where the subsequent observation holds the new price level) are never
+ *    classified as reverting spikes and are preserved.
+ *
+ * Calibrated spike thresholds by category and range (see [MarketValidationConfig.spikeThresholdPct]):
+ * - `24H` (all categories): `15%`
+ * - `FIAT` (`7D` / `1M` / `1Y`): `15%` (`7D`/`1M`), `25%` (`1Y`)
+ * - `GOLD` (`7D` / `1M` / `1Y`): `15%` (`7D`/`1M`), `25%` (`1Y`)
+ * - `OIL` (`7D` / `1M` / `1Y`): `20%` (`7D`/`1M`), `35%` (`1Y`)
+ * - `CRYPTO` (`7D` / `1M` / `1Y`): `40%`
  */
 object HistoryNormalizer {
 
@@ -335,12 +344,13 @@ object HistoryNormalizer {
     /**
      * Computes the maximum permissible spacing between consecutive observations before
      * splitting a historical chart line across an outage or missing data interval.
+     * Requires at least 5 observations so sparse series do not produce false gap splits.
      */
     fun gapThresholdSec(
         range: TimeRange,
         sortedPoints: List<AssetHistoryPoint>
     ): Long {
-        if (sortedPoints.size < 2) return Long.MAX_VALUE
+        if (sortedPoints.size < 5) return Long.MAX_VALUE
         val diffs = ArrayList<Long>(sortedPoints.size - 1)
         for (i in 1 until sortedPoints.size) {
             val d = sortedPoints[i].timestampSec - sortedPoints[i - 1].timestampSec

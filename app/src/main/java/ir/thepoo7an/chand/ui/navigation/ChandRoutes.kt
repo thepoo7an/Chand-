@@ -9,4 +9,7 @@ sealed interface ChandRoute {
 
     @Serializable
     data object Converter : ChandRoute
+
+    @Serializable
+    data object Alerts : ChandRoute
 }

@@ -303,6 +303,7 @@ internal object GoldPriceMapper {
                                     priceToman = price,
                                     rawPrice = price,
                                     sourceTimestampMillis = ts,
+                                    fetchedAtMillis = nowMillis,
                                     isPrimary = true,
                                     status = CandidateStatus.INCLUDED,
                                     exclusionReason = null
@@ -417,6 +418,38 @@ internal object GoldPriceMapper {
                     usdtSpark.size >= 4 -> MarketValidationHelpers.scaleSeriesToCurrent(usdtSpark, price)
                     else -> emptyList()
                 }
+                val goldCandidates = buildList {
+                    add(
+                        SourceCandidateRecord(
+                            sourceName = "TGJU",
+                            priceToman = price,
+                            rawPrice = price,
+                            sourceTimestampMillis = ts,
+                            fetchedAtMillis = nowMillis,
+                            isPrimary = true,
+                            status = CandidateStatus.INCLUDED,
+                            exclusionReason = null
+                        )
+                    )
+                    if (spec.id == "GOLD_18K" && hasRealOns && usdToman > 1_000.0 && fallbackTheoretical > 0.0) {
+                        val benchmarkPrice = fallbackTheoretical
+                        val divPct = abs(benchmarkPrice - price) / price * 100.0
+                        val disagreed = divPct > MarketValidationConfig.effectiveFiatDisagreementThresholdPct()
+                        add(
+                            SourceCandidateRecord(
+                                sourceName = "${onsConsensus!!.sourceAttributionLabel} + USD",
+                                priceToman = benchmarkPrice,
+                                rawPrice = onsConsensus.price,
+                                sourceTimestampMillis = onsConsensus.sourceTimestampMillis,
+                                fetchedAtMillis = nowMillis,
+                                isPrimary = false,
+                                status = if (disagreed) CandidateStatus.REJECTED else CandidateStatus.INCLUDED,
+                                exclusionReason = if (disagreed) CandidateExclusionReason.EXCESSIVE_DISAGREEMENT else null,
+                                detail = "xauUsd=${onsConsensus.price}"
+                            )
+                        )
+                    }
+                }
                 result.add(
                     MarketAsset(
                         id = spec.id,
@@ -439,19 +472,9 @@ internal object GoldPriceMapper {
                         sourceTimestampMillis = ts,
                         fetchedAtMillis = nowMillis,
                         disputed = false,
-                        singleSource = true,
+                        singleSource = goldCandidates.size <= 1,
                         isCalculatedPrice = false,
-                        candidates = listOf(
-                            SourceCandidateRecord(
-                                sourceName = "TGJU",
-                                priceToman = price,
-                                rawPrice = price,
-                                sourceTimestampMillis = ts,
-                                isPrimary = true,
-                                status = CandidateStatus.INCLUDED,
-                                exclusionReason = null
-                            )
-                        )
+                        candidates = goldCandidates
                     )
                 )
             } else if (hasRealOns && usdToman > 1_000.0) {

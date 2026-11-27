@@ -33,6 +33,7 @@ internal object MarketValidationHelpers {
                         priceToman = cand.price.takeIf { it.isFinite() && it > 0.0 },
                         rawPrice = cand.price.takeIf { it.isFinite() && it > 0.0 },
                         sourceTimestampMillis = cand.timestampMillis.coerceAtLeast(0L),
+                        fetchedAtMillis = nowMillis,
                         isPrimary = cand.isPrimary,
                         status = CandidateStatus.REJECTED,
                         exclusionReason = cand.unavailabilityReason
@@ -45,6 +46,7 @@ internal object MarketValidationHelpers {
                         priceToman = null,
                         rawPrice = cand.price.takeIf { it.isFinite() },
                         sourceTimestampMillis = cand.timestampMillis.coerceAtLeast(0L),
+                        fetchedAtMillis = nowMillis,
                         isPrimary = cand.isPrimary,
                         status = CandidateStatus.REJECTED,
                         exclusionReason = CandidateExclusionReason.INVALID
@@ -71,6 +73,7 @@ internal object MarketValidationHelpers {
                                 priceToman = cand.price,
                                 rawPrice = cand.price,
                                 sourceTimestampMillis = cand.timestampMillis,
+                                fetchedAtMillis = nowMillis,
                                 isPrimary = cand.isPrimary,
                                 status = CandidateStatus.REJECTED,
                                 exclusionReason = CandidateExclusionReason.STALE
@@ -93,6 +96,7 @@ internal object MarketValidationHelpers {
             priceToman = cand.price,
             rawPrice = cand.price,
             sourceTimestampMillis = cand.timestampMillis.coerceAtLeast(0L),
+            fetchedAtMillis = nowMillis,
             isPrimary = cand.isPrimary,
             status = CandidateStatus.INCLUDED,
             exclusionReason = null
@@ -103,6 +107,7 @@ internal object MarketValidationHelpers {
             priceToman = cand.price,
             rawPrice = cand.price,
             sourceTimestampMillis = cand.timestampMillis.coerceAtLeast(0L),
+            fetchedAtMillis = nowMillis,
             isPrimary = cand.isPrimary,
             status = CandidateStatus.REJECTED,
             exclusionReason = CandidateExclusionReason.EXCESSIVE_DISAGREEMENT

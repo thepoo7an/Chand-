@@ -14,12 +14,16 @@ android {
     applicationId = "ir.thepoo7an.chand"
     minSdk = 24
     targetSdk = 36
-    versionCode = System.getenv("VERSION_CODE")?.toIntOrNull()
+    val resolvedVersionCode = System.getenv("VERSION_CODE")?.toIntOrNull()
       ?: project.findProperty("versionCode")?.toString()?.toIntOrNull()
       ?: 1
-    versionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() }
+    val resolvedVersionName = System.getenv("VERSION_NAME")?.takeIf { it.isNotBlank() }
       ?: project.findProperty("versionName")?.toString()?.takeIf { it.isNotBlank() }
-      ?: "1.0"
+      ?: "1.0.0-dev"
+    println("Nerkhnama build version -> versionCode=$resolvedVersionCode, versionName=$resolvedVersionName")
+
+    versionCode = resolvedVersionCode
+    versionName = resolvedVersionName
 
     val githubRepo = System.getenv("GITHUB_REPOSITORY")?.takeIf { it.isNotBlank() }
       ?: project.findProperty("githubRepo")?.toString()?.takeIf { it.isNotBlank() }

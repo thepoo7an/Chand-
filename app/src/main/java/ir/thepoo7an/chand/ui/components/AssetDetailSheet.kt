@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Calculate
+import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Button
@@ -83,6 +84,7 @@ fun AssetDetailSheet(
     onTogglePin: () -> Unit,
     onConvertClick: () -> Unit,
     onSourceBreakdownClick: () -> Unit = {},
+    onSetAlertClick: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -669,6 +671,29 @@ fun AssetDetailSheet(
                     text = strings.convertThisAsset,
                     style = MaterialTheme.typography.titleSmall
                 )
+            }
+
+            if (!isOilUsd && asset.priceToman > 0.0) {
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = onSetAlertClick,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("detail_alert_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.NotificationsActive,
+                        contentDescription = null,
+                        modifier = Modifier.size(19.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = strings.setPriceAlertButton,
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                }
             }
         }
     }

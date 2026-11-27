@@ -82,6 +82,7 @@ data class SourceCandidateRecord(
     val priceToman: Double? = null,
     val rawPrice: Double? = null,
     val sourceTimestampMillis: Long = 0L,
+    val fetchedAtMillis: Long = 0L,
     val isPrimary: Boolean = false,
     val status: CandidateStatus = CandidateStatus.INCLUDED,
     val exclusionReason: CandidateExclusionReason? = null,
@@ -168,10 +169,14 @@ data class AppPreferences(
     val liveConfigUrl: String = "",
     val liveConfigLastSyncMillis: Long = 0L,
     val dismissedLiveNoticeId: String = "",
-    val dismissedUpdateTag: String = ""
+    val dismissedUpdateTag: String = "",
+    val showSupportCard: Boolean = false,
+    val comparisonAssetIds: Set<String> = DEFAULT_COMPARISON_ASSET_IDS
 ) {
     companion object {
         val DEFAULT_PINNED_IDS = setOf("USD", "EUR", "AED", "GBP", "GOLD_18K", "COIN_QUARTER", "COIN_HALF", "USDT", "BTC", "ETH")
+        val DEFAULT_COMPARISON_ASSET_IDS = setOf("USD", "USDT", "EUR", "GOLD_18K")
+        val CONFIGURABLE_COMPARISON_IDS = listOf("USD", "USDT", "EUR", "GOLD_18K")
     }
 }
 

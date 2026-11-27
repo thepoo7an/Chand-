@@ -28,9 +28,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.filled.Calculate
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -78,6 +80,7 @@ import ir.thepoo7an.chand.ui.components.SettingsSheet
 import ir.thepoo7an.chand.ui.components.UpdateCatalogDialog
 import ir.thepoo7an.chand.ui.components.WatchlistSheet
 import ir.thepoo7an.chand.ui.navigation.ChandRoute
+import ir.thepoo7an.chand.ui.screens.AlertsScreen
 import ir.thepoo7an.chand.ui.screens.ConverterScreen
 import ir.thepoo7an.chand.ui.screens.MarketFeedScreen
 import ir.thepoo7an.chand.ui.strings.ChandStrings
@@ -111,10 +114,12 @@ fun ChandApp(
     val fromAssetId by viewModel.fromAssetId.collectAsStateWithLifecycle()
     val toAssetId by viewModel.toAssetId.collectAsStateWithLifecycle()
     val converterInput by viewModel.converterInput.collectAsStateWithLifecycle()
+    val priceAlerts by viewModel.priceAlerts.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showWatchlistSheet by remember { mutableStateOf(false) }
+    var pendingAlertAssetId by remember { mutableStateOf<String?>(null) }
 
     fun triggerApkInstall(apkFile: File, info: AppUpdateInfo) {
         val result = AppUpdateInstaller.launchInstallOrRequestPermission(context, apkFile, info)
@@ -153,9 +158,13 @@ fun ChandApp(
         val backStackEntry by navController.currentBackStackEntryAsState()
         val currentDestination = backStackEntry?.destination
 
-        val isMarketSelected = currentDestination?.hasRoute<ChandRoute.Market>() != false
+        val isMarketSelected = currentDestination?.hasRoute<ChandRoute.Market>() != false &&
+            currentDestination?.hasRoute<ChandRoute.Alerts>() != true &&
+            currentDestination?.hasRoute<ChandRoute.Converter>() != true
         val isConverterSelected = currentDestination?.hasRoute<ChandRoute.Converter>() == true
+        val isAlertsSelected = currentDestination?.hasRoute<ChandRoute.Alerts>() == true
         val isRefreshing = (uiState as? MarketUiState.Ready)?.isRefreshing == true
+        val activeAlertCount = priceAlerts.count { it.isEnabled }
 
         fun navigateTo(route: ChandRoute) {
             navController.navigate(route) {
@@ -221,6 +230,27 @@ fun ChandApp(
                                     ),
                                     modifier = Modifier.testTag("rail_converter")
                                 )
+                                NavigationRailItem(
+                                    selected = isAlertsSelected,
+                                    onClick = {
+                                        pendingAlertAssetId = null
+                                        navigateTo(ChandRoute.Alerts)
+                                    },
+                                    icon = {
+                                        Icon(
+                                            imageVector = if (isAlertsSelected) Icons.Filled.NotificationsActive
+                                            else Icons.Outlined.NotificationsActive,
+                                            contentDescription = strings.alertsTitle
+                                        )
+                                    },
+                                    label = { Text(text = strings.alertsTitle) },
+                                    colors = NavigationRailItemDefaults.colors(
+                                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                                        indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                                    ),
+                                    modifier = Modifier.testTag("rail_alerts")
+                                )
                                 Spacer(modifier = Modifier.weight(1f))
                                 IconButton(
                                     onClick = { showWatchlistSheet = true },
@@ -273,7 +303,12 @@ fun ChandApp(
                                         onToggleGridView = viewModel::setIsGridView,
                                         onAssetClick = viewModel::openAssetDetail,
                                         onAssetPriceClick = viewModel::openSourceBreakdown,
-                                        onRefreshClick = { viewModel.refreshNow(silent = false) }
+                                        onRefreshClick = { viewModel.refreshNow(silent = false) },
+                                        activeAlertCount = activeAlertCount,
+                                        onAlertsClick = {
+                                            pendingAlertAssetId = null
+                                            navigateTo(ChandRoute.Alerts)
+                                        }
                                     )
                                 }
 
@@ -301,12 +336,34 @@ fun ChandApp(
                                         )
                                     }
                                 }
+
+                                composable<ChandRoute.Alerts> {
+                                    val allAssets = (uiState as? MarketUiState.Ready)?.assets.orEmpty()
+                                    AlertsScreen(
+                                        alerts = priceAlerts,
+                                        availableAssets = allAssets,
+                                        prefs = prefs,
+                                        strings = strings,
+                                        initialAssetIdForCreation = pendingAlertAssetId,
+                                        onConsumeInitialAssetId = { pendingAlertAssetId = null },
+                                        onBackClick = {
+                                            if (!navController.popBackStack()) {
+                                                navigateTo(ChandRoute.Market)
+                                            }
+                                        },
+                                        onSaveAlert = viewModel::upsertPriceAlert,
+                                        onToggleAlertEnabled = viewModel::togglePriceAlertEnabled,
+                                        onRearmAlert = viewModel::rearmPriceAlert,
+                                        onDeleteAlert = viewModel::deletePriceAlert,
+                                        onSendTestAlert = viewModel::sendTestPriceAlert
+                                    )
+                                }
                             }
                         }
                     }
 
                     // Chand?! Floating Glassy Pill Dock on Phones
-                    if (!useRail) {
+                    if (!useRail && !isAlertsSelected) {
                         FloatingChandDock(
                             isMarketSelected = isMarketSelected,
                             isConverterSelected = isConverterSelected,
@@ -347,6 +404,11 @@ fun ChandApp(
                     navigateTo(ChandRoute.Converter)
                 },
                 onSourceBreakdownClick = { viewModel.openSourceBreakdown(detailAsset) },
+                onSetAlertClick = {
+                    pendingAlertAssetId = detailAsset.id
+                    viewModel.closeAssetDetail()
+                    navigateTo(ChandRoute.Alerts)
+                },
                 onDismiss = viewModel::closeAssetDetail
             )
         }
@@ -403,6 +465,8 @@ fun ChandApp(
                     showSettingsSheet = false
                     viewModel.openUpdateCatalog()
                 },
+                onSetShowSupportCard = viewModel::setShowSupportCard,
+                onToggleComparisonAsset = viewModel::toggleComparisonAsset,
                 onDismiss = { showSettingsSheet = false }
             )
         }

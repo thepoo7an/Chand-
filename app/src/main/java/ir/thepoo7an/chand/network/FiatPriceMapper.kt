@@ -267,7 +267,40 @@ internal object FiatPriceMapper {
                         nowMillis = nowMillis
                     )
                     usdDisputed = pair?.disputed == true
-                    usdCandidates = pair?.candidateRecords.orEmpty()
+                    usdCandidates = buildList {
+                        add(
+                            SourceCandidateRecord(
+                                sourceName = "TGJU",
+                                priceToman = validTgjuUsd.priceToman,
+                                rawPrice = validTgjuUsd.priceToman,
+                                sourceTimestampMillis = usdTs,
+                                fetchedAtMillis = nowMillis,
+                                isPrimary = true,
+                                status = CandidateStatus.INCLUDED,
+                                exclusionReason = null
+                            )
+                        )
+                        usdtConsensus.candidateRecords.forEach { rec ->
+                            val adjustedStatus = if (usdDisputed && rec.status == CandidateStatus.INCLUDED) {
+                                CandidateStatus.REJECTED
+                            } else {
+                                rec.status
+                            }
+                            val adjustedReason = if (usdDisputed && rec.status == CandidateStatus.INCLUDED) {
+                                CandidateExclusionReason.EXCESSIVE_DISAGREEMENT
+                            } else {
+                                rec.exclusionReason
+                            }
+                            add(
+                                rec.copy(
+                                    fetchedAtMillis = rec.fetchedAtMillis.takeIf { it > 0L } ?: nowMillis,
+                                    isPrimary = false,
+                                    status = adjustedStatus,
+                                    exclusionReason = adjustedReason
+                                )
+                            )
+                        }
+                    }
                 } else {
                     usdSingleSource = true
                     usdCandidates = buildList {
@@ -277,6 +310,7 @@ internal object FiatPriceMapper {
                                 priceToman = validTgjuUsd.priceToman,
                                 rawPrice = validTgjuUsd.priceToman,
                                 sourceTimestampMillis = usdTs,
+                                fetchedAtMillis = nowMillis,
                                 isPrimary = true,
                                 status = CandidateStatus.INCLUDED,
                                 exclusionReason = null
@@ -289,6 +323,7 @@ internal object FiatPriceMapper {
                                     priceToman = cand.price.takeIf { it.isFinite() && it > 0.0 },
                                     rawPrice = cand.price.takeIf { it.isFinite() && it > 0.0 },
                                     sourceTimestampMillis = cand.timestampMillis.coerceAtLeast(0L),
+                                    fetchedAtMillis = nowMillis,
                                     isPrimary = false,
                                     status = CandidateStatus.REJECTED,
                                     exclusionReason = cand.unavailabilityReason ?: CandidateExclusionReason.INVALID
@@ -579,6 +614,7 @@ internal object FiatPriceMapper {
                         priceToman = priceToman,
                         rawPrice = priceToman,
                         sourceTimestampMillis = tgjuTs,
+                        fetchedAtMillis = nowMillis,
                         isPrimary = true,
                         status = CandidateStatus.INCLUDED,
                         exclusionReason = null
@@ -591,6 +627,7 @@ internal object FiatPriceMapper {
                             priceToman = crossPriceToman,
                             rawPrice = effectiveFxRate,
                             sourceTimestampMillis = combinedCrossTs,
+                            fetchedAtMillis = nowMillis,
                             isPrimary = false,
                             status = if (disputed) CandidateStatus.REJECTED else CandidateStatus.INCLUDED,
                             exclusionReason = if (disputed) CandidateExclusionReason.EXCESSIVE_DISAGREEMENT else null
@@ -605,6 +642,7 @@ internal object FiatPriceMapper {
                                 priceToman = null,
                                 rawPrice = null,
                                 sourceTimestampMillis = 0L,
+                                fetchedAtMillis = nowMillis,
                                 isPrimary = false,
                                 status = CandidateStatus.REJECTED,
                                 exclusionReason = CandidateExclusionReason.PROVIDER_FAILURE

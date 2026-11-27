@@ -53,6 +53,8 @@ import ir.thepoo7an.chand.model.AssetCategory
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.network.FreshnessAgeTier
+import ir.thepoo7an.chand.network.FreshnessTimeFormatter
 import ir.thepoo7an.chand.network.MarketValidationConfig
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import ir.thepoo7an.chand.ui.strings.stringsFor
@@ -82,6 +84,16 @@ private object WidgetColors {
         DataFreshness.LIVE -> statusLive
         DataFreshness.DELAYED, DataFreshness.CACHED -> warn
         DataFreshness.UNAVAILABLE -> sub
+    }
+
+    fun freshnessStatusColor(
+        freshness: DataFreshness,
+        ageTier: FreshnessAgeTier
+    ): androidx.glance.unit.ColorProvider = when {
+        freshness == DataFreshness.UNAVAILABLE || ageTier == FreshnessAgeTier.UNAVAILABLE -> priceUp
+        ageTier == FreshnessAgeTier.CRITICAL_RED -> priceUp
+        ageTier == FreshnessAgeTier.STALE_AMBER -> warn
+        else -> freshnessColor(freshness)
     }
 
     fun trendColor(direction: PriceTrendDirection): androidx.glance.unit.ColorProvider = when (direction) {
@@ -161,6 +173,60 @@ internal object WidgetStatusHelper {
         language: AppLanguage,
         usePersianDigits: Boolean
     ): String = formatStatusLabel(freshness, updatedAtMillis, language, usePersianDigits)
+
+    fun resolveFreshnessAgeTier(
+        displayedAssets: List<MarketAsset>,
+        updatedAtMillis: Long,
+        nowMillis: Long = System.currentTimeMillis()
+    ): FreshnessAgeTier {
+        val assetFetch = displayedAssets
+            .mapNotNull { FreshnessTimeFormatter.lastSuccessfulFetchMillis(it).takeIf { ts -> ts > 0L } }
+            .minOrNull()
+        val effectiveFetch = assetFetch ?: updatedAtMillis.takeIf { it > 0L } ?: 0L
+        val unavailable = displayedAssets.isEmpty() ||
+            displayedAssets.all { it.freshness == DataFreshness.UNAVAILABLE || !it.hasUsablePrimaryPrice }
+        return FreshnessTimeFormatter.resolveAgeTier(
+            lastFetchMillis = effectiveFetch,
+            nowMillis = nowMillis,
+            isUnavailable = unavailable
+        )
+    }
+
+    fun formatCompactAgeSuffix(
+        displayedAssets: List<MarketAsset>,
+        updatedAtMillis: Long,
+        language: AppLanguage,
+        usePersianDigits: Boolean,
+        nowMillis: Long = System.currentTimeMillis()
+    ): String {
+        val assetFetch = displayedAssets
+            .mapNotNull { FreshnessTimeFormatter.lastSuccessfulFetchMillis(it).takeIf { ts -> ts > 0L } }
+            .minOrNull()
+        val effectiveFetch = assetFetch ?: updatedAtMillis.takeIf { it > 0L } ?: 0L
+        val unavailable = displayedAssets.isEmpty() ||
+            displayedAssets.all { it.freshness == DataFreshness.UNAVAILABLE || !it.hasUsablePrimaryPrice }
+        return FreshnessTimeFormatter.formatCompactDuration(
+            lastFetchMillis = effectiveFetch,
+            nowMillis = nowMillis,
+            language = language,
+            usePersianDigits = usePersianDigits,
+            isUnavailable = unavailable
+        )
+    }
+
+    fun formatWidgetStatusWithAge(
+        freshness: DataFreshness,
+        displayedAssets: List<MarketAsset>,
+        updatedAtMillis: Long,
+        language: AppLanguage,
+        usePersianDigits: Boolean,
+        nowMillis: Long = System.currentTimeMillis()
+    ): String {
+        val base = formatStatusLabel(freshness, updatedAtMillis, language, usePersianDigits)
+        if (freshness == DataFreshness.UNAVAILABLE || updatedAtMillis <= 0L) return base
+        val age = formatCompactAgeSuffix(displayedAssets, updatedAtMillis, language, usePersianDigits, nowMillis)
+        return if (age.isNotBlank()) "$base · $age" else base
+    }
 }
 
 @DrawableRes
@@ -347,6 +413,16 @@ private fun SingleHeroWidgetContent(
                 snapshotFreshness = snapshotFreshness,
                 updatedAtMillis = updatedAtMillis
             )
+            val ageTier = WidgetStatusHelper.resolveFreshnessAgeTier(
+                displayedAssets = listOf(asset),
+                updatedAtMillis = updatedAtMillis
+            )
+            val ageCompact = WidgetStatusHelper.formatCompactAgeSuffix(
+                displayedAssets = listOf(asset),
+                updatedAtMillis = updatedAtMillis,
+                language = prefs.language,
+                usePersianDigits = prefs.usePersianDigits
+            )
             val subLine = WidgetStatusHelper.formatHeroSubLine(
                 symbol = asset.symbol,
                 freshness = effectiveFreshness,
@@ -354,6 +430,11 @@ private fun SingleHeroWidgetContent(
                 language = prefs.language,
                 usePersianDigits = prefs.usePersianDigits
             )
+            val heroStatusLine = if (effectiveFreshness == DataFreshness.UNAVAILABLE || ageCompact.isBlank()) {
+                subLine
+            } else {
+                "$subLine · $ageCompact"
+            }
             Column(
                 modifier = GlanceModifier.fillMaxSize(),
                 verticalAlignment = Alignment.Top
@@ -388,9 +469,9 @@ private fun SingleHeroWidgetContent(
                             maxLines = 1
                         )
                         Text(
-                            text = subLine,
+                            text = heroStatusLine,
                             style = TextStyle(
-                                color = WidgetColors.freshnessColor(effectiveFreshness),
+                                color = WidgetColors.freshnessStatusColor(effectiveFreshness, ageTier),
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Medium,
                                 textAlign = TextAlign.End
@@ -527,8 +608,13 @@ private fun Compact2x1WidgetContent(
         snapshotFreshness = snapshotFreshness,
         updatedAtMillis = updatedAtMillis
     )
-    val statusLabel = WidgetStatusHelper.formatStatusLabel(
+    val ageTier = WidgetStatusHelper.resolveFreshnessAgeTier(
+        displayedAssets = rows,
+        updatedAtMillis = updatedAtMillis
+    )
+    val statusLabel = WidgetStatusHelper.formatWidgetStatusWithAge(
         freshness = effectiveFreshness,
+        displayedAssets = rows,
         updatedAtMillis = updatedAtMillis,
         language = prefs.language,
         usePersianDigits = prefs.usePersianDigits
@@ -684,7 +770,7 @@ private fun Compact2x1WidgetContent(
                         Text(
                             text = statusLabel,
                             style = TextStyle(
-                                color = WidgetColors.freshnessColor(effectiveFreshness),
+                                color = WidgetColors.freshnessStatusColor(effectiveFreshness, ageTier),
                                 fontSize = 8.sp,
                                 fontWeight = FontWeight.Medium
                             ),
@@ -711,8 +797,13 @@ private fun MultiRowWidgetContent(
         snapshotFreshness = snapshotFreshness,
         updatedAtMillis = updatedAtMillis
     )
-    val statusLabel = WidgetStatusHelper.formatStatusLabel(
+    val ageTier = WidgetStatusHelper.resolveFreshnessAgeTier(
+        displayedAssets = rows,
+        updatedAtMillis = updatedAtMillis
+    )
+    val statusLabel = WidgetStatusHelper.formatWidgetStatusWithAge(
         freshness = effectiveFreshness,
+        displayedAssets = rows,
         updatedAtMillis = updatedAtMillis,
         language = prefs.language,
         usePersianDigits = prefs.usePersianDigits
@@ -839,7 +930,7 @@ private fun MultiRowWidgetContent(
                         Text(
                             text = statusLabel,
                             style = TextStyle(
-                                color = WidgetColors.freshnessColor(effectiveFreshness),
+                                color = WidgetColors.freshnessStatusColor(effectiveFreshness, ageTier),
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Medium
                             ),
@@ -931,12 +1022,29 @@ private fun LockScreenWidgetContent(
         snapshotFreshness = snapshotFreshness,
         updatedAtMillis = updatedAtMillis
     )
-    val statusPillText = WidgetStatusHelper.formatLockScreenStatusPill(
+    val lockAgeTier = WidgetStatusHelper.resolveFreshnessAgeTier(
+        displayedAssets = displayedAssets,
+        updatedAtMillis = updatedAtMillis
+    )
+    val baseLockStatusPill = WidgetStatusHelper.formatLockScreenStatusPill(
         freshness = effectiveFreshness,
         updatedAtMillis = updatedAtMillis,
         language = prefs.language,
         usePersianDigits = prefs.usePersianDigits
     )
+    val lockAgeSuffix = WidgetStatusHelper.formatCompactAgeSuffix(
+        displayedAssets = displayedAssets,
+        updatedAtMillis = updatedAtMillis,
+        language = prefs.language,
+        usePersianDigits = prefs.usePersianDigits
+    )
+    val statusPillText = if (effectiveFreshness == DataFreshness.UNAVAILABLE || lockAgeSuffix.isBlank()) {
+        baseLockStatusPill
+    } else if (lockAgeTier == FreshnessAgeTier.CRITICAL_RED) {
+        "$baseLockStatusPill · $lockAgeSuffix !"
+    } else {
+        "$baseLockStatusPill · $lockAgeSuffix"
+    }
 
     // Root Box intentionally has NO background so the lock screen / home wallpaper shines through.
     Box(

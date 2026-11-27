@@ -16,6 +16,7 @@ import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
 import ir.thepoo7an.chand.model.DataFreshness
+import ir.thepoo7an.chand.model.PriceAlert
 import ir.thepoo7an.chand.model.RemoteAppConfig
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.network.LiveConfigRegistry
@@ -57,6 +58,9 @@ class PreferencesRepository(
         val LIVE_CONFIG_LAST_SYNC = longPreferencesKey("live_config_last_sync")
         val DISMISSED_LIVE_NOTICE_ID = stringPreferencesKey("dismissed_live_notice_id")
         val DISMISSED_UPDATE_TAG = stringPreferencesKey("dismissed_update_tag")
+        val SHOW_SUPPORT_CARD = booleanPreferencesKey("show_support_card")
+        val COMPARISON_ASSET_IDS = stringSetPreferencesKey("comparison_asset_ids")
+        val PRICE_ALERTS_JSON = stringPreferencesKey("price_alerts_json")
     }
 
     private val safeDataFlow: Flow<Preferences> = dataStore.data.catch { throwable ->
@@ -89,6 +93,8 @@ class PreferencesRepository(
         val liveConfigLastSync = prefs[Keys.LIVE_CONFIG_LAST_SYNC] ?: 0L
         val dismissedLiveNoticeId = prefs[Keys.DISMISSED_LIVE_NOTICE_ID].orEmpty()
         val dismissedUpdateTag = prefs[Keys.DISMISSED_UPDATE_TAG].orEmpty()
+        val showSupportCard = prefs[Keys.SHOW_SUPPORT_CARD] ?: false
+        val comparisonAssetIds = prefs[Keys.COMPARISON_ASSET_IDS] ?: AppPreferences.DEFAULT_COMPARISON_ASSET_IDS
 
         AppPreferences(
             themeMode = theme,
@@ -104,7 +110,9 @@ class PreferencesRepository(
             liveConfigUrl = liveConfigUrl,
             liveConfigLastSyncMillis = liveConfigLastSync,
             dismissedLiveNoticeId = dismissedLiveNoticeId,
-            dismissedUpdateTag = dismissedUpdateTag
+            dismissedUpdateTag = dismissedUpdateTag,
+            showSupportCard = showSupportCard,
+            comparisonAssetIds = comparisonAssetIds
         )
     }
 
@@ -176,6 +184,37 @@ class PreferencesRepository(
 
     suspend fun setDismissedUpdateTag(tag: String) {
         dataStore.edit { it[Keys.DISMISSED_UPDATE_TAG] = tag.trim() }
+    }
+
+    suspend fun setShowSupportCard(enabled: Boolean) {
+        dataStore.edit { it[Keys.SHOW_SUPPORT_CARD] = enabled }
+    }
+
+    suspend fun toggleComparisonAsset(assetId: String): Set<String> {
+        var updated: Set<String> = AppPreferences.DEFAULT_COMPARISON_ASSET_IDS
+        dataStore.edit { prefs ->
+            val current = prefs[Keys.COMPARISON_ASSET_IDS] ?: AppPreferences.DEFAULT_COMPARISON_ASSET_IDS
+            updated = if (assetId in current) current - assetId else current + assetId
+            prefs[Keys.COMPARISON_ASSET_IDS] = updated
+        }
+        return updated
+    }
+
+    val priceAlertsFlow: Flow<List<PriceAlert>> = safeDataFlow.map { prefs ->
+        decodePriceAlerts(prefs[Keys.PRICE_ALERTS_JSON])
+    }
+
+    private fun decodePriceAlerts(raw: String?): List<PriceAlert> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching { json.decodeFromString<List<PriceAlert>>(raw) }.getOrDefault(emptyList())
+    }
+
+    suspend fun getPriceAlerts(): List<PriceAlert> =
+        runCatching { priceAlertsFlow.first() }.getOrDefault(emptyList())
+
+    suspend fun savePriceAlerts(alerts: List<PriceAlert>) {
+        val encoded = json.encodeToString(alerts)
+        dataStore.edit { it[Keys.PRICE_ALERTS_JSON] = encoded }
     }
 
     suspend fun hydrateLiveConfig(): RemoteAppConfig {

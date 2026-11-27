@@ -543,7 +543,7 @@ private fun SourceCandidateBreakdownCard(
                 }
             }
 
-            // Row 3: Source Timestamp
+            // Row 3: Source Timestamp & Fetch Timestamp
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -564,6 +564,27 @@ private fun SourceCandidateBreakdownCard(
                             marketColors.gold
                         }
                     )
+                }
+            }
+            if (row.hasValidFetchedAt) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = strings.fetchedAtTimestampLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Text(
+                            text = row.fetchedAtText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("source_fetched_at_${row.sourceName}")
+                        )
+                    }
                 }
             }
 

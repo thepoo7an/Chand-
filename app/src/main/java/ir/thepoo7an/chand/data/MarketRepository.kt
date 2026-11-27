@@ -2,12 +2,16 @@ package ir.thepoo7an.chand.data
 
 import android.content.Context
 import androidx.glance.appwidget.updateAll
+import ir.thepoo7an.chand.alerts.PriceAlertEvaluator
+import ir.thepoo7an.chand.alerts.PriceAlertNotifier
+import ir.thepoo7an.chand.alerts.PriceAlertScheduler
 import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.AssetHistoryResult
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
+import ir.thepoo7an.chand.model.PriceAlert
 import ir.thepoo7an.chand.model.RemoteAppConfig
 import ir.thepoo7an.chand.model.ThemeMode
 import ir.thepoo7an.chand.model.TimeRange
@@ -57,6 +61,7 @@ class MarketRepository(
 
     val preferencesFlow: Flow<AppPreferences> = prefsRepo.preferencesFlow
     val remoteConfigFlow: Flow<RemoteAppConfig> = prefsRepo.remoteConfigFlow
+    val priceAlertsFlow: Flow<List<PriceAlert>> = prefsRepo.priceAlertsFlow
 
     suspend fun loadCached(): CachedMarketSnapshot? = prefsRepo.loadCachedSnapshot()
 
@@ -79,6 +84,7 @@ class MarketRepository(
                 freshness = result.freshness
             )
             prefsRepo.saveCachedSnapshot(snapshot)
+            evaluateAndNotifyAlerts(result.assets)
             updateAllWidgets()
             return@execute MarketSyncResult(
                 assets = result.assets,
@@ -246,6 +252,50 @@ class MarketRepository(
 
     suspend fun setDismissedUpdateTag(tag: String) {
         prefsRepo.setDismissedUpdateTag(tag)
+    }
+
+    suspend fun setShowSupportCard(enabled: Boolean) {
+        prefsRepo.setShowSupportCard(enabled)
+    }
+
+    suspend fun toggleComparisonAsset(assetId: String): Set<String> =
+        prefsRepo.toggleComparisonAsset(assetId)
+
+    suspend fun getPriceAlerts(): List<PriceAlert> = prefsRepo.getPriceAlerts()
+
+    suspend fun savePriceAlerts(alerts: List<PriceAlert>) {
+        prefsRepo.savePriceAlerts(alerts)
+        PriceAlertScheduler.syncSchedule(context, alerts)
+    }
+
+    fun syncAlertSchedule(alerts: List<PriceAlert>) {
+        PriceAlertScheduler.syncSchedule(context, alerts)
+    }
+
+    suspend fun sendTestAlert(): Boolean {
+        val prefs = prefsRepo.getPreferences()
+        return PriceAlertNotifier.postTestNotification(context, prefs)
+    }
+
+    private suspend fun evaluateAndNotifyAlerts(assets: List<MarketAsset>) {
+        val alerts = runCatching { prefsRepo.getPriceAlerts() }.getOrDefault(emptyList())
+        if (alerts.none { it.isEnabled }) return
+        val outcome = PriceAlertEvaluator.evaluate(alerts, assets, clockMillis())
+        if (outcome.updatedAlerts != alerts) {
+            prefsRepo.savePriceAlerts(outcome.updatedAlerts)
+        }
+        if (outcome.triggeredMatches.isNotEmpty()) {
+            val prefs = prefsRepo.getPreferences()
+            val assetsById = assets.associateBy { it.id }
+            outcome.triggeredMatches.forEach { match ->
+                PriceAlertNotifier.postAlertNotification(
+                    context = context,
+                    match = match,
+                    asset = assetsById[match.alert.assetId],
+                    prefs = prefs
+                )
+            }
+        }
     }
 
     suspend fun syncLiveConfig(

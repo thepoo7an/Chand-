@@ -75,7 +75,7 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
   - **2×1 Compact Glass Widget** (`USD • EUR • 18K Gold` with **Translucent Glass** opacity presets: `50%`, `70%`, `85%`)
   - **4×2 Live Watchlist Widget** (pinned favorites)
   - **2×2 Crypto Watch Widget** (`BTC • ETH • USDT`)
-  - **Transparent Lock Screen Widget** (`keyguard|home_screen`, monochrome background-free typography inspired by Nothing OS)
+  - **Transparent Lock Screen Widget** (`keyguard|home_screen` on Android 12+ / API 31+, falling back to `home_screen` on Android 7–11; monochrome background-free typography inspired by Nothing OS)
 - **Instant Connectivity & 30-Minute Periodic Widget Sync:** Automatically refreshes widgets when moving from offline to online (`ConnectivityManager.NetworkCallback`) and schedules periodic `JobScheduler` updates while widgets are placed.
 - **AMOLED Pure Black, Dark & Light Themes + Bilingual UI:** Built natively in **Persian (RTL)** and **English (LTR)** with optional Persian digits (`۱۲۳`), 2-column Bento Grid or List view, and a built-in quick currency converter keypad.
 
@@ -92,7 +92,7 @@ Grab the latest signed release directly from **[GitHub Releases](https://github.
   - **ویجت ۱×۱ تک‌نرخی:** امکان انتخاب دارایی دلخواه از تنظیمات (دلار، یورو، طلا، مثقال، سکه امامی، بیت‌کوین و...).
   - **ویجت ۲×۱ شیشه‌ای (Translucent):** نمایش هم‌زمان دلار، یورو و طلای ۱۸ عیار با تنظیم شفافیت (`۵۰٪`، `۷۰٪`، `۸۵٪`).
   - **ویجت ۴×۲ برگزیده‌ها** و **ویجت ۲×۲ رمزارزها** همراه با نمایش ساعت آخرین بروزرسانی.
-  - **ویجت شفاف لاک‌اسکرین (Nothing Style):** بدون پس‌زمینه و با خوانایی بالا روی والپیپر صفحه قفل.
+  - **ویجت شفاف لاک‌اسکرین (Nothing Style):** بدون پس‌زمینه و با خوانایی بالا روی والپیپر صفحه قفل *(نیازمند اندروید ۱۲ به بالا / API 31+ برای صفحه قفل؛ در نسخه‌های قدیمی‌تر اندروید به‌عنوان ویجت صفحه اصلی در دسترس است)*.
 - **همگام‌سازی خودکار ویجت‌ها:** به‌محض اتصال گوشی به اینترنت یا هر ۳۰ دقیقه در پس‌زمینه (فقط در صورت وجود ویجت فعال) نرخ‌ها بروزرسانی می‌شوند.
 - **نمودار واقعی بازه‌های `۲۴ ساعت`، `۷ روز`، `۱ ماه` و `۱ سال`:** لمس روی نمودار برای مشاهده قیمت دقیق با **تاریخ شمسی** و نمایش روند اختصاصی هر ارز روی کارت‌ها.
 - **مبدل سریع ارز و طلا:** تبدیل فوری هر ارز، طلا، سکه یا رمزارز به تومان و سایر دارایی‌ها با صفحه‌کلید اختصاصی.

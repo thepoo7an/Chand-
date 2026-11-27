@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -37,12 +38,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.ViewAgenda
@@ -91,6 +95,9 @@ import ir.thepoo7an.chand.model.MarketAsset
 import ir.thepoo7an.chand.model.MarketUiState
 import ir.thepoo7an.chand.model.RemoteLiveNotice
 import ir.thepoo7an.chand.model.ThemeMode
+import ir.thepoo7an.chand.network.FreshnessAgeTier
+import ir.thepoo7an.chand.network.FreshnessTimeFormatter
+import ir.thepoo7an.chand.network.MarketComparisonHelper
 import ir.thepoo7an.chand.network.TomanRateBasis
 import ir.thepoo7an.chand.ui.components.AssetBadge
 import ir.thepoo7an.chand.ui.components.MiniSparkline
@@ -122,6 +129,9 @@ fun MarketFeedScreen(
     onAssetClick: (MarketAsset) -> Unit,
     onAssetPriceClick: (MarketAsset) -> Unit = onAssetClick,
     onRefreshClick: () -> Unit,
+    activeAlertCount: Int = 0,
+    onAlertsClick: () -> Unit = {},
+    referenceNowMillis: Long = System.currentTimeMillis(),
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -227,6 +237,30 @@ fun MarketFeedScreen(
                 }
 
                 Spacer(modifier = Modifier.width(4.dp))
+
+                IconButton(
+                    onClick = onAlertsClick,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("header_alerts_button")
+                ) {
+                    Box(contentAlignment = Alignment.TopEnd) {
+                        Icon(
+                            imageVector = Icons.Outlined.NotificationsActive,
+                            contentDescription = strings.alertsTitle,
+                            tint = if (activeAlertCount > 0) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface
+                        )
+                        if (activeAlertCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                        }
+                    }
+                }
 
                 IconButton(
                     onClick = {
@@ -580,11 +614,29 @@ fun MarketFeedScreen(
                                             isPinned = asset.id in prefs.pinnedIds,
                                             isFa = isFa,
                                             usePersianDigits = prefs.usePersianDigits,
+                                            comparisonAssetIds = prefs.comparisonAssetIds,
+                                            referenceNowMillis = referenceNowMillis,
                                             strings = strings,
                                             onClick = { onAssetClick(asset) },
                                             onPriceClick = { onAssetPriceClick(asset) },
                                             onLongClick = { onTogglePin(asset.id) }
                                         )
+                                    }
+                                    if (prefs.showSupportCard) {
+                                        item(
+                                            key = "support_dev_card",
+                                            span = { GridItemSpan(maxLineSpan) }
+                                        ) {
+                                            SupportDevelopmentCard(
+                                                repoSlug = prefs.githubRepoSlug,
+                                                strings = strings,
+                                                onOpenRepo = { url ->
+                                                    runCatching {
+                                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                                    }
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -605,11 +657,26 @@ fun MarketFeedScreen(
                                         isPinned = asset.id in prefs.pinnedIds,
                                         isFa = isFa,
                                         usePersianDigits = prefs.usePersianDigits,
+                                        comparisonAssetIds = prefs.comparisonAssetIds,
+                                        referenceNowMillis = referenceNowMillis,
                                         strings = strings,
                                         onClick = { onAssetClick(asset) },
                                         onPriceClick = { onAssetPriceClick(asset) },
                                         onTogglePin = { onTogglePin(asset.id) }
                                     )
+                                }
+                                if (prefs.showSupportCard) {
+                                    item(key = "support_dev_card") {
+                                        SupportDevelopmentCard(
+                                            repoSlug = prefs.githubRepoSlug,
+                                            strings = strings,
+                                            onOpenRepo = { url ->
+                                                runCatching {
+                                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                                }
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -627,6 +694,8 @@ private fun ChandBentoCard(
     isPinned: Boolean,
     isFa: Boolean,
     usePersianDigits: Boolean,
+    comparisonAssetIds: Set<String>,
+    referenceNowMillis: Long,
     strings: ChandStrings,
     onClick: () -> Unit,
     onPriceClick: () -> Unit,
@@ -664,7 +733,7 @@ private fun ChandBentoCard(
         ),
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (isOilUsd) 182.dp else 170.dp)
+            .height(if (isOilUsd) 204.dp else 192.dp)
             .clip(RoundedCornerShape(24.dp))
             .combinedClickable(
                 onClick = onClick,
@@ -878,6 +947,70 @@ private fun ChandBentoCard(
                             )
                         }
                     }
+
+                    val ageTier = FreshnessTimeFormatter.resolveAssetTier(asset, referenceNowMillis)
+                    val freshnessLabel = FreshnessTimeFormatter.formatRelativeAgeLabel(
+                        lastFetchMillis = FreshnessTimeFormatter.lastSuccessfulFetchMillis(asset),
+                        nowMillis = referenceNowMillis,
+                        strings = strings,
+                        usePersianDigits = usePersianDigits,
+                        isUnavailable = isUnavailable
+                    )
+                    val freshnessColor = when (ageTier) {
+                        FreshnessAgeTier.NORMAL -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+                        FreshnessAgeTier.STALE_AMBER -> marketColors.gold
+                        FreshnessAgeTier.CRITICAL_RED, FreshnessAgeTier.UNAVAILABLE -> marketColors.loss
+                    }
+                    val comparisonSummary = remember(asset, comparisonAssetIds) {
+                        MarketComparisonHelper.buildComparison(asset, comparisonAssetIds)
+                    }
+
+                    Text(
+                        text = freshnessLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = freshnessColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("freshness_chip_${asset.id}")
+                    )
+
+                    if (comparisonSummary != null) {
+                        val badgeText = MarketComparisonHelper.formatComparisonBadge(
+                            summary = comparisonSummary,
+                            isFa = isFa,
+                            usePersianDigits = usePersianDigits
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (comparisonSummary.isDivergent) {
+                                marketColors.gold.copy(alpha = 0.16f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            },
+                            border = if (comparisonSummary.isDivergent) {
+                                BorderStroke(0.75.dp, marketColors.gold.copy(alpha = 0.5f))
+                            } else {
+                                null
+                            },
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(onClick = onPriceClick)
+                                .testTag("comparison_badge_${asset.id}")
+                        ) {
+                            Text(
+                                text = badgeText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (comparisonSummary.isDivergent) {
+                                    marketColors.gold
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -890,6 +1023,8 @@ private fun MarketAssetListRow(
     isPinned: Boolean,
     isFa: Boolean,
     usePersianDigits: Boolean,
+    comparisonAssetIds: Set<String>,
+    referenceNowMillis: Long,
     strings: ChandStrings,
     onClick: () -> Unit,
     onPriceClick: () -> Unit,
@@ -999,6 +1134,70 @@ private fun MarketAssetListRow(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                val ageTier = FreshnessTimeFormatter.resolveAssetTier(asset, referenceNowMillis)
+                val freshnessLabel = FreshnessTimeFormatter.formatRelativeAgeLabel(
+                    lastFetchMillis = FreshnessTimeFormatter.lastSuccessfulFetchMillis(asset),
+                    nowMillis = referenceNowMillis,
+                    strings = strings,
+                    usePersianDigits = usePersianDigits,
+                    isUnavailable = isUnavailableRow
+                )
+                val freshnessColor = when (ageTier) {
+                    FreshnessAgeTier.NORMAL -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+                    FreshnessAgeTier.STALE_AMBER -> marketColors.gold
+                    FreshnessAgeTier.CRITICAL_RED, FreshnessAgeTier.UNAVAILABLE -> marketColors.loss
+                }
+                val comparisonSummary = remember(asset, comparisonAssetIds) {
+                    MarketComparisonHelper.buildComparison(asset, comparisonAssetIds)
+                }
+
+                Text(
+                    text = freshnessLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = freshnessColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("freshness_chip_${asset.id}")
+                )
+
+                if (comparisonSummary != null) {
+                    val badgeText = MarketComparisonHelper.formatComparisonBadge(
+                        summary = comparisonSummary,
+                        isFa = isFa,
+                        usePersianDigits = usePersianDigits
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (comparisonSummary.isDivergent) {
+                            marketColors.gold.copy(alpha = 0.16f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        },
+                        border = if (comparisonSummary.isDivergent) {
+                            BorderStroke(0.75.dp, marketColors.gold.copy(alpha = 0.5f))
+                        } else {
+                            null
+                        },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(onClick = onPriceClick)
+                            .testTag("comparison_badge_${asset.id}")
+                    ) {
+                        Text(
+                            text = badgeText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (comparisonSummary.isDivergent) {
+                                marketColors.gold
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
                 }
@@ -1132,6 +1331,73 @@ private fun EmptyMarketState(
                 text = if (isPinnedEmpty) strings.emptyPinnedSubtitle else strings.emptySearchSubtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun SupportDevelopmentCard(
+    repoSlug: String,
+    strings: ChandStrings,
+    onOpenRepo: (String) -> Unit
+) {
+    val marketColors = LocalMarketColors.current
+    val resolvedSlug = repoSlug.trim().ifBlank { "thepoo7an/chand-iran-currency-gold-crypto" }
+    val githubUrl = "https://github.com/$resolvedSlug"
+
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, marketColors.hairline),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .clickable { onOpenRepo(githubUrl) }
+            .testTag("support_development_card")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Outlined.FavoriteBorder,
+                        contentDescription = strings.supportDevCardTitle,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = strings.supportDevCardTitle,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = strings.supportDevCardSubtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Outlined.OpenInNew,
+                contentDescription = strings.supportDevOpenRepo,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp)
             )
         }
     }

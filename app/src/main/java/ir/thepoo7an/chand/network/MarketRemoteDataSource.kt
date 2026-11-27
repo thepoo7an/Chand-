@@ -348,6 +348,15 @@ class MarketRemoteDataSource(
 
                 val assets = mutableListOf<MarketAsset>()
 
+                val cachedUsdFetchMillis = cachedAssetsById["USD"]
+                    ?.let { it.fetchedAtMillis.takeIf { ts -> ts > 0L } ?: it.updatedAtMillis }
+                    ?: 0L
+                val usdEffectiveFetchMillis = when (resolvedUsd.rateBasis) {
+                    TomanRateBasis.CACHED_USD_ANCHOR -> cachedUsdFetchMillis
+                    TomanRateBasis.OFFLINE_REFERENCE -> 0L
+                    else -> fetchDoneMillis
+                }
+
                 assets.add(
                     MarketAsset(
                         id = "USD",
@@ -365,10 +374,10 @@ class MarketRemoteDataSource(
                         low24hToman = usdQuote?.lowToman?.takeIf { it > 0.0 }?.let { minOf(it, usdToman) },
                         sparkline = usdRealSpark,
                         sourceLabel = resolvedUsd.usdSourceLabel,
-                        updatedAtMillis = fetchDoneMillis,
+                        updatedAtMillis = usdEffectiveFetchMillis,
                         freshness = resolvedUsd.usdFreshness,
                         sourceTimestampMillis = resolvedUsd.usdSourceTimestampMillis,
-                        fetchedAtMillis = fetchDoneMillis,
+                        fetchedAtMillis = usdEffectiveFetchMillis,
                         disputed = resolvedUsd.usdDisputed,
                         singleSource = resolvedUsd.usdSingleSource,
                         isCalculatedPrice = resolvedUsd.usdIsCalculated,
@@ -477,6 +486,7 @@ class MarketRemoteDataSource(
                                             priceToman = q.priceToman,
                                             rawPrice = q.priceToman,
                                             sourceTimestampMillis = ts,
+                                            fetchedAtMillis = fetchDoneMillis,
                                             isPrimary = true,
                                             status = CandidateStatus.INCLUDED,
                                             exclusionReason = null
