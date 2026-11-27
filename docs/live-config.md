@@ -45,6 +45,7 @@ correct.
   "minAppVersionCode": 1,          // config ignored below this versionCode
   "maxAppVersionCode": null,       // config ignored above this versionCode (null = no cap)
   "publishedAtIso": "2026-11-25T06:00:00Z",
+  "expiresAtIso": "",              // optional; once past, the config is ignored (and dropped if applied)
   "summaryFa": "…",
   "summaryEn": "…",
 
@@ -198,6 +199,31 @@ to re-sign after editing.
 
 If a private key leaks: add the replacement key (step 1), publish a config signed with it, raise
 `minAppVersionCode` so old clients stop trusting anything, and rotate the CDN path.
+
+## Self-healing and expiry
+
+Two independent safety nets keep a bad publication from bricking the price feed:
+
+**1. Expiry (`expiresAtIso`).** After the timestamp passes, a config is no longer applied and an
+already-applied one is discarded on the next hydration (`PreferencesRepository.hydrateLiveConfig`).
+Blank or unparsable values mean "no expiry" — a typo must never silently disable the config. The
+field is inside the signed payload, so changing the expiry requires re-signing.
+
+**2. Automatic rollback.** Every full market refresh reports whether it produced any live data:
+
+- a live snapshot clears the failure streak;
+- a refresh with **no live data and no usable cache** increments it;
+- on the **3rd consecutive** failure while a remote config is active, the app reverts to the
+  built-in endpoints, clears the persisted config, and remembers the rolled-back
+  `configVersion` (`LIVE_CONFIG_REVERTED_VERSION`).
+
+While that marker is set, any config whose `configVersion` is **less than or equal to** it is
+suppressed (`config_suppressed` in Settings) — a mirror still serving the broken document cannot
+undo the recovery. **Bump `configVersion` when you republish after a fix**, or use
+**Settings → Reset live config**, which clears the marker.
+
+Rollbacks and suppressions are logged through `AppLog` (debug builds) and covered by
+`LiveConfigSelfHealingTest`.
 
 ## Operational notes
 

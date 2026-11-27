@@ -25,6 +25,7 @@ import ir.thepoo7an.chand.network.MarketDataSource
 import ir.thepoo7an.chand.network.MarketPriceMapper
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
 import ir.thepoo7an.chand.network.RemoteConfigService
+import ir.thepoo7an.chand.util.AppLog
 import ir.thepoo7an.chand.network.RemoteConfigSyncResult
 import ir.thepoo7an.chand.widget.WidgetSyncCoordinator
 import kotlinx.coroutines.Dispatchers
@@ -84,6 +85,9 @@ class MarketRepository(
                 freshness = result.freshness
             )
             prefsRepo.saveCachedSnapshot(snapshot)
+            // Any live snapshot proves the active (possibly remote) config still works.
+            runCatching { prefsRepo.recordMarketRefreshOutcome(success = true) }
+                .onFailure { AppLog.w("Could not reset the live-config failure streak", it) }
             evaluateAndNotifyAlerts(result.assets)
             updateAllWidgets()
             return@execute MarketSyncResult(
@@ -117,6 +121,15 @@ class MarketRepository(
                 sourceSummary = cached.sourceSummary,
                 freshness = DataFreshness.CACHED
             )
+        }
+
+        // Nothing live and no usable cache: count it, and roll back a remote config that keeps
+        // failing so the built-in endpoints get a chance on the next refresh.
+        val rolledBack = runCatching {
+            prefsRepo.recordMarketRefreshOutcome(success = false)
+        }.onFailure { AppLog.w("Could not record the market refresh failure", it) }.getOrDefault(false)
+        if (rolledBack) {
+            updateAllWidgets()
         }
 
         val fallback = MarketPriceMapper.offlineReferenceCatalog()
@@ -308,8 +321,13 @@ class MarketRepository(
             customConfigUrl = customUrl
         )
         if (result is RemoteConfigSyncResult.Applied) {
-            prefsRepo.saveLiveConfig(result.config, result.syncedAtMillis)
-            updateAllWidgets()
+            val applied = prefsRepo.saveLiveConfig(result.config, result.syncedAtMillis)
+            if (applied) {
+                updateAllWidgets()
+            } else {
+                // Expired publications and versions that already caused a rollback are suppressed.
+                return RemoteConfigSyncResult.Error("config_suppressed")
+            }
         }
         return result
     }

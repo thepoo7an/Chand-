@@ -19,7 +19,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
+import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -53,6 +55,40 @@ object LiveConfigRegistry {
         val maxVer = config.maxAppVersionCode
         if (maxVer != null && appVersionCode > maxVer) return false
         return true
+    }
+
+    private val ISO_INSTANT_PATTERNS = listOf(
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss",
+        "yyyy-MM-dd"
+    )
+
+    /**
+     * Parses the subset of ISO-8601 used by `publishedAtIso`/`expiresAtIso`. Returns `null` for
+     * blank or unparsable input; callers must treat that as "no expiry" instead of failing.
+     */
+    fun parseInstantMillis(raw: String): Long? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        ISO_INSTANT_PATTERNS.forEach { pattern ->
+            val parsed = runCatching {
+                SimpleDateFormat(pattern, Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                    isLenient = false
+                }.parse(trimmed)
+            }.getOrNull()
+            if (parsed != null) return parsed.time
+        }
+        return null
+    }
+
+    /** True only when the config carries a valid `expiresAtIso` that is already in the past. */
+    fun isExpired(config: RemoteAppConfig, nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val expiresAt = parseInstantMillis(config.expiresAtIso) ?: return false
+        return nowMillis > expiresAt
     }
 
     private val IPV4_LITERAL_REGEX = Regex("^[0-9.]+$")
@@ -226,6 +262,8 @@ object LiveConfigRegistry {
             }
         }
 
+        val cleanExpiry = raw.expiresAtIso.trim()
+
         val cleanChanges = raw.appliedChanges.mapNotNull { ch ->
             if (ch.titleFa.isBlank() && ch.titleEn.isBlank()) null
             else RemoteLiveChange(
@@ -249,7 +287,8 @@ object LiveConfigRegistry {
             assetOverrides = cleanOverrides,
             extraAssets = cleanExtras,
             liveNotice = cleanNotice,
-            appliedChanges = cleanChanges
+            appliedChanges = cleanChanges,
+            expiresAtIso = cleanExpiry
         )
     }
 }
@@ -350,6 +389,13 @@ class RemoteConfigService(
                         }
                         val parsed = parseConfigJson(outcome.data)
                         if (parsed != null) {
+                            if (LiveConfigRegistry.isExpired(parsed)) {
+                                // Publishing an expiry is how an operator retires an old config;
+                                // an expired document must never replace what is running.
+                                AppLog.w("Skipped expired live config from $url")
+                                lastError = "config_expired"
+                                continue
+                            }
                             if (!LiveConfigRegistry.isCompatible(parsed, appVersionCode)) {
                                 parsedIncompatible = RemoteConfigSyncResult.IncompatibleVersion(
                                     remoteConfigVersion = parsed.configVersion,
