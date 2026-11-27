@@ -316,11 +316,10 @@ class ComparisonAndFreshnessTest {
             }
         }
 
-        // The chip/badge live inside the feed's lazy grid, so their reported bounds depend on the
-        // (Robolectric) viewport instead of the code under test. Assert they were composed and
-        // that the badge really dispatches the callback.
-        composeRule.onNodeWithTag("freshness_chip_USD").assertExists()
-        composeRule.onNodeWithTag("comparison_badge_USD")
+        // The chip and badge sit inside the card's merged (clickable) semantics node, so they are
+        // only addressable through the unmerged tree.
+        composeRule.onNodeWithTag("freshness_chip_USD", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("comparison_badge_USD", useUnmergedTree = true)
             .assertExists()
             .performClick()
         assertEquals("USD", openedPriceAsset?.id)
