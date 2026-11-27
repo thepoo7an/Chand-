@@ -8,6 +8,7 @@ import ir.thepoo7an.chand.model.TimeRange
 import ir.thepoo7an.chand.network.HistoryNormalizer
 import ir.thepoo7an.chand.network.MarketPriceMapper
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
+import ir.thepoo7an.chand.network.WallexMarketService
 import ir.thepoo7an.chand.network.MarketValidationConfig
 import kotlinx.coroutines.test.runTest
 import okhttp3.Interceptor
@@ -191,7 +192,7 @@ class Stage3HistoryAndSparklineTest {
         val wallexUdf = """
             {"s":"ok","t":[300,100,200,100],"c":["70500","69000","95000","70000"]}
         """.trimIndent()
-        val wallexPts = MarketRemoteDataSource.parseWallexUdfPayload(wallexUdf)
+        val wallexPts = WallexMarketService.parseUdfPayload(wallexUdf)
         assertEquals(listOf(100L, 300L), wallexPts.map { it.timestampSec })
         assertEquals(listOf(70_000.0, 70_500.0), wallexPts.map { it.priceToman })
 

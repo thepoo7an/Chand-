@@ -49,8 +49,8 @@ degrading across the whole app.
 | Frankfurter / gold spot (`FinancialApiService`) | done before this effort | already a separate service |
 | Crude oil (`OilApiService`) | done before this effort | already a separate service |
 | Bitpin | **done** | `BitpinMarketService`, fixture `fixtures/bitpin/markets.json` |
-| Wallex | next | quotes + UDF history; also feeds the USDT/BTC/ETH sparklines |
-| Nobitex | pending | orderbook + UDF history |
+| Wallex | **done** | `WallexMarketService` (quotes + UDF history, incl. the USDT/BTC/ETH sparklines), fixtures `fixtures/wallex/{markets,udf_history}.json` |
+| Nobitex | next | orderbook + UDF history |
 | Binance | pending | quotes, klines, PAXG gold sparkline |
 | CoinGecko | pending | history only |
 | TGJU | last | the largest surface: quotes, table points, scale rules |

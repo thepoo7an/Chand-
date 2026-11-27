@@ -14,6 +14,7 @@ import ir.thepoo7an.chand.network.BitpinMarketService
 import ir.thepoo7an.chand.network.LiveConfigRegistry
 import ir.thepoo7an.chand.network.MarketPriceMapper
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
+import ir.thepoo7an.chand.network.WallexMarketService
 import ir.thepoo7an.chand.network.MarketValidationConfig
 import ir.thepoo7an.chand.network.TomanRateBasis
 import kotlinx.coroutines.test.runTest
@@ -66,7 +67,7 @@ class Stage8FreshnessAttributionTest {
         )
         assertEquals(0L, tgju.getValue("price_dollar_rl").timestampMillis)
 
-        val wallex = MarketRemoteDataSource.parseWallexQuotesPayload(
+        val wallex = WallexMarketService.parseQuotesPayload(
             """{"result":{"markets":{"USDTTMN":{"baseAsset":"USDT","quoteAsset":"TMN","price":"71200"}}}}""",
             nowMillis = now
         )

@@ -1,0 +1,40 @@
+{
+  "result": {
+    "markets": {
+      "BTCTMN": {
+        "symbol": "BTCTMN",
+        "baseAsset": "BTC",
+        "quoteAsset": "TMN",
+        "price": "61250000000",
+        "change_24h": 1.42,
+        "stats": {
+          "lastPrice": "61250000000",
+          "24h_highPrice": "61900000000",
+          "24h_lowPrice": "60400000000",
+          "24h_ch": 1.42
+        },
+        "updated_at": "2025-11-27T10:15:00Z"
+      },
+      "BTCUSDT": {
+        "symbol": "BTCUSDT",
+        "baseAsset": "BTC",
+        "quoteAsset": "USDT",
+        "price": "93500.5",
+        "change_24h": 1.1
+      },
+      "ETHTMN": {
+        "symbol": "ETHTMN",
+        "baseAsset": "ETH",
+        "quoteAsset": "TMN",
+        "price": "2,510,000,000",
+        "change_24h": -0.8
+      },
+      "USDTIRT": {
+        "symbol": "USDTIRT",
+        "baseAsset": "USDT",
+        "quoteAsset": "IRT",
+        "price": "71280"
+      }
+    }
+  }
+}

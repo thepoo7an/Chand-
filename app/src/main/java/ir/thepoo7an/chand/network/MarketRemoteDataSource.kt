@@ -29,7 +29,8 @@ class MarketRemoteDataSource(
     private val client: OkHttpClient = NetworkConfig.sharedClient,
     private val financialApi: FinancialApiService = FinancialApiService(client),
     private val oilApi: OilApiService = OilApiService(client),
-    private val bitpinApi: BitpinMarketService = BitpinMarketService(client)
+    private val bitpinApi: BitpinMarketService = BitpinMarketService(client),
+    private val wallexApi: WallexMarketService = WallexMarketService(client)
 ) : MarketDataSource {
 
     private val liveMarketDeduplicator = InFlightRequestDeduplicator<String, RemoteFetchResult>()
@@ -978,15 +979,8 @@ class MarketRemoteDataSource(
         return parseTgjuTablePayload(raw, slug = slug, spikeThresholdPct = spikeThresholdPct)
     }
 
-    private suspend fun fetchWallexQuotes(nowMillis: Long): Map<String, ExchangeQuote> {
-        val url = LiveConfigRegistry.currentConfig().endpoints.wallexMarketsUrl
-            .ifBlank { "https://api.wallex.ir/v1/markets" }
-        val raw = executeGet(
-            url = url,
-            profile = NetworkConfig.RequestProfile.FAST_QUOTE
-        ) ?: return emptyMap()
-        return parseWallexQuotesPayload(raw, nowMillis)
-    }
+    private suspend fun fetchWallexQuotes(nowMillis: Long): Map<String, ExchangeQuote> =
+        wallexApi.fetchQuotes(nowMillis)
 
     private suspend fun fetchWallexUdfHistory(
         symbol: String,
@@ -995,27 +989,14 @@ class MarketRemoteDataSource(
         toSec: Long,
         category: AssetCategory = AssetCategory.CRYPTO,
         spikeThresholdPct: Double = MarketValidationConfig.spikeThresholdPct(category, range)
-    ): List<AssetHistoryPoint> {
-        val res = when (range) {
-            TimeRange.H24 -> "60"
-            TimeRange.D7 -> "240"
-            TimeRange.M1, TimeRange.Y1 -> "1D"
-        }
-        val tmpl = LiveConfigRegistry.currentConfig().endpoints.wallexUdfUrlTemplate
-        val url = if (tmpl.isNotBlank()) {
-            tmpl.replace("{symbol}", symbol)
-                .replace("{resolution}", res)
-                .replace("{from}", fromSec.toString())
-                .replace("{to}", toSec.toString())
-        } else {
-            "https://api.wallex.ir/v1/udf/history?symbol=$symbol&resolution=$res&from=$fromSec&to=$toSec"
-        }
-        val raw = executeGet(
-            url = url,
-            profile = NetworkConfig.RequestProfile.HISTORY
-        ) ?: return emptyList()
-        return parseWallexUdfPayload(raw, spikeThresholdPct = spikeThresholdPct)
-    }
+    ): List<AssetHistoryPoint> = wallexApi.fetchUdfHistory(
+        symbol = symbol,
+        range = range,
+        fromSec = fromSec,
+        toSec = toSec,
+        category = category,
+        spikeThresholdPct = spikeThresholdPct
+    )
 
     private suspend fun fetchBitpinQuotes(nowMillis: Long): Map<String, ExchangeQuote> =
         bitpinApi.fetchQuotes(nowMillis)
@@ -1364,63 +1345,6 @@ class MarketRemoteDataSource(
             HistoryNormalizer.normalize(parsed, spikeThresholdPct = spikeThresholdPct)
         }.getOrDefault(emptyList())
 
-        internal fun parseWallexQuotesPayload(
-            raw: String,
-            nowMillis: Long = System.currentTimeMillis()
-        ): Map<String, ExchangeQuote> = runCatching {
-            val root = JSONObject(raw)
-            val resultObj = root.optJSONObject("result") ?: return emptyMap()
-            val markets = resultObj.optJSONObject("markets") ?: return emptyMap()
-            val rootTs = parseQuoteTimestampMillis(resultObj, root)
-            data class WallexSide(val price: Double, val change: Double, val high: Double?, val low: Double?, val timestampMillis: Long)
-            val tmnPrices = mutableMapOf<String, WallexSide>()
-            val usdtPrices = mutableMapOf<String, WallexSide>()
-
-            val keys = markets.keys()
-            while (keys.hasNext()) {
-                val sym = keys.next()
-                val item = markets.optJSONObject(sym) ?: continue
-                val base = item.optString("baseAsset")
-                val quote = item.optString("quoteAsset")
-                val stats = item.optJSONObject("stats")
-                val price = parseNumeric(item.optString("price"))
-                    ?: stats?.optString("lastPrice")?.let { parseNumeric(it) }
-                    ?: continue
-                val change = item.optDouble("change_24h", Double.NaN).let {
-                    if (it.isNaN()) stats?.optDouble("24h_ch", 0.0) ?: 0.0 else it
-                }
-                val high = stats?.optString("24h_highPrice")?.let { parseNumeric(it) }?.takeIf { it > 0.0 }
-                val low = stats?.optString("24h_lowPrice")?.let { parseNumeric(it) }?.takeIf { it > 0.0 }
-                val itemTs = parseQuoteTimestampMillis(item, stats).takeIf { it > 0L } ?: rootTs
-                if (quote == "TMN" && price > 0) {
-                    tmnPrices[base] = WallexSide(price, change, high, low, itemTs)
-                } else if (quote == "USDT" && price > 0) {
-                    usdtPrices[base] = WallexSide(price, change, high, low, itemTs)
-                }
-            }
-
-            val allBases = tmnPrices.keys + usdtPrices.keys
-            val result = mutableMapOf<String, ExchangeQuote>()
-            for (base in allBases) {
-                val tmn = tmnPrices[base]
-                val usdt = usdtPrices[base]
-                val ts = tmn?.timestampMillis?.takeIf { it > 0L }
-                    ?: usdt?.timestampMillis?.takeIf { it > 0L }
-                    ?: 0L
-                result[base] = ExchangeQuote(
-                    priceToman = tmn?.price,
-                    priceUsd = usdt?.price,
-                    changePct = tmn?.change ?: usdt?.change ?: 0.0,
-                    highToman = tmn?.high,
-                    lowToman = tmn?.low,
-                    highUsd = usdt?.high,
-                    lowUsd = usdt?.low,
-                    timestampMillis = ts
-                )
-            }
-            result
-        }.getOrDefault(emptyMap())
-
         internal fun parseBinanceQuotesPayload(
             raw: String,
             nowMillis: Long = System.currentTimeMillis()
@@ -1464,26 +1388,6 @@ class MarketRemoteDataSource(
 
         private fun parseQuoteTimestampMillis(vararg objects: JSONObject?): Long =
             ProviderParsing.parseQuoteTimestampMillis(*objects)
-
-        internal fun parseWallexUdfPayload(
-            raw: String,
-            spikeThresholdPct: Double = MarketValidationConfig.HISTORY_SPIKE_THRESHOLD_PCT
-        ): List<AssetHistoryPoint> = runCatching {
-            val obj = JSONObject(raw)
-            if (obj.optString("s") != "ok") return emptyList()
-            val tArr = obj.optJSONArray("t") ?: return emptyList()
-            val cArr = obj.optJSONArray("c") ?: return emptyList()
-            val count = minOf(tArr.length(), cArr.length())
-            val list = ArrayList<AssetHistoryPoint>(count)
-            for (i in 0 until count) {
-                val ts = tArr.optLong(i)
-                val close = parseNumeric(cArr.optString(i)) ?: cArr.optDouble(i, -1.0)
-                if (ts > 0 && close > 0.0) {
-                    list.add(AssetHistoryPoint(ts, close))
-                }
-            }
-            HistoryNormalizer.normalize(list, spikeThresholdPct = spikeThresholdPct)
-        }.getOrDefault(emptyList())
 
         internal fun parseNobitexUdfPayload(
             raw: String,
