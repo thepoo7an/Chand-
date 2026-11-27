@@ -199,9 +199,10 @@ object WidgetSyncCoordinator {
         }
 
         return syncDeduplicator.execute("widget_sync") {
+            // Hoisted out of the try: the failure path must be able to report the outcome too.
+            val prefsRepo = PreferencesRepository(appContext)
             try {
                 val remote = MarketRemoteDataSource()
-                val prefsRepo = PreferencesRepository(appContext)
                 prefsRepo.hydrateLiveConfig()
                 val cached = prefsRepo.loadCachedSnapshot()
                 val cachedById = cached?.assets?.associateBy { it.id }.orEmpty()
