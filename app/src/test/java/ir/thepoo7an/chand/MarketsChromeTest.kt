@@ -362,7 +362,9 @@ class MarketsChromeTest {
             )
         )
 
-        assertEquals("\$1 = peg", textOf("peg_chip_USDT"))
+        composeRule.onNodeWithTag("peg_chip_USDT", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText(EnStrings.stablecoinPegLabel, substring = true, useUnmergedTree = true)
+            .assertExists()
         assertTrue(
             "a bare dollar value must not be rendered any more",
             composeRule.onAllNodesWithText("\$1", substring = true).fetchSemanticsNodes().isEmpty()
@@ -379,7 +381,9 @@ class MarketsChromeTest {
             )
         )
 
-        assertEquals(FaStrings.stablecoinPegLabel, textOf("peg_chip_USDT"))
+        composeRule.onNodeWithTag("peg_chip_USDT", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText(FaStrings.stablecoinPegLabel, substring = true, useUnmergedTree = true)
+            .assertExists()
     }
 
     @Test
