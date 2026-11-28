@@ -181,11 +181,16 @@ class WidgetHeroPresentationTest {
 
     @Test
     fun `the Persian widget uses Persian digits and its own stale marker`() {
-        val hero = model(usd(), prefs = PREFS_FA)
+        // No change value, so the second line is the fetch time.
+        val quiet = model(usd(changeToman = 0.0, changePct = 0.0), prefs = PREFS_FA)
+        assertFalse(quiet.isStale)
         assertTrue(
-            "the time must use Persian digits: ${hero.statusLine}",
-            Regex("^[\u06F0-\u06F9]{1,2}:[\u06F0-\u06F9]{2}$").matches(hero.statusLine)
+            "the time must use Persian digits: ${quiet.statusLine}",
+            Regex("^[\u06F0-\u06F9]{1,2}:[\u06F0-\u06F9]{2}$").matches(quiet.statusLine)
         )
+
+        val changed = model(usd(changeToman = 3_500.0, changePct = 1.22), prefs = PREFS_FA)
+        assertEquals("+۱.۲%", changed.statusLine)
 
         val stale = model(usd(freshness = DataFreshness.DELAYED), prefs = PREFS_FA)
         assertTrue("the stale marker must be Persian: ${stale.statusLine}", stale.statusLine.contains("کهنه"))
