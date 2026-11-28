@@ -233,8 +233,20 @@ data class ChandStrings(
     /** Badge shown when a gold/coin quote fails the XAU-derived unit benchmark. */
     val checkUnitLabel: String = "Check unit",
     /** Prefix of the functional freshness line, e.g. "Last sync: 09:37". */
-    val lastSyncPrefix: String = "Last sync"
+    val lastSyncPrefix: String = "Last sync",
+    /** Compact provider count shown in the feed, e.g. "Sources: 4". */
+    val sourcesLabel: String = "Sources",
+    val sourcesSheetTitle: String = "Data sources",
+    val sourcesSheetSubtitle: String = "Every provider behind this feed, when it was last fetched, and what it feeds.",
+    val sourcesAssetsLabel: String = "Feeds",
+    val sourcesSheetEmpty: String = "No provider reported a price yet.",
+    /** Content description of the info button that opens the sources sheet. */
+    val sourcesInfoAction: String = "Show data sources",
+    /** Separator between asset names inside one provider row. */
+    val sourcesListSeparator: String = ", "
 ) {
+    /** "+3" suffix for a provider row that feeds more assets than the row can list. */
+    fun sourcesMoreCount(count: Int): String = "+" + count
     fun categoryLabel(category: AssetCategory): String = when (category) {
         AssetCategory.ALL -> categoryAll
         AssetCategory.PINNED -> categoryPinned
@@ -481,7 +493,14 @@ val FaStrings = ChandStrings(
     freshnessHoursAgoSuffix = "ساعت پیش",
     freshnessDaysAgoSuffix = "روز پیش",
     checkUnitLabel = "بازبینی واحد",
-    lastSyncPrefix = "آخرین همگام‌سازی"
+    lastSyncPrefix = "آخرین همگام‌سازی",
+    sourcesLabel = "منابع",
+    sourcesSheetTitle = "منابع داده",
+    sourcesSheetSubtitle = "هر ارائه‌دهنده‌ای که این فهرست را می‌سازد، زمان آخرین دریافت و دارایی‌هایی که تغذیه می‌کند.",
+    sourcesAssetsLabel = "دارایی‌ها",
+    sourcesSheetEmpty = "هنوز هیچ منبعی قیمتی ارسال نکرده است.",
+    sourcesInfoAction = "نمایش منابع داده",
+    sourcesListSeparator = "، "
 )
 
 val EnStrings = ChandStrings(
@@ -704,7 +723,14 @@ val EnStrings = ChandStrings(
     freshnessHoursAgoSuffix = "h ago",
     freshnessDaysAgoSuffix = "d ago",
     checkUnitLabel = "Check unit",
-    lastSyncPrefix = "Last sync"
+    lastSyncPrefix = "Last sync",
+    sourcesLabel = "Sources",
+    sourcesSheetTitle = "Data sources",
+    sourcesSheetSubtitle = "Every provider behind this feed, when it was last fetched, and what it feeds.",
+    sourcesAssetsLabel = "Feeds",
+    sourcesSheetEmpty = "No provider reported a price yet.",
+    sourcesInfoAction = "Show data sources",
+    sourcesListSeparator = ", "
 )
 
 fun stringsFor(language: AppLanguage): ChandStrings =

@@ -6,6 +6,7 @@ import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
@@ -260,6 +261,67 @@ class MarketsChromeTest {
             "the last chip must keep its 16dp inset instead of being clipped, was $bounds",
             bounds.right <= 306.dp
         )
+    }
+
+    @Test
+    fun `the feed shows only a provider count, not the provider sentence`() {
+        render(
+            AppLanguage.EN,
+            listOf(
+                sampleAsset(id = "USD"),
+                sampleAsset(id = "EUR").copy(sourceLabel = "Wallex")
+            )
+        )
+
+        assertEquals("Sources: 2", textOf("sources_count_label"))
+        composeRule.onNodeWithTag("sources_info_button").assertExists()
+        composeRule.onNodeWithTag("sources_sheet").assertDoesNotExist()
+    }
+
+    @Test
+    fun `the info button opens a sheet with every provider and its fetch time`() {
+        render(
+            AppLanguage.EN,
+            listOf(
+                sampleAsset(id = "USD"),
+                sampleAsset(id = "EUR").copy(sourceLabel = "Wallex")
+            )
+        )
+
+        composeRule.onNodeWithTag("sources_info_button").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("sources_sheet").assertExists()
+        composeRule.onNodeWithTag("provider_row_tgju").assertExists()
+        composeRule.onNodeWithTag("provider_row_wallex").assertExists()
+        assertEquals("TGJU", textOf("provider_label_tgju"))
+        assertTrue(
+            "each provider row must show when it was fetched",
+            Regex("[0-9]{1,2}:[0-9]{2}").containsMatchIn(textOf("provider_fetched_tgju"))
+        )
+    }
+
+    @Test
+    fun `in LTR the provider label starts on the leading left edge`() {
+        render(AppLanguage.EN, listOf(sampleAsset(id = "USD")))
+
+        composeRule.onNodeWithTag("sources_info_button").performClick()
+        composeRule.waitForIdle()
+
+        val bounds = composeRule.onNodeWithTag("provider_label_tgju").getUnclippedBoundsInRoot()
+        assertTrue("in LTR the label starts on the left, was $bounds", bounds.left < 160.dp)
+    }
+
+    @Test
+    fun `in RTL the provider label starts on the leading right edge and stays inside 320dp`() {
+        render(AppLanguage.FA, listOf(sampleAsset(id = "USD")))
+
+        composeRule.onNodeWithTag("sources_info_button").performClick()
+        composeRule.waitForIdle()
+
+        val bounds = composeRule.onNodeWithTag("provider_label_tgju").getUnclippedBoundsInRoot()
+        assertTrue("in RTL the label starts on the right, was $bounds", bounds.right > 160.dp)
+        assertTrue("the label must stay inside 320dp, was $bounds", bounds.right <= 320.dp)
     }
 
     companion object {

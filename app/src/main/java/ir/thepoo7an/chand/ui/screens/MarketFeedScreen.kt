@@ -46,6 +46,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
@@ -103,6 +104,8 @@ import ir.thepoo7an.chand.network.MarketComparisonHelper
 import ir.thepoo7an.chand.network.TomanRateBasis
 import ir.thepoo7an.chand.ui.components.AssetBadge
 import ir.thepoo7an.chand.ui.components.AssetTrendPresentation
+import ir.thepoo7an.chand.ui.components.MarketSourcesSheet
+import ir.thepoo7an.chand.ui.components.MarketSourcesSummary
 import ir.thepoo7an.chand.ui.components.MiniSparkline
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
@@ -142,8 +145,16 @@ fun MarketFeedScreen(
     val marketColors = LocalMarketColors.current
     val isFa = prefs.language == AppLanguage.FA
     val readyState = uiState as? MarketUiState.Ready
+    // One provider list for the whole screen: the meta row shows only its size, the info sheet shows
+    // every provider with its fetch time and the assets it feeds.
+    val allFeedAssets = readyState?.assets.orEmpty()
+    val providerGroups = remember(allFeedAssets, isFa, strings) {
+        MarketSourcesSummary.build(allFeedAssets, isFa = isFa, strings = strings)
+    }
+    val providerCount = providerGroups.size
     val isRefreshing = readyState?.isRefreshing == true
     var showSearchBar by remember { mutableStateOf(false) }
+    var showSourcesSheet by remember { mutableStateOf(false) }
 
     val infiniteTransition = rememberInfiniteTransition(label = "live_pulse")
     val pulseAlpha by infiniteTransition.animateFloat(
@@ -567,18 +578,31 @@ fun MarketFeedScreen(
                             text = " • ",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                            maxLines = 1
+                            maxLines = 1,
+                            modifier = Modifier.testTag("rate_basis_summary")
                         )
                         Text(
-                            text = "${strings.sourceLabel}: $localizedSummary",
+                            // At most "Sources: N"; the provider list itself lives behind the info button.
+                            text = "${strings.sourcesLabel}: $providerCount",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .weight(1f, fill = false)
-                                .testTag("rate_basis_summary")
+                            modifier = Modifier.testTag("sources_count_label")
                         )
+                        IconButton(
+                            onClick = { showSourcesSheet = true },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .minimumInteractiveComponentSize()
+                                .testTag("sources_info_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Info,
+                                contentDescription = strings.sourcesInfoAction,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -738,6 +762,17 @@ fun MarketFeedScreen(
                     }
                 }
             }
+        }
+
+        // The provider list, with fetch times and the assets each provider feeds, lives behind the
+        // info button so the feed itself only ever says "Sources: N".
+        if (showSourcesSheet) {
+            MarketSourcesSheet(
+                groups = providerGroups,
+                prefs = prefs,
+                strings = strings,
+                onDismiss = { showSourcesSheet = false }
+            )
         }
     }
 }
