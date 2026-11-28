@@ -47,7 +47,7 @@ class DeltaChipFormattingTest {
     @Test
     fun `oil deltas stay in dollars and still carry the percentage`() {
         assertEquals(
-            "↑3.50 • +2.4%",
+            "↑$3.5 • +2.4%",
             NumberFormatters.formatUsdDeltaWithArrow(3.5, 2.4, usePersianDigits = false)
         )
         assertEquals(

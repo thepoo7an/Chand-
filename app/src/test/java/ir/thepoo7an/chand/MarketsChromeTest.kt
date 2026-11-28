@@ -144,10 +144,10 @@ class MarketsChromeTest {
         )
 
         // "Updated just now" next to DELAYED and a "• 0" chip is the contradiction from the review.
-        composeRule.onNodeWithTag("freshness_chip_USD").assertExists()
-        composeRule.onNodeWithTag("sparkline_USD").assertDoesNotExist()
-        composeRule.onNodeWithTag("delta_chip_USD").assertDoesNotExist()
-        composeRule.onNodeWithTag("status_badge_USD").assertDoesNotExist()
+        composeRule.onNodeWithTag("freshness_chip_USD", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("sparkline_USD", useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNodeWithTag("delta_chip_USD", useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNodeWithTag("status_badge_USD", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test
@@ -163,23 +163,23 @@ class MarketsChromeTest {
             )
         )
 
-        composeRule.onNodeWithTag("sparkline_USD").assertExists()
-        composeRule.onNodeWithTag("delta_chip_USD").assertExists()
+        composeRule.onNodeWithTag("sparkline_USD", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("delta_chip_USD", useUnmergedTree = true).assertExists()
     }
 
     @Test
     fun `an asset without any history renders no trend affordance at all`() {
         render(AppLanguage.FA, listOf(sampleAsset(sparkline = emptyList())))
 
-        composeRule.onNodeWithTag("sparkline_USD").assertDoesNotExist()
-        composeRule.onNodeWithTag("delta_chip_USD").assertDoesNotExist()
+        composeRule.onNodeWithTag("sparkline_USD", useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNodeWithTag("delta_chip_USD", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test
     fun `a unit mix-up shows a check-unit badge instead of a confident price`() {
         render(AppLanguage.EN, listOf(sampleAsset(unitMismatch = true, disputed = true)))
 
-        composeRule.onNodeWithTag("status_badge_USD").assertExists()
+        composeRule.onNodeWithTag("status_badge_USD", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText(EnStrings.checkUnitLabel).assertExists()
     }
 
@@ -232,7 +232,7 @@ class MarketsChromeTest {
     }
 
     private fun textOf(tag: String): String =
-        composeRule.onNodeWithTag(tag).fetchSemanticsNode()
+        composeRule.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode()
             .config[SemanticsProperties.Text]
             .joinToString(" ") { it.text }
 
