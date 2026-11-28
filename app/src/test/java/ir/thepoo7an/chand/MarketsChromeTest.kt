@@ -1,5 +1,6 @@
 package ir.thepoo7an.chand
 
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
@@ -45,7 +46,9 @@ import org.robolectric.annotation.Config
 class MarketsChromeTest {
 
     @get:Rule
-    val composeRule = createAndroidComposeRule<MainActivity>()
+    // A bare ComponentActivity: this class measures layout, it does not need the real app
+    // activity (whose startup work would leak into unrelated tests).
+    val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     @After
     fun tearDown() {
