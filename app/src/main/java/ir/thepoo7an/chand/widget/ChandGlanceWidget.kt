@@ -427,13 +427,14 @@ private fun SingleHeroWidgetContent(
 ) {
     val isFa = prefs.language == AppLanguage.FA
     val badgeBg = if (prefs.widgetTranslucent) WidgetColors.glassBadgeBg else WidgetColors.solidBadgeBg
+    // The launcher decides how big the cell is (~70dp for 1x1, 110dp for the default 2x2); the type
+    // scale follows it instead of overshooting the smaller one.
+    val scale = WidgetHeroMetrics.forSize(LocalSize.current)
 
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
             .background(ImageProvider(widgetBackgroundDrawableRes(prefs)))
-            // 1x1 cells are ~70dp; 10dp of breathing room plus the compact scale below is what keeps two
-            // rows inside it at fontScale 1.3.
             .padding(scale.padding)
             .clickable(actionStartActivity<MainActivity>())
     ) {
