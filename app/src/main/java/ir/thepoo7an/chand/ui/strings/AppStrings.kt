@@ -813,7 +813,10 @@ object NumberFormatters {
     }
 
     /**
-     * Formats Chand?!-style Toman delta with arrow: e.g. ↑50, ↓5.35K, ↓2.2M
+     * Delta chip text: the absolute move **and** its percentage, e.g. `↑322.3K • +1.2%`.
+     *
+     * The absolute part uses the shared compact scale ([formatCompactMagnitude]) so a delta can never
+     * be invisible next to a 25.8M price, and the percentage is always signed.
      */
     fun formatDeltaWithArrow(
         changeToman: Double,
@@ -825,15 +828,24 @@ object NumberFormatters {
             changeToman < -0.001 || changePct < -0.005 -> "↓"
             else -> "• "
         }
-        val absDelta = abs(changeToman)
+        val magnitude = if (abs(changeToman) >= 1.0 && changeToman.isFinite()) {
+            formatCompactMagnitude(abs(changeToman))
+        } else {
+            ""
+        }
+        val percent = formatSignedPercent(changePct)
         val body = when {
-            absDelta >= 1_000_000.0 -> "${twoDecimalFmt.format(absDelta / 1_000_000.0)}M"
-            absDelta >= 1_000.0 -> "${twoDecimalFmt.format(absDelta / 1_000.0)}K"
-            absDelta >= 1.0 -> integerFmt.format(absDelta)
-            abs(changePct) > 0.005 -> "${String.format(Locale.US, "%.2f", abs(changePct))}%"
-            else -> "0"
+            magnitude.isNotEmpty() -> "$magnitude • $percent"
+            else -> percent
         }
         return applyDigits("$arrow$body", usePersianDigits)
+    }
+
+    /** Signed percentage with one decimal by default: `+1.2%`, `-0.7%`, `0.0%`. */
+    fun formatSignedPercent(change: Double, decimals: Int = 1): String {
+        if (!change.isFinite()) return "0.0%"
+        val sign = if (change > 0.005) "+" else if (change < -0.005) "-" else ""
+        return "$sign${String.format(Locale.US, "%.${decimals}f", abs(change))}%"
     }
 
     fun formatUsd(amount: Double, usePersianDigits: Boolean): String {
@@ -855,21 +867,20 @@ object NumberFormatters {
             (changeUsd != null && changeUsd < -0.0001) || changePct < -0.005 -> "↓"
             else -> "• "
         }
-        val body = if (changeUsd != null && changeUsd.isFinite() && abs(changeUsd) >= 0.01) {
+        // Oil is quoted in USD per barrel, so its absolute part stays in dollars — but it carries the
+        // percentage too, exactly like the Toman chips.
+        val magnitude = if (changeUsd != null && changeUsd.isFinite() && abs(changeUsd) >= 0.01) {
             "$${twoDecimalFmt.format(abs(changeUsd))}"
-        } else if (changePct.isFinite() && abs(changePct) > 0.005) {
-            "${String.format(Locale.US, "%.2f", abs(changePct))}%"
         } else {
-            "0.00%"
+            ""
         }
+        val percent = formatSignedPercent(changePct)
+        val body = if (magnitude.isNotEmpty()) "$magnitude • $percent" else percent
         return applyDigits("$arrow$body", usePersianDigits)
     }
 
-    fun formatPercent(change: Double, usePersianDigits: Boolean): String {
-        val sign = if (change > 0.005) "+" else if (change < -0.005) "-" else ""
-        val raw = "$sign${String.format(Locale.US, "%.2f", abs(change))}%"
-        return applyDigits(raw, usePersianDigits)
-    }
+    fun formatPercent(change: Double, usePersianDigits: Boolean): String =
+        applyDigits(formatSignedPercent(change, decimals = 2), usePersianDigits)
 
     fun formatTime(millis: Long, usePersianDigits: Boolean): String {
         if (millis <= 0L) return ""

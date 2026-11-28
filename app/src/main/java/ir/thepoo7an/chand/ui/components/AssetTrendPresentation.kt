@@ -50,13 +50,25 @@ object AssetTrendPresentation {
         if (asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice) return null
         if (asset.freshness == DataFreshness.DELAYED) return null
         if (!hasDisplayChange) return null
-        val hasRealChange = asset.change24hToman != 0.0 || asset.change24hPercent != 0.0
+        val hasRealChange = if (asset.isUsdPerBarrel) {
+            (asset.change24hUsd ?: 0.0) != 0.0 || asset.change24hPercent != 0.0
+        } else {
+            asset.change24hToman != 0.0 || asset.change24hPercent != 0.0
+        }
         return when {
-            hasRealChange -> NumberFormatters.formatDeltaWithArrow(
-                changeToman = asset.change24hToman,
-                changePct = asset.change24hPercent,
-                usePersianDigits = usePersianDigits
-            )
+            hasRealChange -> if (asset.isUsdPerBarrel) {
+                NumberFormatters.formatUsdDeltaWithArrow(
+                    changeUsd = asset.change24hUsd,
+                    changePct = asset.change24hPercent,
+                    usePersianDigits = usePersianDigits
+                )
+            } else {
+                NumberFormatters.formatDeltaWithArrow(
+                    changeToman = asset.change24hToman,
+                    changePct = asset.change24hPercent,
+                    usePersianDigits = usePersianDigits
+                )
+            }
             isFlatSeries(asset) -> NumberFormatters.formatDeltaWithArrow(
                 changeToman = 0.0,
                 changePct = 0.0,
