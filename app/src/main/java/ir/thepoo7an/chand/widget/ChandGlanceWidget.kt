@@ -401,47 +401,28 @@ private fun SingleHeroWidgetContent(
                 }
             }
         } else {
-            val isUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
-            val hasChange = !isUnavailable && (!asset.isUsdPerBarrel || asset.isChange24hAvailable)
-            val trendDirection = resolvePriceTrend(
-                changeAmount = if (asset.isUsdPerBarrel) asset.change24hUsd else asset.change24hToman,
-                changePct = asset.change24hPercent,
-                hasChangeData = hasChange
-            )
-            val effectiveFreshness = WidgetStatusHelper.resolveFreshness(
-                displayedAssets = listOf(asset),
+            // One model decides both rows, so the widget cannot contradict itself: a stale quote gets
+            // a single "stale" marker and no delta row at all (never a "• 0.0%" next to a DELAYED
+            // badge), and the name is the symbol so a 1x1 cell does not clip it.
+            val hero = WidgetHeroPresentation.build(
+                asset = asset,
+                prefs = prefs,
                 snapshotFreshness = snapshotFreshness,
                 updatedAtMillis = updatedAtMillis
             )
-            val ageTier = WidgetStatusHelper.resolveFreshnessAgeTier(
-                displayedAssets = listOf(asset),
-                updatedAtMillis = updatedAtMillis
+            val trendDirection = resolvePriceTrend(
+                changeAmount = if (asset.isUsdPerBarrel) asset.change24hUsd else asset.change24hToman,
+                changePct = asset.change24hPercent,
+                hasChangeData = hero.deltaText != null
             )
-            val ageCompact = WidgetStatusHelper.formatCompactAgeSuffix(
-                displayedAssets = listOf(asset),
-                updatedAtMillis = updatedAtMillis,
-                language = prefs.language,
-                usePersianDigits = prefs.usePersianDigits
-            )
-            val subLine = WidgetStatusHelper.formatHeroSubLine(
-                symbol = asset.symbol,
-                freshness = effectiveFreshness,
-                updatedAtMillis = updatedAtMillis,
-                language = prefs.language,
-                usePersianDigits = prefs.usePersianDigits
-            )
-            val heroStatusLine = if (effectiveFreshness == DataFreshness.UNAVAILABLE || ageCompact.isBlank()) {
-                subLine
-            } else {
-                "$subLine · $ageCompact"
-            }
             Column(
                 modifier = GlanceModifier.fillMaxSize(),
                 verticalAlignment = Alignment.Top
             ) {
+                // Row 1: badge + symbol + one short status token.
                 Row(
                     modifier = GlanceModifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = GlanceModifier
@@ -456,25 +437,26 @@ private fun SingleHeroWidgetContent(
                             style = TextStyle(fontSize = 18.sp)
                         )
                     }
-                    Spacer(modifier = GlanceModifier.defaultWeight())
-                    Column(horizontalAlignment = Alignment.End) {
+                    Spacer(modifier = GlanceModifier.width(6.dp))
+                    Column(horizontalAlignment = Alignment.Start) {
                         Text(
-                            text = if (isFa) asset.nameFa else asset.nameEn,
+                            text = hero.assetLabel,
                             style = TextStyle(
                                 color = WidgetColors.title,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                textAlign = TextAlign.End
+                                fontWeight = FontWeight.Medium
                             ),
                             maxLines = 1
                         )
                         Text(
-                            text = heroStatusLine,
+                            text = hero.statusLine,
                             style = TextStyle(
-                                color = WidgetColors.freshnessStatusColor(effectiveFreshness, ageTier),
+                                color = WidgetColors.freshnessStatusColor(
+                                    if (hero.isStale) DataFreshness.CACHED else DataFreshness.LIVE,
+                                    FreshnessAgeTier.NORMAL
+                                ),
                                 fontSize = 9.sp,
-                                fontWeight = FontWeight.Medium,
-                                textAlign = TextAlign.End
+                                fontWeight = FontWeight.Medium
                             ),
                             maxLines = 1
                         )
@@ -483,38 +465,33 @@ private fun SingleHeroWidgetContent(
 
                 Spacer(modifier = GlanceModifier.defaultWeight())
 
-                val deltaText = when {
-                    isUnavailable -> "—"
-                    asset.isUsdPerBarrel && !asset.isChange24hAvailable -> "—"
-                    asset.isUsdPerBarrel -> NumberFormatters.formatPercent(asset.change24hPercent, prefs.usePersianDigits)
-                    else -> NumberFormatters.formatDeltaWithArrow(
-                        asset.change24hToman,
-                        asset.change24hPercent,
-                        prefs.usePersianDigits
+                // Row 2: price, with an optional percent beside it. Nothing else.
+                Row(
+                    modifier = GlanceModifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    Text(
+                        text = hero.priceText,
+                        style = TextStyle(
+                            color = WidgetColors.title,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        maxLines = 1
                     )
+                    if (hero.deltaText != null) {
+                        Spacer(modifier = GlanceModifier.width(4.dp))
+                        Text(
+                            text = hero.deltaText,
+                            style = TextStyle(
+                                color = WidgetColors.trendColor(trendDirection),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            maxLines = 1
+                        )
+                    }
                 }
-                Text(
-                    text = deltaText,
-                    style = TextStyle(
-                        color = WidgetColors.trendColor(trendDirection),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                )
-                Spacer(modifier = GlanceModifier.height(2.dp))
-                Text(
-                    text = when {
-                        isUnavailable -> "—"
-                        asset.isUsdPerBarrel -> NumberFormatters.formatUsd(asset.priceUsd ?: 0.0, prefs.usePersianDigits)
-                        else -> NumberFormatters.formatCardPrice(asset.priceToman, prefs.usePersianDigits)
-                    },
-                    style = TextStyle(
-                        color = WidgetColors.title,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    maxLines = 1
-                )
             }
         }
     }
