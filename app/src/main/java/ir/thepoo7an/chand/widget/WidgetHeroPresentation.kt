@@ -23,6 +23,8 @@ import kotlin.math.abs
  *   only shown when it belongs to a real, fresh fetch.
  * - There is no delta at all unless a real, non-zero change exists — no `0.0%`, no arrow, no `—`.
  *   The arrow is dropped even then: on a widget it reads as a direction the data cannot prove.
+ * - The percent takes the second line when it exists (it tells you more than the clock), so the price
+ *   row stays free for the price alone and both rows fit a 1x1 cell.
  *
  * Every string is length-bounded by construction, so the two rows fit a 1x1 cell at fontScale 1.0–1.3
  * (see `WidgetHeroPresentationTest`).
@@ -31,8 +33,9 @@ data class WidgetHeroModel(
     /** Short label for row 1: the symbol, at most [MAX_ASSET_LABEL_LENGTH] characters. */
     val assetLabel: String,
     /**
-     * Second text line: the fetch time (`10:59`) when the quote is fresh, the stale marker otherwise.
-     * Never a status word, a symbol or an arrow, and at most [MAX_STATUS_LINE_LENGTH] characters.
+     * Second text line, one token only: the real change (`+1.2%`) when there is one, otherwise the fetch
+     * time (`10:59`), otherwise the stale marker. Never a status word, a symbol or an arrow, and at most
+     * [MAX_STATUS_LINE_LENGTH] characters.
      */
     val statusLine: String,
     /** Price for row 2, or an em dash when the quote is unusable. */
@@ -47,7 +50,7 @@ data class WidgetHeroModel(
         get() = priceText.isNotBlank()
 
     companion object {
-        const val MAX_ASSET_LABEL_LENGTH = 6
+        const val MAX_ASSET_LABEL_LENGTH = 7
         const val MAX_STATUS_LINE_LENGTH = 8
         const val MAX_DELTA_LENGTH = 7
         const val MAX_PRICE_LENGTH = 12
@@ -81,9 +84,13 @@ object WidgetHeroPresentation {
             effectiveFreshness != DataFreshness.LIVE ||
             ageTier != FreshnessAgeTier.NORMAL
 
-        val assetLabel = asset.symbol.trim().ifEmpty {
-            if (prefs.language == AppLanguage.FA) asset.nameFa else asset.nameEn
-        }
+        // The symbol, with separators removed so `GOLD_18K` becomes `GOLD18K` and still fits the cell.
+        val assetLabel = asset.symbol.trim()
+            .replace("_", "")
+            .replace("-", "")
+            .takeIf { it.isNotEmpty() }
+            ?: (if (prefs.language == AppLanguage.FA) asset.nameFa else asset.nameEn)
+                .take(WidgetHeroModel.MAX_ASSET_LABEL_LENGTH)
 
         val fetchMillis = FreshnessTimeFormatter.lastSuccessfulFetchMillis(asset)
             .takeIf { it > 0L }
@@ -101,11 +108,13 @@ object WidgetHeroPresentation {
             else -> NumberFormatters.formatCardPrice(asset.priceToman, prefs.usePersianDigits)
         }
 
+        val delta = deltaText(asset, prefs, effectiveFreshness, isStale)
         return WidgetHeroModel(
             assetLabel = assetLabel,
-            statusLine = statusLine,
+            // The percent wins over the clock: it says more, and the price row must stay free for the price.
+            statusLine = delta ?: statusLine,
             priceText = priceText,
-            deltaText = deltaText(asset, prefs, effectiveFreshness, isStale),
+            deltaText = delta,
             isStale = isStale
         )
     }

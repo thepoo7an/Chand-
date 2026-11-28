@@ -367,7 +367,7 @@ class MarketsChromeTest {
             .assertExists()
         assertTrue(
             "a bare dollar value must not be rendered any more",
-            composeRule.onAllNodesWithText("\$1", substring = true).fetchSemanticsNodes().isEmpty()
+            composeRule.onAllNodesWithText("\$1").fetchSemanticsNodes().isEmpty()
         )
     }
 

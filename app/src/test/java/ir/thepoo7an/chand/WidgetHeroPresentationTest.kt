@@ -115,6 +115,7 @@ class WidgetHeroPresentationTest {
 
         assertFalse(hero.isStale)
         assertEquals("+1.2%", hero.deltaText)
+        assertEquals("the percent is the second line, the price row stays free", "+1.2%", hero.statusLine)
         assertFalse("a widget cannot prove a direction, so no arrow", hero.deltaText!!.contains("↑"))
         assertFalse(hero.deltaText!!.contains("↓"))
     }

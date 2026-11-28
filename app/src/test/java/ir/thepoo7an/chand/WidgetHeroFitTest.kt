@@ -77,21 +77,21 @@ class WidgetHeroFitTest {
         val cell = scale.cellSize.value.toDouble()
         val padding = scale.padding.value.toDouble()
 
-        // Row 1: badge + the name/status column. Row 2: price + optional percent.
-        val rowOneWidth = cell - 2 * padding - scale.badgeSize.value - scale.badgeTextGap.value
+        // Row 1: the name/status column (plus the badge when the scale shows one). Row 2: the price.
+        val badgeWidth = if (scale.showBadge) {
+            scale.badgeSize.value + scale.badgeTextGap.value
+        } else {
+            0f
+        }
+        val rowOneWidth = cell - 2 * padding - badgeWidth
         val rowTwoWidth = cell - 2 * padding
 
         val nameBudget = maxCharacters(rowOneWidth, scale.nameSize.value, fontScale)
         val statusBudget = maxCharacters(rowOneWidth, scale.statusSize.value, fontScale)
+        // The price owns row 2 on its own; the percent, when present, is the second line of row 1.
+        val priceBudget = maxCharacters(rowTwoWidth, scale.priceSize.value, fontScale)
         val delta = model.deltaText
-        val deltaWidthDp = delta
-            ?.let { it.length * AVG_CHAR_EM * scale.deltaSize.value * fontScale } ?: 0.0
-        val priceBudget = maxCharacters(
-            rowTwoWidth - deltaWidthDp - (if (delta != null) scale.priceDeltaGap.value.toDouble() else 0.0),
-            scale.priceSize.value,
-            fontScale
-        )
-        val deltaBudget = maxCharacters(rowTwoWidth, scale.deltaSize.value, fontScale)
+        val deltaBudget = maxCharacters(rowOneWidth, scale.statusSize.value, fontScale)
 
         assertTrue(
             "name \"${model.assetLabel}\" needs ${model.assetLabel.length} chars, budget $nameBudget " +

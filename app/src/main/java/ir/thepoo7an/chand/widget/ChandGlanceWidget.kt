@@ -80,6 +80,8 @@ internal object WidgetHeroMetrics {
     data class HeroScale(
         val cellSize: Dp,
         val padding: Dp,
+        /** A 1x1 cell spends its width on the price and the symbol; the decorative badge would eat it. */
+        val showBadge: Boolean,
         val badgeSize: Dp,
         val badgeGlyphSize: TextUnit,
         val badgeTextGap: Dp,
@@ -90,31 +92,33 @@ internal object WidgetHeroMetrics {
         val priceDeltaGap: Dp
     )
 
-    /** A 1x1 cell: two rows, symbol-only, nothing repeated. */
+    /** A 1x1 cell: two rows, symbol-only, no badge, nothing repeated. */
     val COMPACT = HeroScale(
         cellSize = 70.dp,
         padding = 8.dp,
-        badgeSize = 20.dp,
-        badgeGlyphSize = 10.sp,
+        showBadge = false,
+        badgeSize = 18.dp,
+        badgeGlyphSize = 9.sp,
         badgeTextGap = 4.dp,
-        nameSize = 9.sp,
+        nameSize = 8.sp,
         statusSize = 7.sp,
-        priceSize = 13.sp,
+        priceSize = 10.sp,
         deltaSize = 8.sp,
         priceDeltaGap = 3.dp
     )
 
-    /** The 2x2 default placement: same two rows, comfortable sizes. */
+    /** The 2x2 default placement: same two rows, comfortable sizes, badge included. */
     val REGULAR = HeroScale(
         cellSize = 110.dp,
         padding = 12.dp,
-        badgeSize = 30.dp,
-        badgeGlyphSize = 15.sp,
-        badgeTextGap = 6.dp,
-        nameSize = 12.sp,
-        statusSize = 9.sp,
-        priceSize = 18.sp,
-        deltaSize = 11.sp,
+        showBadge = true,
+        badgeSize = 26.dp,
+        badgeGlyphSize = 13.sp,
+        badgeTextGap = 5.dp,
+        nameSize = 10.sp,
+        statusSize = 8.sp,
+        priceSize = 16.sp,
+        deltaSize = 10.sp,
         priceDeltaGap = 4.dp
     )
 
@@ -489,20 +493,22 @@ private fun SingleHeroWidgetContent(
                     modifier = GlanceModifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
-                        modifier = GlanceModifier
-                            .size(scale.badgeSize)
-                            .background(badgeBg)
-                            .cornerRadius(scale.badgeSize / 2)
-                            .clickable(actionRunCallback<RefreshAllWidgetsAction>()),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = asset.badgeText,
-                            style = TextStyle(fontSize = scale.badgeGlyphSize)
-                        )
+                    if (scale.showBadge) {
+                        Box(
+                            modifier = GlanceModifier
+                                .size(scale.badgeSize)
+                                .background(badgeBg)
+                                .cornerRadius(scale.badgeSize / 2)
+                                .clickable(actionRunCallback<RefreshAllWidgetsAction>()),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = asset.badgeText,
+                                style = TextStyle(fontSize = scale.badgeGlyphSize)
+                            )
+                        }
+                        Spacer(modifier = GlanceModifier.width(scale.badgeTextGap))
                     }
-                    Spacer(modifier = GlanceModifier.width(scale.badgeTextGap))
                     Column(horizontalAlignment = Alignment.Start) {
                         Text(
                             text = hero.assetLabel,
@@ -530,33 +536,17 @@ private fun SingleHeroWidgetContent(
 
                 Spacer(modifier = GlanceModifier.defaultWeight())
 
-                // Row 2: price, with an optional percent beside it. Nothing else.
-                Row(
-                    modifier = GlanceModifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Bottom
-                ) {
-                    Text(
-                        text = hero.priceText,
-                        style = TextStyle(
-                            color = WidgetColors.title,
-                            fontSize = scale.priceSize,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        maxLines = 1
-                    )
-                    if (hero.deltaText != null) {
-                        Spacer(modifier = GlanceModifier.width(scale.priceDeltaGap))
-                        Text(
-                            text = hero.deltaText,
-                            style = TextStyle(
-                                color = WidgetColors.trendColor(trendDirection),
-                                fontSize = scale.deltaSize,
-                                fontWeight = FontWeight.Medium
-                            ),
-                            maxLines = 1
-                        )
-                    }
-                }
+                // Row 2: the price alone, full width. The percent lives on row 1 (as the status token),
+                // because sharing this row is what pushed the number out of a 1x1 cell.
+                Text(
+                    text = hero.priceText,
+                    style = TextStyle(
+                        color = WidgetColors.title,
+                        fontSize = scale.priceSize,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    maxLines = 1
+                )
             }
         }
     }
