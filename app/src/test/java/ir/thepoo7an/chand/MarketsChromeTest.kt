@@ -5,13 +5,10 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertDoesNotExist
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ir.thepoo7an.chand.model.AppLanguage
@@ -102,7 +99,7 @@ class MarketsChromeTest {
         val bounds = title.getUnclippedBoundsInRoot()
         assertTrue(
             "The title must stay on a single line at 320dp, was $bounds",
-            bounds.height < 48.dp
+            (bounds.bottom - bounds.top) < 48.dp
         )
         assertTrue("The title must not be clipped on the trailing edge, was $bounds", bounds.right <= 320.dp)
     }
@@ -116,7 +113,7 @@ class MarketsChromeTest {
         val bounds = title.getUnclippedBoundsInRoot()
         assertTrue(
             "«نرخ‌نما» must stay on a single line at 320dp, was $bounds",
-            bounds.height < 48.dp
+            (bounds.bottom - bounds.top) < 48.dp
         )
         assertTrue("The title must not be clipped on the trailing edge, was $bounds", bounds.right <= 320.dp)
     }
