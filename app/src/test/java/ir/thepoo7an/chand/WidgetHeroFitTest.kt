@@ -167,7 +167,7 @@ class WidgetHeroFitTest {
         // Guard against re-introducing the reported regression: "USD • DELAYED • 10:59 • ↓".
         val compact = WidgetHeroMetrics.COMPACT
         val budget = maxCharacters(
-            compact.cellSize.value - 2 * compact.padding.value,
+            (compact.cellSize.value - 2 * compact.padding.value).toDouble(),
             compact.statusSize.value,
             1.3f
         )
