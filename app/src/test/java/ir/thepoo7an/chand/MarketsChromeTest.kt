@@ -4,6 +4,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertExists
@@ -173,6 +174,14 @@ class MarketsChromeTest {
         composeRule.onNodeWithTag("delta_chip_USD").assertDoesNotExist()
     }
 
+    @Test
+    fun `a unit mix-up shows a check-unit badge instead of a confident price`() {
+        render(AppLanguage.EN, listOf(sampleAsset(unitMismatch = true, disputed = true)))
+
+        composeRule.onNodeWithTag("status_badge_USD").assertExists()
+        composeRule.onNodeWithText(EnStrings.checkUnitLabel).assertExists()
+    }
+
     companion object {
         /** 2025-11-27T12:00:00Z — the fixed "now" every card is measured against. */
         const val NOW = 1_764_244_800_000L
@@ -185,7 +194,8 @@ class MarketsChromeTest {
             changeToman: Double = 0.0,
             changePct: Double = 0.0,
             updatedAtMillis: Long = NOW - 5_000L,
-            disputed: Boolean = false
+            disputed: Boolean = false,
+            unitMismatch: Boolean = false
         ): MarketAsset = MarketAsset(
             id = id,
             symbol = id,
@@ -203,7 +213,8 @@ class MarketsChromeTest {
             freshness = freshness,
             fetchedAtMillis = updatedAtMillis,
             sourceTimestampMillis = updatedAtMillis,
-            disputed = disputed
+            disputed = disputed,
+            unitMismatch = unitMismatch
         )
     }
 }

@@ -229,7 +229,9 @@ data class ChandStrings(
     val freshnessJustNow: String,
     val freshnessMinutesAgoSuffix: String,
     val freshnessHoursAgoSuffix: String,
-    val freshnessDaysAgoSuffix: String
+    val freshnessDaysAgoSuffix: String,
+    /** Badge shown when a gold/coin quote fails the XAU-derived unit benchmark. */
+    val checkUnitLabel: String = "Check unit"
 ) {
     fun categoryLabel(category: AssetCategory): String = when (category) {
         AssetCategory.ALL -> categoryAll
@@ -475,7 +477,8 @@ val FaStrings = ChandStrings(
     freshnessJustNow = "هم‌اکنون",
     freshnessMinutesAgoSuffix = "دقیقه پیش",
     freshnessHoursAgoSuffix = "ساعت پیش",
-    freshnessDaysAgoSuffix = "روز پیش"
+    freshnessDaysAgoSuffix = "روز پیش",
+    checkUnitLabel = "بازبینی واحد"
 )
 
 val EnStrings = ChandStrings(
@@ -696,7 +699,8 @@ val EnStrings = ChandStrings(
     freshnessJustNow = "just now",
     freshnessMinutesAgoSuffix = "m ago",
     freshnessHoursAgoSuffix = "h ago",
-    freshnessDaysAgoSuffix = "d ago"
+    freshnessDaysAgoSuffix = "d ago",
+    checkUnitLabel = "Check unit"
 )
 
 fun stringsFor(language: AppLanguage): ChandStrings =

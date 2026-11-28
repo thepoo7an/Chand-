@@ -111,6 +111,12 @@ data class MarketAsset(
     val sourceTimestampMillis: Long = 0L,
     val fetchedAtMillis: Long = 0L,
     val disputed: Boolean = false,
+    /**
+     * Set when the quote deviates more than 20% from the XAU/USD-derived benchmark, i.e. it is most
+     * likely a unit mix-up (gram vs mesghal, 18K vs 24K, Rial vs Toman) rather than a real price.
+     * The card surfaces a "check unit" badge instead of presenting the number as fact.
+     */
+    val unitMismatch: Boolean = false,
     val singleSource: Boolean = false,
     val isCalculatedPrice: Boolean = false,
     val candidates: List<SourceCandidateRecord> = emptyList(),

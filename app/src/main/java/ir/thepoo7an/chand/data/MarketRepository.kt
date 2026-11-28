@@ -19,6 +19,7 @@ import ir.thepoo7an.chand.network.AndroidApkPackageInspector
 import ir.thepoo7an.chand.network.AppUpdateInfo
 import ir.thepoo7an.chand.network.AppUpdateService
 import ir.thepoo7an.chand.network.AppUpdateState
+import ir.thepoo7an.chand.network.GoldUnitBenchmark
 import ir.thepoo7an.chand.network.HistoryNormalizer
 import ir.thepoo7an.chand.network.InFlightRequestDeduplicator
 import ir.thepoo7an.chand.network.MarketDataSource
@@ -78,8 +79,11 @@ class MarketRepository(
             cachedAssetsById = cachedAssetsById
         )
         if (result.isLive && result.assets.isNotEmpty()) {
+            // Gold/coin quotes are cross-checked against the XAU/USD benchmark before anything is
+            // published: a unit mix-up must be visible, never silently displayed as a real price.
+            val verifiedAssets = GoldUnitBenchmark.flagUnitMixups(result.assets)
             val snapshot = CachedMarketSnapshot(
-                assets = result.assets,
+                assets = verifiedAssets,
                 updatedAtMillis = result.fetchedAtMillis,
                 sourceSummary = result.sourceSummary,
                 freshness = result.freshness
@@ -88,10 +92,10 @@ class MarketRepository(
             // Any live snapshot proves the active (possibly remote) config still works.
             runCatching { prefsRepo.recordMarketRefreshOutcome(success = true) }
                 .onFailure { AppLog.w("Could not reset the live-config failure streak", it) }
-            evaluateAndNotifyAlerts(result.assets)
+            evaluateAndNotifyAlerts(verifiedAssets)
             updateAllWidgets()
             return@execute MarketSyncResult(
-                assets = result.assets,
+                assets = verifiedAssets,
                 updatedAtMillis = result.fetchedAtMillis,
                 sourceSummary = result.sourceSummary,
                 freshness = result.freshness

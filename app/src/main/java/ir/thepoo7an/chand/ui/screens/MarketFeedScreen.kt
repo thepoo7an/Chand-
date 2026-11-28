@@ -730,6 +730,7 @@ private fun ChandBentoCard(
     // A DELAYED/CACHED badge next to "Updated just now" reads as a contradiction, so the badge only
     // appears once the age chip itself says the data is old.
     val statusBadgeText = when {
+        asset.unitMismatch -> strings.checkUnitLabel
         asset.disputed -> strings.disputedLabel
         asset.freshness == DataFreshness.UNAVAILABLE -> strings.unavailableBadge
         (asset.freshness == DataFreshness.DELAYED || asset.freshness == DataFreshness.CACHED) &&
@@ -880,7 +881,7 @@ private fun ChandBentoCard(
                             Text(
                                 text = statusBadgeText,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (asset.disputed) {
+                                color = if (asset.unitMismatch || asset.disputed) {
                                     marketColors.gold
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant
@@ -1055,6 +1056,7 @@ private fun MarketAssetListRow(
     val ageTier = FreshnessTimeFormatter.resolveAssetTier(asset, referenceNowMillis)
     val rowDeltaLabel = AssetTrendPresentation.deltaLabel(asset, usePersianDigits, hasDisplayChange)
     val rowStatusText = when {
+        asset.unitMismatch -> strings.checkUnitLabel
         asset.disputed -> strings.disputedLabel
         asset.freshness == DataFreshness.UNAVAILABLE -> strings.unavailableBadge
         (asset.freshness == DataFreshness.DELAYED || asset.freshness == DataFreshness.CACHED) &&
@@ -1124,7 +1126,7 @@ private fun MarketAssetListRow(
                             text = rowStatusText,
                             style = MaterialTheme.typography.labelSmall,
                             color = when {
-                                asset.disputed -> marketColors.gold
+                                asset.unitMismatch || asset.disputed -> marketColors.gold
                                 rowStatusText == strings.liveBadge -> marketColors.gain
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
