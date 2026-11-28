@@ -324,6 +324,33 @@ class MarketsChromeTest {
         assertTrue("the label must stay inside 320dp, was $bounds", bounds.right <= 320.dp)
     }
 
+    @Test
+    fun `a card without chart data collapses instead of leaving an empty band`() {
+        render(AppLanguage.EN, listOf(sampleAsset(sparkline = emptyList())))
+
+        val bounds = composeRule.onNodeWithTag("asset_row_USD", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val height = bounds.bottom - bounds.top
+        assertTrue("a chart-less card must collapse to the compact layout, was $height", height <= 172.dp)
+        // Compact must still be complete: price and freshness stay visible, nothing is clipped away.
+        composeRule.onNodeWithTag("asset_price_USD", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("freshness_chip_USD", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `a card with a real chart keeps the taller layout`() {
+        render(
+            AppLanguage.EN,
+            listOf(sampleAsset(sparkline = listOf(290_000.0, 291_500.0, 292_890.0), changeToman = 1_890.0, changePct = 0.65))
+        )
+
+        val bounds = composeRule.onNodeWithTag("asset_row_USD", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val height = bounds.bottom - bounds.top
+        assertTrue("a chart card must keep room for the line, was $height", height >= 188.dp)
+        composeRule.onNodeWithTag("sparkline_USD", useUnmergedTree = true).assertExists()
+    }
+
     companion object {
         /** 2025-11-27T12:00:00Z — the fixed "now" every card is measured against. */
         const val NOW = 1_764_244_800_000L

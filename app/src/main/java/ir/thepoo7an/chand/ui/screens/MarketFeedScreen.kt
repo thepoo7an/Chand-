@@ -819,6 +819,15 @@ private fun ChandBentoCard(
     }
     // Null means "no evidence of a trend": nothing is drawn rather than a misleading "0".
     val deltaLabel = AssetTrendPresentation.deltaLabel(asset, usePersianDigits, hasDisplayChange)
+    // Without a chart there is nothing to reserve vertical space for; a fixed card height left a large
+    // empty band in the middle of every DELAYED card.
+    val hasTrendChart = AssetTrendPresentation.shouldShowSparkline(asset)
+    val cardHeight = when {
+        isOilUsd && hasTrendChart -> 206.dp
+        isOilUsd -> 182.dp
+        hasTrendChart -> 192.dp
+        else -> 168.dp
+    }
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -832,7 +841,7 @@ private fun ChandBentoCard(
         ),
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (isOilUsd) 204.dp else 192.dp)
+            .height(cardHeight)
             .clip(RoundedCornerShape(24.dp))
             .combinedClickable(
                 onClick = onClick,
@@ -844,7 +853,7 @@ private fun ChandBentoCard(
             .testTag("asset_row_${asset.id}")
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            if (AssetTrendPresentation.shouldShowSparkline(asset)) {
+            if (hasTrendChart) {
                 // Subtle atmospheric micro-sparkline along lower mid
                 MiniSparkline(
                     points = asset.sparkline,
