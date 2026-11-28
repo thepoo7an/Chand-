@@ -8,6 +8,9 @@ import android.widget.RemoteViews
 import androidx.annotation.DrawableRes
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.datastore.core.DataStore
@@ -64,6 +67,65 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import java.io.File
+
+/**
+ * Type scale and paddings of the single-asset hero widget.
+ *
+ * A 1x1 launcher cell is ~70dp while the default placement is 110dp, so the hero picks a scale from
+ * the size the launcher actually gave it instead of guessing. `WidgetHeroFitTest` measures every string
+ * against these numbers at fontScale 1.0 and 1.3, which is what "no clipping" means here.
+ */
+internal object WidgetHeroMetrics {
+
+    data class HeroScale(
+        val cellSize: Dp,
+        val padding: Dp,
+        /** A 1x1 cell spends its width on the price and the symbol; the decorative badge would eat it. */
+        val showBadge: Boolean,
+        val badgeSize: Dp,
+        val badgeGlyphSize: TextUnit,
+        val badgeTextGap: Dp,
+        val nameSize: TextUnit,
+        val statusSize: TextUnit,
+        val priceSize: TextUnit,
+        val deltaSize: TextUnit,
+        val priceDeltaGap: Dp
+    )
+
+    /** A 1x1 cell: two rows, symbol-only, no badge, nothing repeated. */
+    val COMPACT = HeroScale(
+        cellSize = 70.dp,
+        padding = 8.dp,
+        showBadge = false,
+        badgeSize = 18.dp,
+        badgeGlyphSize = 9.sp,
+        badgeTextGap = 4.dp,
+        nameSize = 8.sp,
+        statusSize = 7.sp,
+        priceSize = 10.sp,
+        deltaSize = 8.sp,
+        priceDeltaGap = 3.dp
+    )
+
+    /** The 2x2 default placement: same two rows, comfortable sizes, badge included. */
+    val REGULAR = HeroScale(
+        cellSize = 110.dp,
+        padding = 12.dp,
+        showBadge = true,
+        badgeSize = 26.dp,
+        badgeGlyphSize = 13.sp,
+        badgeTextGap = 5.dp,
+        nameSize = 10.sp,
+        statusSize = 8.sp,
+        priceSize = 16.sp,
+        deltaSize = 10.sp,
+        priceDeltaGap = 4.dp
+    )
+
+    /** Below ~80dp the launcher has given us a single cell, so the compact scale is the safe one. */
+    fun forSize(size: DpSize): HeroScale =
+        if (size.width <= 80.dp || size.height <= 80.dp) COMPACT else REGULAR
+}
 
 private object WidgetColors {
     val solidDivider = ColorProvider(day = Color(0xFFECE8E0), night = Color(0xFF1D232E))
@@ -339,6 +401,10 @@ abstract class BaseChandGlanceWidget : GlanceAppWidget(
  * mirroring the top-left Chand?! iOS widget.
  */
 class ChandSingleAssetWidget : BaseChandGlanceWidget() {
+    // The default SizeMode.Single leaves LocalSize unspecified, which is why the hero could not tell a
+    // 1x1 cell from the 2x2 placement and kept overshooting the smaller one.
+    override val sizeMode: SizeMode = SizeMode.Exact
+
     @Composable
     override fun Content(prefs: AppPreferences, snapshot: CachedMarketSnapshot?) {
         val assets = snapshot?.assets.orEmpty()
@@ -365,12 +431,15 @@ private fun SingleHeroWidgetContent(
 ) {
     val isFa = prefs.language == AppLanguage.FA
     val badgeBg = if (prefs.widgetTranslucent) WidgetColors.glassBadgeBg else WidgetColors.solidBadgeBg
+    // The launcher decides how big the cell is (~70dp for 1x1, 110dp for the default 2x2); the type
+    // scale follows it instead of overshooting the smaller one.
+    val scale = WidgetHeroMetrics.forSize(LocalSize.current)
 
     Box(
         modifier = GlanceModifier
             .fillMaxSize()
             .background(ImageProvider(widgetBackgroundDrawableRes(prefs)))
-            .padding(14.dp)
+            .padding(scale.padding)
             .clickable(actionStartActivity<MainActivity>())
     ) {
         if (asset == null) {
@@ -401,80 +470,64 @@ private fun SingleHeroWidgetContent(
                 }
             }
         } else {
-            val isUnavailable = asset.freshness == DataFreshness.UNAVAILABLE || !asset.hasUsablePrimaryPrice
-            val hasChange = !isUnavailable && (!asset.isUsdPerBarrel || asset.isChange24hAvailable)
-            val trendDirection = resolvePriceTrend(
-                changeAmount = if (asset.isUsdPerBarrel) asset.change24hUsd else asset.change24hToman,
-                changePct = asset.change24hPercent,
-                hasChangeData = hasChange
-            )
-            val effectiveFreshness = WidgetStatusHelper.resolveFreshness(
-                displayedAssets = listOf(asset),
+            // One model decides both rows, so the widget cannot contradict itself: a stale quote gets
+            // a single "stale" marker and no delta row at all (never a "• 0.0%" next to a DELAYED
+            // badge), and the name is the symbol so a 1x1 cell does not clip it.
+            val hero = WidgetHeroPresentation.build(
+                asset = asset,
+                prefs = prefs,
                 snapshotFreshness = snapshotFreshness,
                 updatedAtMillis = updatedAtMillis
             )
-            val ageTier = WidgetStatusHelper.resolveFreshnessAgeTier(
-                displayedAssets = listOf(asset),
-                updatedAtMillis = updatedAtMillis
+            val trendDirection = resolvePriceTrend(
+                changeAmount = if (asset.isUsdPerBarrel) asset.change24hUsd else asset.change24hToman,
+                changePct = asset.change24hPercent,
+                hasChangeData = hero.deltaText != null
             )
-            val ageCompact = WidgetStatusHelper.formatCompactAgeSuffix(
-                displayedAssets = listOf(asset),
-                updatedAtMillis = updatedAtMillis,
-                language = prefs.language,
-                usePersianDigits = prefs.usePersianDigits
-            )
-            val subLine = WidgetStatusHelper.formatHeroSubLine(
-                symbol = asset.symbol,
-                freshness = effectiveFreshness,
-                updatedAtMillis = updatedAtMillis,
-                language = prefs.language,
-                usePersianDigits = prefs.usePersianDigits
-            )
-            val heroStatusLine = if (effectiveFreshness == DataFreshness.UNAVAILABLE || ageCompact.isBlank()) {
-                subLine
-            } else {
-                "$subLine · $ageCompact"
-            }
             Column(
                 modifier = GlanceModifier.fillMaxSize(),
                 verticalAlignment = Alignment.Top
             ) {
+                // Row 1: badge + symbol + one short status token.
                 Row(
                     modifier = GlanceModifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
-                        modifier = GlanceModifier
-                            .size(36.dp)
-                            .background(badgeBg)
-                            .cornerRadius(18.dp)
-                            .clickable(actionRunCallback<RefreshAllWidgetsAction>()),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = asset.badgeText,
-                            style = TextStyle(fontSize = 18.sp)
-                        )
+                    if (scale.showBadge) {
+                        Box(
+                            modifier = GlanceModifier
+                                .size(scale.badgeSize)
+                                .background(badgeBg)
+                                .cornerRadius(scale.badgeSize / 2)
+                                .clickable(actionRunCallback<RefreshAllWidgetsAction>()),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = asset.badgeText,
+                                style = TextStyle(fontSize = scale.badgeGlyphSize)
+                            )
+                        }
+                        Spacer(modifier = GlanceModifier.width(scale.badgeTextGap))
                     }
-                    Spacer(modifier = GlanceModifier.defaultWeight())
-                    Column(horizontalAlignment = Alignment.End) {
+                    Column(horizontalAlignment = Alignment.Start) {
                         Text(
-                            text = if (isFa) asset.nameFa else asset.nameEn,
+                            text = hero.assetLabel,
                             style = TextStyle(
                                 color = WidgetColors.title,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                textAlign = TextAlign.End
+                                fontSize = scale.nameSize,
+                                fontWeight = FontWeight.Medium
                             ),
                             maxLines = 1
                         )
                         Text(
-                            text = heroStatusLine,
+                            text = hero.statusLine,
                             style = TextStyle(
-                                color = WidgetColors.freshnessStatusColor(effectiveFreshness, ageTier),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Medium,
-                                textAlign = TextAlign.End
+                                color = WidgetColors.freshnessStatusColor(
+                                    if (hero.isStale) DataFreshness.CACHED else DataFreshness.LIVE,
+                                    FreshnessAgeTier.NORMAL
+                                ),
+                                fontSize = scale.statusSize,
+                                fontWeight = FontWeight.Medium
                             ),
                             maxLines = 1
                         )
@@ -483,34 +536,13 @@ private fun SingleHeroWidgetContent(
 
                 Spacer(modifier = GlanceModifier.defaultWeight())
 
-                val deltaText = when {
-                    isUnavailable -> "—"
-                    asset.isUsdPerBarrel && !asset.isChange24hAvailable -> "—"
-                    asset.isUsdPerBarrel -> NumberFormatters.formatPercent(asset.change24hPercent, prefs.usePersianDigits)
-                    else -> NumberFormatters.formatDeltaWithArrow(
-                        asset.change24hToman,
-                        asset.change24hPercent,
-                        prefs.usePersianDigits
-                    )
-                }
+                // Row 2: the price alone, full width. The percent lives on row 1 (as the status token),
+                // because sharing this row is what pushed the number out of a 1x1 cell.
                 Text(
-                    text = deltaText,
-                    style = TextStyle(
-                        color = WidgetColors.trendColor(trendDirection),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                )
-                Spacer(modifier = GlanceModifier.height(2.dp))
-                Text(
-                    text = when {
-                        isUnavailable -> "—"
-                        asset.isUsdPerBarrel -> NumberFormatters.formatUsd(asset.priceUsd ?: 0.0, prefs.usePersianDigits)
-                        else -> NumberFormatters.formatCardPrice(asset.priceToman, prefs.usePersianDigits)
-                    },
+                    text = hero.priceText,
                     style = TextStyle(
                         color = WidgetColors.title,
-                        fontSize = 24.sp,
+                        fontSize = scale.priceSize,
                         fontWeight = FontWeight.Bold
                     ),
                     maxLines = 1

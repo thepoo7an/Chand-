@@ -64,6 +64,7 @@ import ir.thepoo7an.chand.network.HistoryNormalizer
 import ir.thepoo7an.chand.network.HistoryNormalizer.ChartDisplayMode
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
+import ir.thepoo7an.chand.ui.strings.ProviderLabels
 import ir.thepoo7an.chand.ui.theme.LocalMarketColors
 import ir.thepoo7an.chand.ui.theme.resolvePriceTrend
 
@@ -587,8 +588,13 @@ fun AssetDetailSheet(
                 if (asset.disputed) add(strings.disputedLabel)
                 else if (asset.singleSource && historySourceLabel.isEmpty()) add(strings.singleSourceLabel)
             }
-            val baseSource = historySourceLabel.ifEmpty { asset.sourceLabel.ifEmpty { strings.liveBadge } }
-            val sourceDisplay = if (statusNotes.isEmpty()) baseSource else "$baseSource · ${statusNotes.joinToString(" · ")}"
+            // The provider label is generated dynamically ("Calculated Median (Frankfurter + …)"), so it is
+            // mapped to a fixed short label here; a status note next to it would only make the pill
+            // narrower than the text it has to hold. The notes are already shown as badges above.
+            val baseSource = ProviderLabels.short(
+                raw = historySourceLabel.ifEmpty { asset.sourceLabel.ifEmpty { strings.liveBadge } },
+                isFa = isFa
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -612,7 +618,8 @@ fun AssetDetailSheet(
                 )
                 StatPillCard(
                     label = strings.sourceLabel,
-                    value = sourceDisplay,
+                    value = baseSource,
+                    forceLtr = false,
                     onClick = onSourceBreakdownClick,
                     modifier = Modifier
                         .weight(0.95f)
@@ -704,7 +711,10 @@ private fun StatPillCard(
     label: String,
     value: String,
     onClick: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // Numeric values are pinned to LTR so a minus sign never jumps; a localised provider label must
+    // follow the ambient direction instead.
+    forceLtr: Boolean = true
 ) {
     val marketColors = LocalMarketColors.current
     Surface(
@@ -737,13 +747,22 @@ private fun StatPillCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1
             )
-            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            val valueText: @Composable () -> Unit = {
                 Text(
                     text = value,
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.testTag("stat_pill_value_$label")
                 )
+            }
+            if (forceLtr) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    valueText()
+                }
+            } else {
+                valueText()
             }
         }
     }

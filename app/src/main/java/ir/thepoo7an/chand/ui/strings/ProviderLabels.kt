@@ -28,15 +28,37 @@ object ProviderLabels {
         Alias("Global FX + Cached USD", "FX + cached USD", "ارز جهانی + دلار")
     )
 
-    /** Short label for [raw]; blank stays blank so callers can still test for "no source". */
+    /**
+     * Short label for [raw]; blank stays blank so callers can still test for "no source".
+     *
+     * Provider labels are built dynamically in the network layer
+     * (`"Calculated Median ($names)"`, where `$names` is whatever providers answered), so an exact
+     * alias table can never cover them all. Anything that is a calculated median is therefore
+     * classified by rule first, which keeps the label fixed for a given class of source:
+     * Frankfurter-based -> `Median (ECB)`, other FX providers -> `Median (FX)`, otherwise `Median`.
+     */
     fun short(raw: String, isFa: Boolean): String {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return ""
+        calculatedMedianShort(trimmed, isFa)?.let { return it }
         val match = ALIASES.firstOrNull { alias ->
             trimmed.equals(alias.long, ignoreCase = true) || trimmed.contains(alias.long, ignoreCase = true)
         }
         if (match != null) return if (isFa) match.fa else match.en
         return trimmed
+    }
+
+    /** True when [raw] is a fixed ECB-median style label, so a caller can assert on it cheaply. */
+    fun isCalculatedMedian(raw: String): Boolean =
+        raw.trim().startsWith("Calculated Median", ignoreCase = true)
+
+    private fun calculatedMedianShort(raw: String, isFa: Boolean): String? {
+        if (!isCalculatedMedian(raw)) return null
+        return when {
+            raw.contains("Frankfurter", ignoreCase = true) -> if (isFa) "میانگین (ECB)" else "Median (ECB)"
+            raw.contains("Currency", ignoreCase = true) -> if (isFa) "میانگین (FX)" else "Median (FX)"
+            else -> if (isFa) "میانگین" else "Median"
+        }
     }
 
     /**

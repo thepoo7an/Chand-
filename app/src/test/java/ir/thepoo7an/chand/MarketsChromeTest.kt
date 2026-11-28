@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.unit.dp
@@ -322,6 +323,81 @@ class MarketsChromeTest {
         val bounds = composeRule.onNodeWithTag("provider_label_tgju").getUnclippedBoundsInRoot()
         assertTrue("in RTL the label starts on the right, was $bounds", bounds.right > 160.dp)
         assertTrue("the label must stay inside 320dp, was $bounds", bounds.right <= 320.dp)
+    }
+
+    @Test
+    fun `a card without chart data collapses instead of leaving an empty band`() {
+        render(AppLanguage.EN, listOf(sampleAsset(sparkline = emptyList())))
+
+        val bounds = composeRule.onNodeWithTag("asset_row_USD", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val height = bounds.bottom - bounds.top
+        assertTrue("a chart-less card must collapse to the compact layout, was $height", height <= 172.dp)
+        // Compact must still be complete: price and freshness stay visible, nothing is clipped away.
+        composeRule.onNodeWithTag("asset_price_USD", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("freshness_chip_USD", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `a card with a real chart keeps the taller layout`() {
+        render(
+            AppLanguage.EN,
+            listOf(sampleAsset(sparkline = listOf(290_000.0, 291_500.0, 292_890.0), changeToman = 1_890.0, changePct = 0.65))
+        )
+
+        val bounds = composeRule.onNodeWithTag("asset_row_USD", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val height = bounds.bottom - bounds.top
+        assertTrue("a chart card must keep room for the line, was $height", height >= 188.dp)
+        composeRule.onNodeWithTag("sparkline_USD", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `a dollar peg is labelled instead of a stray dollar value`() {
+        render(
+            AppLanguage.EN,
+            listOf(
+                sampleAsset(id = "USDT", price = 25_700_000.0)
+                    .copy(category = AssetCategory.CRYPTO, priceUsd = 1.0, symbol = "USDT")
+            )
+        )
+
+        composeRule.onNodeWithTag("peg_chip_USDT", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText(EnStrings.stablecoinPegLabel, substring = true, useUnmergedTree = true)
+            .assertExists()
+        assertTrue(
+            "a bare dollar value must not be rendered any more",
+            composeRule.onAllNodesWithText("\$1").fetchSemanticsNodes().isEmpty()
+        )
+    }
+
+    @Test
+    fun `the peg label is localised`() {
+        render(
+            AppLanguage.FA,
+            listOf(
+                sampleAsset(id = "USDT", price = 25_700_000.0)
+                    .copy(category = AssetCategory.CRYPTO, priceUsd = 1.0, symbol = "USDT")
+            )
+        )
+
+        composeRule.onNodeWithTag("peg_chip_USDT", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText(FaStrings.stablecoinPegLabel, substring = true, useUnmergedTree = true)
+            .assertExists()
+    }
+
+    @Test
+    fun `a non-pegged crypto keeps its dollar price and gets no peg chip`() {
+        render(
+            AppLanguage.EN,
+            listOf(
+                sampleAsset(id = "BTC", price = 6_500_000_000.0)
+                    .copy(category = AssetCategory.CRYPTO, priceUsd = 65_432.0, symbol = "BTC")
+            )
+        )
+
+        composeRule.onNodeWithTag("peg_chip_BTC", useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNodeWithText("\$65,432", substring = true, useUnmergedTree = true).assertExists()
     }
 
     companion object {

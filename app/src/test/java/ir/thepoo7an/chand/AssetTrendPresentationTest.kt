@@ -93,6 +93,16 @@ class AssetTrendPresentationTest {
     }
 
     @Test
+    fun `only a dollar-pegged stablecoin is treated as a peg`() {
+        assertTrue(asset(price = 25_700_000.0).copy(category = AssetCategory.CRYPTO, priceUsd = 1.0).isStablecoinPeg)
+        assertTrue(asset(price = 25_700_000.0).copy(category = AssetCategory.CRYPTO, priceUsd = 0.999).isStablecoinPeg)
+        assertFalse(asset(price = 25_700_000.0).copy(category = AssetCategory.CRYPTO, priceUsd = 1.05).isStablecoinPeg)
+        assertFalse(asset(price = 25_700_000.0).copy(category = AssetCategory.CRYPTO, priceUsd = null).isStablecoinPeg)
+        // A fiat rate of ~1 dollar (e.g. a pegged Gulf currency) is not a stablecoin card.
+        assertFalse(asset(price = 25_700.0).copy(category = AssetCategory.FIAT, priceUsd = 1.0).isStablecoinPeg)
+    }
+
+    @Test
     fun `an unavailable or change-less asset never shows a delta chip`() {
         val unavailable = asset(sparkline = listOf(1.0, 2.0), freshness = DataFreshness.UNAVAILABLE)
         assertNull(AssetTrendPresentation.deltaLabel(unavailable, false, hasDisplayChange = true))

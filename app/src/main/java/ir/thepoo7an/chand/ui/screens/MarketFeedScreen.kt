@@ -819,6 +819,15 @@ private fun ChandBentoCard(
     }
     // Null means "no evidence of a trend": nothing is drawn rather than a misleading "0".
     val deltaLabel = AssetTrendPresentation.deltaLabel(asset, usePersianDigits, hasDisplayChange)
+    // Without a chart there is nothing to reserve vertical space for; a fixed card height left a large
+    // empty band in the middle of every DELAYED card.
+    val hasTrendChart = AssetTrendPresentation.shouldShowSparkline(asset)
+    val cardHeight = when {
+        isOilUsd && hasTrendChart -> 206.dp
+        isOilUsd -> 182.dp
+        hasTrendChart -> 192.dp
+        else -> 168.dp
+    }
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -832,7 +841,7 @@ private fun ChandBentoCard(
         ),
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (isOilUsd) 204.dp else 192.dp)
+            .height(cardHeight)
             .clip(RoundedCornerShape(24.dp))
             .combinedClickable(
                 onClick = onClick,
@@ -844,7 +853,7 @@ private fun ChandBentoCard(
             .testTag("asset_row_${asset.id}")
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            if (AssetTrendPresentation.shouldShowSparkline(asset)) {
+            if (hasTrendChart) {
                 // Subtle atmospheric micro-sparkline along lower mid
                 MiniSparkline(
                     points = asset.sparkline,
@@ -976,6 +985,21 @@ private fun ChandBentoCard(
                                 color = marketColors.gain,
                                 maxLines = 1
                             )
+                        } else if (asset.isStablecoinPeg) {
+                            // A dollar peg is context, not news: "$1" alone was a stray, unlabeled number.
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.testTag("peg_chip_${asset.id}")
+                            ) {
+                                Text(
+                                    text = strings.stablecoinPegLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
                         } else if (asset.category == AssetCategory.CRYPTO && asset.priceUsd != null) {
                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                 Text(
@@ -1025,7 +1049,7 @@ private fun ChandBentoCard(
                         val metaLine = when {
                             !isUnavailable && asset.priceToman > 0.0 ->
                                 "${strings.oilTomanEstimatePrefix} ${NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)} ${strings.tomanUnit}"
-                            asset.sourceLabel.isNotBlank() -> asset.sourceLabel
+                            asset.sourceLabel.isNotBlank() -> ProviderLabels.short(asset.sourceLabel, isFa)
                             else -> ""
                         }
                         if (metaLine.isNotEmpty()) {
@@ -1191,7 +1215,21 @@ private fun MarketAssetListRow(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (asset.category == AssetCategory.CRYPTO && asset.priceUsd != null) {
+                    if (asset.isStablecoinPeg) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.testTag("peg_chip_${asset.id}")
+                        ) {
+                            Text(
+                                text = strings.stablecoinPegLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    } else if (asset.category == AssetCategory.CRYPTO && asset.priceUsd != null) {
                         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                             Text(
                                 text = NumberFormatters.formatUsd(asset.priceUsd, usePersianDigits),
@@ -1218,7 +1256,7 @@ private fun MarketAssetListRow(
                     val subEstimate = when {
                         asset.freshness != DataFreshness.UNAVAILABLE && asset.priceToman > 0.0 ->
                             "${strings.oilTomanEstimatePrefix} ${NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)} ${strings.tomanUnit}"
-                        asset.sourceLabel.isNotBlank() -> asset.sourceLabel
+                        asset.sourceLabel.isNotBlank() -> ProviderLabels.short(asset.sourceLabel, isFa)
                         else -> ""
                     }
                     if (subEstimate.isNotEmpty()) {

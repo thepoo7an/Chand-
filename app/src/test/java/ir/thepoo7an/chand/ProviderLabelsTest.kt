@@ -50,6 +50,18 @@ class ProviderLabelsTest {
     }
 
     @Test
+    fun `a dynamically composed calculated median is classified by rule`() {
+        // The network layer appends whatever providers answered, so the alias table alone cannot
+        // cover the string; the rule keeps the label fixed for the whole class.
+        assertEquals("Median (ECB)", ProviderLabels.short("Calculated Median (Frankfurter + Currency-API)", false))
+        assertEquals("Median (FX)", ProviderLabels.short("Calculated Median (Currency-API)", false))
+        assertEquals("Median", ProviderLabels.short("Calculated Median (Wallex + Nobitex)", false))
+        assertEquals("میانگین (ECB)", ProviderLabels.short("Calculated Median (Frankfurter + Currency-API)", true))
+        assertTrue(ProviderLabels.isCalculatedMedian("Calculated Median (Wallex)"))
+        assertTrue(!ProviderLabels.isCalculatedMedian("Wallex"))
+    }
+
+    @Test
     fun `a provider we do not know is passed through trimmed`() {
         assertEquals("Wallex", ProviderLabels.short("  Wallex  ", isFa = false))
         assertEquals("", ProviderLabels.short("   ", isFa = false))
