@@ -66,11 +66,44 @@ jobs:
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
 
       - name: Run unit & Robolectric tests
+        id: unit_tests
+        continue-on-error: true
         run: |
-          if ! ./gradlew :app:testDebugUnitTest --stacktrace; then
-            echo "::error::Unit & Robolectric tests failed (./gradlew :app:testDebugUnitTest). Expand this step log for details."
-            exit 1
-          fi
+          set -o pipefail
+          ./gradlew :app:testDebugUnitTest --stacktrace 2>&1 | tee "$RUNNER_TEMP/gradle-tests.log"
+
+      # Raw job logs are not always retrievable through the API (the step log download fails with an
+      # opaque EOF), so the failing test/compiler errors are surfaced as annotations. Same contract as
+      # the CI workflow: keep these two steps in sync.
+      - name: Summarise test failures as annotations
+        if: steps.unit_tests.outcome == 'failure'
+        run: |
+          for x in app/build/test-results/testDebugUnitTest/TEST-*.xml; do
+            [ -f "$x" ] || continue
+            awk '/<testcase / { if (match($0, /name="[^"]*"/)) n = substr($0, RSTART + 6, RLENGTH - 7) }
+                 /<failure /  { if (match($0, /message="[^"]*"/)) {
+                                  m = substr($0, RSTART + 9, RLENGTH - 10)
+                                  gsub(/[\r\n]+/, " ", m)
+                                  print n " :: " m } }' "$x"
+          done | head -8 | cut -c1-1200 | sed 's/%/%25/g' | sed 's/^/::error::/'
+          grep -E "^e: " "$RUNNER_TEMP/gradle-tests.log" | head -3 | sed 's/%/%25/g' | sed 's/^/::error::/'
+          echo "::error::Unit & Robolectric tests failed (./gradlew :app:testDebugUnitTest)."
+          exit 1
+
+      - name: Upload test reports (failure only)
+        if: steps.unit_tests.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-test-reports
+          path: |
+            app/build/reports/tests/**
+            app/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Fail when the tests failed
+        if: steps.unit_tests.outcome == 'failure'
+        run: exit 1
 
       - name: Verify live-config signature
         run: |
