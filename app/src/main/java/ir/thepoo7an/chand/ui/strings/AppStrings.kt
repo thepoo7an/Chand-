@@ -754,6 +754,9 @@ object NumberFormatters {
      */
     fun formatConverterAmount(amount: Double, usePersianDigits: Boolean): String {
         val absAmt = abs(amount)
+        // At 1M and above the converter obeys the shared price policy; below it keeps the extra
+        // precision the converter really needs (0.00001425 BTC is not a rounding error).
+        if (amount.isFinite() && absAmt >= 1_000_000.0) return formatPrice(amount, usePersianDigits)
         val formatted = when {
             !amount.isFinite() || absAmt == 0.0 -> "0"
             absAmt >= 100.0 -> integerFmt.format(amount)
@@ -765,25 +768,48 @@ object NumberFormatters {
     }
 
     /**
-     * Formats large Toman amounts (e.g., BTC in Billions / ETH in Millions) in crisp Chand?! card style
-     * while preserving exact comma-separated digits for standard currencies and 18K gold.
+     * The single number-formatting policy for **every price surface**: asset cards, list rows,
+     * sparkline/chart axis labels, widgets and the converter.
+     *
+     * - below 1M: the full integer with thousands separators (`292,890`)
+     * - 1M and above: compact with at most two decimals (`12.9M`, `255.56M`, `61.25B`)
+     *
+     * The old card formatter only compacted at 100M, which is why `$292,890` and `255.56M` could sit
+     * next to each other on the same screen.
      */
-    fun formatCardPrice(amount: Double, usePersianDigits: Boolean): String {
+    fun formatPrice(amount: Double, usePersianDigits: Boolean): String {
+        if (!amount.isFinite()) return applyDigits("0", usePersianDigits)
         val absAmt = abs(amount)
         val raw = when {
-            absAmt >= 1_000_000_000.0 -> {
-                val b = amount / 1_000_000_000.0
-                "${twoDecimalFmt.format(b)}B"
-            }
-            absAmt >= 100_000_000.0 -> {
-                val m = amount / 1_000_000.0
-                "${twoDecimalFmt.format(m)}M"
-            }
+            absAmt >= 1_000_000_000.0 -> "${twoDecimalFmt.format(amount / 1_000_000_000.0)}B"
+            absAmt >= 1_000_000.0 -> "${twoDecimalFmt.format(amount / 1_000_000.0)}M"
             absAmt >= 100.0 -> integerFmt.format(amount)
             absAmt >= 1.0 -> twoDecimalFmt.format(amount)
             else -> fourDecimalFmt.format(amount)
         }
         return applyDigits(raw, usePersianDigits)
+    }
+
+    /** Backwards-compatible alias: cards and axis labels share [formatPrice] by definition. */
+    fun formatCardPrice(amount: Double, usePersianDigits: Boolean): String =
+        formatPrice(amount, usePersianDigits)
+
+    /**
+     * Compact magnitude without digit conversion, for deltas and axis ticks: `950`, `322.3K`,
+     * `12.9M`. Shares the >=1M compaction rule with [formatPrice] so a delta and a price can never
+     * disagree about scale.
+     */
+    fun formatCompactMagnitude(amount: Double): String {
+        if (!amount.isFinite()) return "0"
+        val absAmt = abs(amount)
+        return when {
+            absAmt >= 1_000_000_000.0 -> "${twoDecimalFmt.format(amount / 1_000_000_000.0)}B"
+            absAmt >= 1_000_000.0 -> "${twoDecimalFmt.format(amount / 1_000_000.0)}M"
+            absAmt >= 1_000.0 -> "${twoDecimalFmt.format(amount / 1_000.0)}K"
+            absAmt >= 1.0 -> integerFmt.format(amount)
+            absAmt > 0.0 -> fourDecimalFmt.format(amount)
+            else -> "0"
+        }
     }
 
     /**
