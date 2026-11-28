@@ -42,13 +42,19 @@ class LiveConfigSelfHealingTest {
     private lateinit var repo: PreferencesRepository
 
     @Before
-    fun setUp() {
+    fun setUp() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val file = tmpDir.newFile("healing_${System.nanoTime()}.preferences_pb")
         repo = PreferencesRepository(
             context,
             PreferenceDataStoreFactory.create { file }
         )
+        // `ChandApplication.onCreate` hydrates the *app-level* store on a background coroutine, and
+        // that store outlives a single test (the `preferencesDataStore` delegate is a process-wide
+        // singleton). A config persisted by an earlier test class could therefore be applied here
+        // mid-test and make these assertions flap. Clear it before resetting the registry so the
+        // in-flight hydration has nothing to apply.
+        runCatching { PreferencesRepository(context).resetLiveConfig() }
         LiveConfigRegistry.resetToDefault()
     }
 
@@ -104,8 +110,11 @@ class LiveConfigSelfHealingTest {
             remoteConfig(4, expiresAtIso = "2020-01-01T00:00:00Z"),
             syncedAtMillis = 1_000L
         )
-        assertFalse(applied)
-        assertTrue(LiveConfigRegistry.currentConfig().isBuiltInDefault)
+        assertFalse("an expired config must be rejected", applied)
+        assertTrue(
+            "the active config must stay the built-in default, was v${LiveConfigRegistry.currentConfig().configVersion}",
+            LiveConfigRegistry.currentConfig().isBuiltInDefault
+        )
         assertEquals(0L, repo.getPreferences().liveConfigLastSyncMillis)
     }
 
@@ -197,7 +206,10 @@ class LiveConfigSelfHealingTest {
             assertFalse(repo.recordMarketRefreshOutcome(success = false))
         }
         assertEquals(0, repo.currentRevertedVersion())
-        assertTrue(LiveConfigRegistry.currentConfig().isBuiltInDefault)
+        assertTrue(
+            "nothing to roll back, so the built-in default must still be active (was v${LiveConfigRegistry.currentConfig().configVersion})",
+            LiveConfigRegistry.currentConfig().isBuiltInDefault
+        )
     }
 
     @Test
