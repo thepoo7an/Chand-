@@ -4,8 +4,8 @@ import ir.thepoo7an.chand.model.AppLanguage
 import ir.thepoo7an.chand.model.AppPreferences
 import ir.thepoo7an.chand.model.DataFreshness
 import ir.thepoo7an.chand.model.MarketAsset
-import ir.thepoo7an.chand.ui.components.FreshnessAgeTier
-import ir.thepoo7an.chand.ui.components.FreshnessTimeFormatter
+import ir.thepoo7an.chand.network.FreshnessAgeTier
+import ir.thepoo7an.chand.network.FreshnessTimeFormatter
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
 import ir.thepoo7an.chand.ui.strings.stringsFor
 import kotlin.math.abs
