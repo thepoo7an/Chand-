@@ -350,7 +350,7 @@ class MarketsChromeTest {
             change24hPercent = changePct,
             change24hToman = changeToman,
             sparkline = sparkline,
-            sourceLabel = "TGJU (Free)",
+            sourceLabel = "TGJU",
             updatedAtMillis = updatedAtMillis,
             freshness = freshness,
             fetchedAtMillis = updatedAtMillis,

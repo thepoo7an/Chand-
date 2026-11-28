@@ -93,6 +93,23 @@ object MarketSourcesSummary {
             )
         }
         .sortedWith(compareByDescending<ProviderSourceGroup> { it.assetCount }.thenBy { it.label })
+        // Two spellings of the same provider can slug to the same key; LazyColumn keys must be unique.
+        .let { groups ->
+            val seen = mutableSetOf<String>()
+            groups.map { group ->
+                if (seen.add(group.key)) {
+                    group
+                } else {
+                    var suffixed = "${group.key}_2"
+                    var index = 2
+                    while (!seen.add(suffixed)) {
+                        index += 1
+                        suffixed = "${group.key}_$index"
+                    }
+                    group.copy(key = suffixed)
+                }
+            }
+        }
 
     /** Number of distinct providers behind the current feed, for the compact "Sources: N" chip. */
     fun providerCount(assets: List<MarketAsset>): Int =
