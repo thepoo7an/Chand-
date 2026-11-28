@@ -158,9 +158,10 @@ class PriceTrendAndInvertedColorsTest {
         composeRule.onNodeWithTag("asset_row_USD").assertExists()
         composeRule.onNodeWithTag("asset_row_EUR").assertExists()
         composeRule.onNodeWithTag("asset_row_AED").assertExists()
-        composeRule.onNodeWithText("↑1.2K").assertExists()
-        composeRule.onNodeWithText("↓850").assertExists()
-        composeRule.onNodeWithText("• 0").assertExists()
+        composeRule.onNodeWithText("↑1.2K", substring = true).assertExists()
+        composeRule.onNodeWithText("↓850", substring = true).assertExists()
+        // No series and no change value: the chip is hidden instead of claiming "no change".
+        composeRule.onNodeWithTag("delta_chip_AED", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test

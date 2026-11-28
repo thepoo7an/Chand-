@@ -775,7 +775,7 @@ class Stage3CrudeOilTest {
         composeRule.onNodeWithTag("asset_price_BRENT").assertTextContains("$75.25", substring = true)
         composeRule.onNodeWithTag("asset_price_BRENT").assertTextContains(EnStrings.oilTomanEstimatePrefix, substring = true)
         composeRule.onNodeWithTag("asset_price_WTI").assertTextContains("$70.45", substring = true)
-        composeRule.onNodeWithTag("asset_price_WTI").assertTextContains(EnStrings.change24hUnavailable, substring = true)
+        composeRule.onNodeWithTag("delta_chip_WTI", useUnmergedTree = true).assertDoesNotExist()
 
         // Switch to Persian RTL feed and verify localized Oil category + card labels
         language = AppLanguage.FA
@@ -783,7 +783,7 @@ class Stage3CrudeOilTest {
         assertEquals(LayoutDirection.Rtl, capturedDir)
         composeRule.onNodeWithTag("category_OIL").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText(FaStrings.categoryOil).assertIsDisplayed()
-        composeRule.onNodeWithTag("asset_price_WTI").assertTextContains(FaStrings.change24hUnavailable, substring = true)
+        composeRule.onNodeWithTag("delta_chip_WTI", useUnmergedTree = true).assertDoesNotExist()
 
         // Switch back to EN and tap top header area of Brent card to open AssetDetailSheet -> tap hero price for breakdown sheet
         language = AppLanguage.EN

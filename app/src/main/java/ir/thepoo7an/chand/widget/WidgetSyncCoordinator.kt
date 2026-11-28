@@ -22,6 +22,7 @@ import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.updateAll
 import ir.thepoo7an.chand.data.PreferencesRepository
 import ir.thepoo7an.chand.data.SnapshotPolicy
+import ir.thepoo7an.chand.network.GoldUnitBenchmark
 import ir.thepoo7an.chand.model.CachedMarketSnapshot
 import ir.thepoo7an.chand.network.InFlightRequestDeduplicator
 import ir.thepoo7an.chand.network.MarketRemoteDataSource
@@ -214,7 +215,7 @@ object WidgetSyncCoordinator {
                 if (result.isLive && result.assets.isNotEmpty()) {
                     prefsRepo.saveCachedSnapshot(
                         CachedMarketSnapshot(
-                            assets = result.assets,
+                            assets = GoldUnitBenchmark.flagUnitMixups(result.assets),
                             updatedAtMillis = result.fetchedAtMillis,
                             sourceSummary = result.sourceSummary,
                             freshness = result.freshness

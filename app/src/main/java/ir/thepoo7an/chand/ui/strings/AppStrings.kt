@@ -229,8 +229,24 @@ data class ChandStrings(
     val freshnessJustNow: String,
     val freshnessMinutesAgoSuffix: String,
     val freshnessHoursAgoSuffix: String,
-    val freshnessDaysAgoSuffix: String
+    val freshnessDaysAgoSuffix: String,
+    /** Badge shown when a gold/coin quote fails the XAU-derived unit benchmark. */
+    val checkUnitLabel: String = "Check unit",
+    /** Prefix of the functional freshness line, e.g. "Last sync: 09:37". */
+    val lastSyncPrefix: String = "Last sync",
+    /** Compact provider count shown in the feed, e.g. "Sources: 4". */
+    val sourcesLabel: String = "Sources",
+    val sourcesSheetTitle: String = "Data sources",
+    val sourcesSheetSubtitle: String = "Every provider behind this feed, when it was last fetched, and what it feeds.",
+    val sourcesAssetsLabel: String = "Feeds",
+    val sourcesSheetEmpty: String = "No provider reported a price yet.",
+    /** Content description of the info button that opens the sources sheet. */
+    val sourcesInfoAction: String = "Show data sources",
+    /** Separator between asset names inside one provider row. */
+    val sourcesListSeparator: String = ", "
 ) {
+    /** "+3" suffix for a provider row that feeds more assets than the row can list. */
+    fun sourcesMoreCount(count: Int): String = "+" + count
     fun categoryLabel(category: AssetCategory): String = when (category) {
         AssetCategory.ALL -> categoryAll
         AssetCategory.PINNED -> categoryPinned
@@ -475,7 +491,16 @@ val FaStrings = ChandStrings(
     freshnessJustNow = "هم‌اکنون",
     freshnessMinutesAgoSuffix = "دقیقه پیش",
     freshnessHoursAgoSuffix = "ساعت پیش",
-    freshnessDaysAgoSuffix = "روز پیش"
+    freshnessDaysAgoSuffix = "روز پیش",
+    checkUnitLabel = "بازبینی واحد",
+    lastSyncPrefix = "آخرین همگام‌سازی",
+    sourcesLabel = "منابع",
+    sourcesSheetTitle = "منابع داده",
+    sourcesSheetSubtitle = "هر ارائه‌دهنده‌ای که این فهرست را می‌سازد، زمان آخرین دریافت و دارایی‌هایی که تغذیه می‌کند.",
+    sourcesAssetsLabel = "دارایی‌ها",
+    sourcesSheetEmpty = "هنوز هیچ منبعی قیمتی ارسال نکرده است.",
+    sourcesInfoAction = "نمایش منابع داده",
+    sourcesListSeparator = "، "
 )
 
 val EnStrings = ChandStrings(
@@ -696,7 +721,16 @@ val EnStrings = ChandStrings(
     freshnessJustNow = "just now",
     freshnessMinutesAgoSuffix = "m ago",
     freshnessHoursAgoSuffix = "h ago",
-    freshnessDaysAgoSuffix = "d ago"
+    freshnessDaysAgoSuffix = "d ago",
+    checkUnitLabel = "Check unit",
+    lastSyncPrefix = "Last sync",
+    sourcesLabel = "Sources",
+    sourcesSheetTitle = "Data sources",
+    sourcesSheetSubtitle = "Every provider behind this feed, when it was last fetched, and what it feeds.",
+    sourcesAssetsLabel = "Feeds",
+    sourcesSheetEmpty = "No provider reported a price yet.",
+    sourcesInfoAction = "Show data sources",
+    sourcesListSeparator = ", "
 )
 
 fun stringsFor(language: AppLanguage): ChandStrings =
@@ -750,6 +784,9 @@ object NumberFormatters {
      */
     fun formatConverterAmount(amount: Double, usePersianDigits: Boolean): String {
         val absAmt = abs(amount)
+        // At 1M and above the converter obeys the shared price policy; below it keeps the extra
+        // precision the converter really needs (0.00001425 BTC is not a rounding error).
+        if (amount.isFinite() && absAmt >= 1_000_000.0) return formatPrice(amount, usePersianDigits)
         val formatted = when {
             !amount.isFinite() || absAmt == 0.0 -> "0"
             absAmt >= 100.0 -> integerFmt.format(amount)
@@ -761,20 +798,21 @@ object NumberFormatters {
     }
 
     /**
-     * Formats large Toman amounts (e.g., BTC in Billions / ETH in Millions) in crisp Chand?! card style
-     * while preserving exact comma-separated digits for standard currencies and 18K gold.
+     * The single number-formatting policy for **every price surface**: asset cards, list rows,
+     * sparkline/chart axis labels, widgets and the converter.
+     *
+     * - below 1M: the full integer with thousands separators (`292,890`)
+     * - 1M and above: compact with at most two decimals (`12.9M`, `255.56M`, `61.25B`)
+     *
+     * The old card formatter only compacted at 100M, which is why `$292,890` and `255.56M` could sit
+     * next to each other on the same screen.
      */
-    fun formatCardPrice(amount: Double, usePersianDigits: Boolean): String {
+    fun formatPrice(amount: Double, usePersianDigits: Boolean): String {
+        if (!amount.isFinite()) return applyDigits("0", usePersianDigits)
         val absAmt = abs(amount)
         val raw = when {
-            absAmt >= 1_000_000_000.0 -> {
-                val b = amount / 1_000_000_000.0
-                "${twoDecimalFmt.format(b)}B"
-            }
-            absAmt >= 100_000_000.0 -> {
-                val m = amount / 1_000_000.0
-                "${twoDecimalFmt.format(m)}M"
-            }
+            absAmt >= 1_000_000_000.0 -> "${twoDecimalFmt.format(amount / 1_000_000_000.0)}B"
+            absAmt >= 1_000_000.0 -> "${twoDecimalFmt.format(amount / 1_000_000.0)}M"
             absAmt >= 100.0 -> integerFmt.format(amount)
             absAmt >= 1.0 -> twoDecimalFmt.format(amount)
             else -> fourDecimalFmt.format(amount)
@@ -782,8 +820,33 @@ object NumberFormatters {
         return applyDigits(raw, usePersianDigits)
     }
 
+    /** Backwards-compatible alias: cards and axis labels share [formatPrice] by definition. */
+    fun formatCardPrice(amount: Double, usePersianDigits: Boolean): String =
+        formatPrice(amount, usePersianDigits)
+
     /**
-     * Formats Chand?!-style Toman delta with arrow: e.g. ↑50, ↓5.35K, ↓2.2M
+     * Compact magnitude without digit conversion, for deltas and axis ticks: `950`, `322.3K`,
+     * `12.9M`. Shares the >=1M compaction rule with [formatPrice] so a delta and a price can never
+     * disagree about scale.
+     */
+    fun formatCompactMagnitude(amount: Double): String {
+        if (!amount.isFinite()) return "0"
+        val absAmt = abs(amount)
+        return when {
+            absAmt >= 1_000_000_000.0 -> "${twoDecimalFmt.format(amount / 1_000_000_000.0)}B"
+            absAmt >= 1_000_000.0 -> "${twoDecimalFmt.format(amount / 1_000_000.0)}M"
+            absAmt >= 1_000.0 -> "${twoDecimalFmt.format(amount / 1_000.0)}K"
+            absAmt >= 1.0 -> integerFmt.format(amount)
+            absAmt > 0.0 -> fourDecimalFmt.format(amount)
+            else -> "0"
+        }
+    }
+
+    /**
+     * Delta chip text: the absolute move **and** its percentage, e.g. `↑322.3K • +1.2%`.
+     *
+     * The absolute part uses the shared compact scale ([formatCompactMagnitude]) so a delta can never
+     * be invisible next to a 25.8M price, and the percentage is always signed.
      */
     fun formatDeltaWithArrow(
         changeToman: Double,
@@ -795,15 +858,24 @@ object NumberFormatters {
             changeToman < -0.001 || changePct < -0.005 -> "↓"
             else -> "• "
         }
-        val absDelta = abs(changeToman)
+        val magnitude = if (abs(changeToman) >= 1.0 && changeToman.isFinite()) {
+            formatCompactMagnitude(abs(changeToman))
+        } else {
+            ""
+        }
+        val percent = formatSignedPercent(changePct)
         val body = when {
-            absDelta >= 1_000_000.0 -> "${twoDecimalFmt.format(absDelta / 1_000_000.0)}M"
-            absDelta >= 1_000.0 -> "${twoDecimalFmt.format(absDelta / 1_000.0)}K"
-            absDelta >= 1.0 -> integerFmt.format(absDelta)
-            abs(changePct) > 0.005 -> "${String.format(Locale.US, "%.2f", abs(changePct))}%"
-            else -> "0"
+            magnitude.isNotEmpty() -> "$magnitude • $percent"
+            else -> percent
         }
         return applyDigits("$arrow$body", usePersianDigits)
+    }
+
+    /** Signed percentage with one decimal by default: `+1.2%`, `-0.7%`, `0.0%`. */
+    fun formatSignedPercent(change: Double, decimals: Int = 1): String {
+        if (!change.isFinite()) return "0.0%"
+        val sign = if (change > 0.005) "+" else if (change < -0.005) "-" else ""
+        return "$sign${String.format(Locale.US, "%.${decimals}f", abs(change))}%"
     }
 
     fun formatUsd(amount: Double, usePersianDigits: Boolean): String {
@@ -825,21 +897,20 @@ object NumberFormatters {
             (changeUsd != null && changeUsd < -0.0001) || changePct < -0.005 -> "↓"
             else -> "• "
         }
-        val body = if (changeUsd != null && changeUsd.isFinite() && abs(changeUsd) >= 0.01) {
+        // Oil is quoted in USD per barrel, so its absolute part stays in dollars — but it carries the
+        // percentage too, exactly like the Toman chips.
+        val magnitude = if (changeUsd != null && changeUsd.isFinite() && abs(changeUsd) >= 0.01) {
             "$${twoDecimalFmt.format(abs(changeUsd))}"
-        } else if (changePct.isFinite() && abs(changePct) > 0.005) {
-            "${String.format(Locale.US, "%.2f", abs(changePct))}%"
         } else {
-            "0.00%"
+            ""
         }
+        val percent = formatSignedPercent(changePct)
+        val body = if (magnitude.isNotEmpty()) "$magnitude • $percent" else percent
         return applyDigits("$arrow$body", usePersianDigits)
     }
 
-    fun formatPercent(change: Double, usePersianDigits: Boolean): String {
-        val sign = if (change > 0.005) "+" else if (change < -0.005) "-" else ""
-        val raw = "$sign${String.format(Locale.US, "%.2f", abs(change))}%"
-        return applyDigits(raw, usePersianDigits)
-    }
+    fun formatPercent(change: Double, usePersianDigits: Boolean): String =
+        applyDigits(formatSignedPercent(change, decimals = 2), usePersianDigits)
 
     fun formatTime(millis: Long, usePersianDigits: Boolean): String {
         if (millis <= 0L) return ""

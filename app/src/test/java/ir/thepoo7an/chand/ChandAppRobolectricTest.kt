@@ -121,8 +121,8 @@ class ChandAppRobolectricTest {
             includeYear = true
         )
         assertTrue("Expected Jalali year 1405 in $formatted", formatted.contains("1405"))
-        assertEquals("↑3.8K", NumberFormatters.formatDeltaWithArrow(3800.0, 1.43, false))
-        assertEquals("↓500", NumberFormatters.formatDeltaWithArrow(-500.0, -0.5, false))
+        assertEquals("↑3.8K • +1.4%", NumberFormatters.formatDeltaWithArrow(3800.0, 1.43, false))
+        assertEquals("↓500 • -0.5%", NumberFormatters.formatDeltaWithArrow(-500.0, -0.5, false))
     }
 
     @Test

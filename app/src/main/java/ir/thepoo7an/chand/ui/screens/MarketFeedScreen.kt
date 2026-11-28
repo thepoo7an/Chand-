@@ -46,6 +46,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
@@ -77,6 +78,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -85,6 +87,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ir.thepoo7an.chand.model.AppLanguage
@@ -100,9 +103,13 @@ import ir.thepoo7an.chand.network.FreshnessTimeFormatter
 import ir.thepoo7an.chand.network.MarketComparisonHelper
 import ir.thepoo7an.chand.network.TomanRateBasis
 import ir.thepoo7an.chand.ui.components.AssetBadge
+import ir.thepoo7an.chand.ui.components.AssetTrendPresentation
+import ir.thepoo7an.chand.ui.components.MarketSourcesSheet
+import ir.thepoo7an.chand.ui.components.MarketSourcesSummary
 import ir.thepoo7an.chand.ui.components.MiniSparkline
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
+import ir.thepoo7an.chand.ui.strings.ProviderLabels
 import ir.thepoo7an.chand.ui.theme.InterFontFamily
 import ir.thepoo7an.chand.ui.theme.LightBg
 import ir.thepoo7an.chand.ui.theme.LightBgBottom
@@ -138,8 +145,16 @@ fun MarketFeedScreen(
     val marketColors = LocalMarketColors.current
     val isFa = prefs.language == AppLanguage.FA
     val readyState = uiState as? MarketUiState.Ready
+    // One provider list for the whole screen: the meta row shows only its size, the info sheet shows
+    // every provider with its fetch time and the assets it feeds.
+    val allFeedAssets = readyState?.assets.orEmpty()
+    val providerGroups = remember(allFeedAssets, isFa, strings) {
+        MarketSourcesSummary.build(allFeedAssets, isFa = isFa, strings = strings)
+    }
+    val providerCount = providerGroups.size
     val isRefreshing = readyState?.isRefreshing == true
     var showSearchBar by remember { mutableStateOf(false) }
+    var showSourcesSheet by remember { mutableStateOf(false) }
 
     val infiniteTransition = rememberInfiniteTransition(label = "live_pulse")
     val pulseAlpha by infiniteTransition.animateFloat(
@@ -169,6 +184,7 @@ fun MarketFeedScreen(
                 .fillMaxSize()
                 .widthIn(max = 860.dp)
         ) {
+            val screenWidthDp = LocalConfiguration.current.screenWidthDp
             // Chand?! Hero Header
             Row(
                 modifier = Modifier
@@ -184,10 +200,20 @@ fun MarketFeedScreen(
                     Text(
                         text = strings.appTitle,
                         fontFamily = if (isFa) VazirmatnFontFamily else InterFontFamily,
-                        fontSize = if (isFa) 29.sp else 30.sp,
+                        fontSize = headerTitleFontSize(
+                            isFa = isFa,
+                            screenWidthDp = screenWidthDp
+                        ),
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.onBackground,
-                        letterSpacing = if (isFa) 0.sp else (-0.6).sp
+                        letterSpacing = if (isFa) 0.sp else (-0.6).sp,
+                        // The brand word must never break mid-word ("Nerkhna / ma"): one line, no wrap.
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .testTag("header_title")
                     )
                     val isLivePulse = readyState?.freshness == DataFreshness.LIVE
                     val isDelayedPulse = readyState?.freshness == DataFreshness.DELAYED
@@ -212,31 +238,41 @@ fun MarketFeedScreen(
                     )
                 }
 
-                // Jalali Date & Time aligned opposite title like Chand?!
-                Column(horizontalAlignment = Alignment.End) {
-                    val timestampMillis = readyState?.lastUpdatedMillis?.takeIf { it > 0L }
-                        ?: System.currentTimeMillis()
-                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        Text(
-                            text = NumberFormatters.formatJalaliDateTime(
-                                timestampMillis,
-                                prefs.usePersianDigits
-                            ),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1
-                        )
+                // Calendar date only: the clock used to repeat the status-bar time and ate the width the
+                // title needed. On narrow screens the date column is dropped entirely and the functional
+                // "Last sync" time is shown in the meta row instead.
+                if (screenWidthDp >= 360) {
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        modifier = Modifier.testTag("header_date")
+                    ) {
+                        val timestampMillis = (readyState?.lastUpdatedMillis ?: 0L).takeIf { it > 0L }
+                            ?: System.currentTimeMillis()
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Text(
+                                text = NumberFormatters.formatChartJalaliDate(
+                                    timestampSec = timestampMillis / 1000L,
+                                    usePersianDigits = prefs.usePersianDigits,
+                                    includeTime = false,
+                                    includeYear = true
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                modifier = Modifier.testTag("header_date_text")
+                            )
+                        }
+                        if (isRefreshing) {
+                            Text(
+                                text = strings.updating,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
-                    if (isRefreshing) {
-                        Text(
-                            text = strings.updating,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
 
-                Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
 
                 IconButton(
                     onClick = onAlertsClick,
@@ -475,9 +511,12 @@ fun MarketFeedScreen(
             }
 
             // Category Filter Pills
+            // The row scrolls, so the 16dp content padding is what keeps the first and the last chip
+            // away from the screen edge instead of being cut in half by it.
             LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.testTag("category_row")
             ) {
                 items(AssetCategory.entries) { category ->
                     val selected = category == selectedCategory
@@ -497,7 +536,7 @@ fun MarketFeedScreen(
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
-                            modifier = Modifier.padding(horizontal = 14.dp)
+                            modifier = Modifier.padding(horizontal = 12.dp)
                         ) {
                             Text(
                                 text = strings.categoryLabel(category),
@@ -510,22 +549,64 @@ fun MarketFeedScreen(
                 }
             }
 
-            val localizedSummary = TomanRateBasis.localizeSummary(
-                summary = readyState?.sourceSummary.orEmpty(),
+            val localizedSummary = ProviderLabels.shortSummary(
+                summary = TomanRateBasis.localizeSummary(
+                    summary = readyState?.sourceSummary.orEmpty(),
+                    isFa = isFa
+                ),
                 isFa = isFa
             )
-            if (localizedSummary.isNotBlank()) {
-                Text(
-                    text = "${strings.sourceLabel}: $localizedSummary",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            val availableSummary = localizedSummary.isNotBlank()
+            if (availableSummary || readyState?.lastUpdatedMillis != null) {
+                val syncTime = NumberFormatters.formatTime(
+                    readyState?.lastUpdatedMillis ?: 0L,
+                    prefs.usePersianDigits
+                ).ifEmpty { "—" }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 18.dp, vertical = 2.dp)
-                        .testTag("rate_basis_summary")
-                )
+                        .padding(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 2.dp)
+                ) {
+                    Text(
+                        text = "${strings.lastSyncPrefix}: $syncTime",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                        maxLines = 1,
+                        modifier = Modifier.testTag("last_sync_label")
+                    )
+                    if (availableSummary) {
+                        Text(
+                            text = " • ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            maxLines = 1,
+                            modifier = Modifier.testTag("rate_basis_summary")
+                        )
+                        Text(
+                            // At most "Sources: N"; the provider list itself lives behind the info button.
+                            text = "${strings.sourcesLabel}: $providerCount",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                            maxLines = 1,
+                            modifier = Modifier.testTag("sources_count_label")
+                        )
+                        IconButton(
+                            onClick = { showSourcesSheet = true },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .minimumInteractiveComponentSize()
+                                .testTag("sources_info_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Info,
+                                contentDescription = strings.sourcesInfoAction,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
             }
 
             // Market Feed Content
@@ -684,6 +765,17 @@ fun MarketFeedScreen(
                 }
             }
         }
+
+        // The provider list, with fetch times and the assets each provider feeds, lives behind the
+        // info button so the feed itself only ever says "Sources: N".
+        if (showSourcesSheet) {
+            MarketSourcesSheet(
+                groups = providerGroups,
+                prefs = prefs,
+                strings = strings,
+                onDismiss = { showSourcesSheet = false }
+            )
+        }
     }
 }
 
@@ -713,13 +805,20 @@ private fun ChandBentoCard(
     )
     val trendColor = marketColors.trendColor(trendDirection)
     val trendBg = marketColors.trendContainerColor(trendDirection)
+    val ageTier = FreshnessTimeFormatter.resolveAssetTier(asset, referenceNowMillis)
+    // A DELAYED/CACHED badge next to "Updated just now" reads as a contradiction, so the badge only
+    // appears once the age chip itself says the data is old.
     val statusBadgeText = when {
+        asset.unitMismatch -> strings.checkUnitLabel
         asset.disputed -> strings.disputedLabel
-        asset.freshness == DataFreshness.DELAYED -> strings.delayedBadge
-        asset.freshness == DataFreshness.CACHED -> strings.cachedBadge
         asset.freshness == DataFreshness.UNAVAILABLE -> strings.unavailableBadge
+        (asset.freshness == DataFreshness.DELAYED || asset.freshness == DataFreshness.CACHED) &&
+            ageTier != FreshnessAgeTier.NORMAL ->
+            if (asset.freshness == DataFreshness.DELAYED) strings.delayedBadge else strings.cachedBadge
         else -> null
     }
+    // Null means "no evidence of a trend": nothing is drawn rather than a misleading "0".
+    val deltaLabel = AssetTrendPresentation.deltaLabel(asset, usePersianDigits, hasDisplayChange)
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -745,7 +844,7 @@ private fun ChandBentoCard(
             .testTag("asset_row_${asset.id}")
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            if (asset.sparkline.size >= 2) {
+            if (AssetTrendPresentation.shouldShowSparkline(asset)) {
                 // Subtle atmospheric micro-sparkline along lower mid
                 MiniSparkline(
                     points = asset.sparkline,
@@ -755,6 +854,7 @@ private fun ChandBentoCard(
                         .height(38.dp)
                         .align(Alignment.Center)
                         .padding(horizontal = 14.dp)
+                        .testTag("sparkline_${asset.id}")
                 )
             }
 
@@ -833,39 +933,25 @@ private fun ChandBentoCard(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                            val deltaLabel = when {
-                                isUnavailable -> "—"
-                                isOilUsd && !asset.isChange24hAvailable -> strings.change24hUnavailable
-                                isOilUsd -> NumberFormatters.formatPercent(asset.change24hPercent, usePersianDigits)
-                                else -> NumberFormatters.formatDeltaWithArrow(
-                                    asset.change24hToman,
-                                    asset.change24hPercent,
-                                    usePersianDigits
-                                )
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(7.dp),
-                                color = if (isUnavailable || !hasDisplayChange) {
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
-                                } else {
-                                    trendBg
-                                },
-                                modifier = Modifier.weight(1f, fill = false)
-                            ) {
-                                Text(
-                                    text = deltaLabel,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (isUnavailable || !hasDisplayChange) {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    } else {
-                                        trendColor
-                                    },
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
+                        if (deltaLabel != null) {
+                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                Surface(
+                                    shape = RoundedCornerShape(7.dp),
+                                    color = trendBg,
+                                    modifier = Modifier
+                                        .weight(1f, fill = false)
+                                        .testTag("delta_chip_${asset.id}")
+                                ) {
+                                    Text(
+                                        text = deltaLabel,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = trendColor,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
                             }
                         }
 
@@ -874,8 +960,13 @@ private fun ChandBentoCard(
                             Text(
                                 text = statusBadgeText,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (asset.disputed) marketColors.gold else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
+                                color = if (asset.unitMismatch || asset.disputed) {
+                                    marketColors.gold
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                maxLines = 1,
+                                modifier = Modifier.testTag("status_badge_${asset.id}")
                             )
                         } else if (isOilUsd) {
                             Spacer(modifier = Modifier.width(4.dp))
@@ -948,7 +1039,6 @@ private fun ChandBentoCard(
                         }
                     }
 
-                    val ageTier = FreshnessTimeFormatter.resolveAssetTier(asset, referenceNowMillis)
                     val freshnessLabel = FreshnessTimeFormatter.formatRelativeAgeLabel(
                         lastFetchMillis = FreshnessTimeFormatter.lastSuccessfulFetchMillis(asset),
                         nowMillis = referenceNowMillis,
@@ -1042,6 +1132,18 @@ private fun MarketAssetListRow(
     )
     val trendColor = marketColors.trendColor(trendDirection)
     val trendBg = marketColors.trendContainerColor(trendDirection)
+    val ageTier = FreshnessTimeFormatter.resolveAssetTier(asset, referenceNowMillis)
+    val rowDeltaLabel = AssetTrendPresentation.deltaLabel(asset, usePersianDigits, hasDisplayChange)
+    val rowStatusText = when {
+        asset.unitMismatch -> strings.checkUnitLabel
+        asset.disputed -> strings.disputedLabel
+        asset.freshness == DataFreshness.UNAVAILABLE -> strings.unavailableBadge
+        (asset.freshness == DataFreshness.DELAYED || asset.freshness == DataFreshness.CACHED) &&
+            ageTier != FreshnessAgeTier.NORMAL ->
+            if (asset.freshness == DataFreshness.DELAYED) strings.delayedBadge else strings.cachedBadge
+        isOilUsd -> strings.liveBadge
+        else -> null
+    }
 
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -1071,15 +1173,6 @@ private fun MarketAssetListRow(
             )
 
             Spacer(modifier = Modifier.width(12.dp))
-
-            val rowStatusText = when {
-                asset.disputed -> strings.disputedLabel
-                asset.freshness == DataFreshness.DELAYED -> strings.delayedBadge
-                asset.freshness == DataFreshness.CACHED -> strings.cachedBadge
-                asset.freshness == DataFreshness.UNAVAILABLE -> strings.unavailableBadge
-                isOilUsd -> strings.liveBadge
-                else -> null
-            }
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -1112,11 +1205,12 @@ private fun MarketAssetListRow(
                             text = rowStatusText,
                             style = MaterialTheme.typography.labelSmall,
                             color = when {
-                                asset.disputed -> marketColors.gold
+                                asset.unitMismatch || asset.disputed -> marketColors.gold
                                 rowStatusText == strings.liveBadge -> marketColors.gain
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
-                            maxLines = 1
+                            maxLines = 1,
+                            modifier = Modifier.testTag("status_badge_${asset.id}")
                         )
                     }
                 }
@@ -1137,7 +1231,6 @@ private fun MarketAssetListRow(
                         )
                     }
                 }
-                val ageTier = FreshnessTimeFormatter.resolveAssetTier(asset, referenceNowMillis)
                 val freshnessLabel = FreshnessTimeFormatter.formatRelativeAgeLabel(
                     lastFetchMillis = FreshnessTimeFormatter.lastSuccessfulFetchMillis(asset),
                     nowMillis = referenceNowMillis,
@@ -1203,7 +1296,7 @@ private fun MarketAssetListRow(
                 }
             }
 
-            if (asset.sparkline.size >= 2) {
+            if (AssetTrendPresentation.shouldShowSparkline(asset)) {
                 MiniSparkline(
                     points = asset.sparkline,
                     lineColor = trendColor,
@@ -1211,6 +1304,7 @@ private fun MarketAssetListRow(
                         .width(44.dp)
                         .height(24.dp)
                         .padding(horizontal = 4.dp)
+                        .testTag("sparkline_${asset.id}")
                 )
 
                 Spacer(modifier = Modifier.width(6.dp))
@@ -1258,27 +1352,21 @@ private fun MarketAssetListRow(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(3.dp))
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = if (isUnavailableRow) MaterialTheme.colorScheme.surfaceVariant else trendBg
-                ) {
-                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        Text(
-                            text = when {
-                                isUnavailableRow -> strings.unavailableBadge
-                                isOilUsd && !asset.isChange24hAvailable -> strings.change24hUnavailable
-                                isOilUsd -> NumberFormatters.formatPercent(asset.change24hPercent, usePersianDigits)
-                                else -> NumberFormatters.formatDeltaWithArrow(
-                                    asset.change24hToman,
-                                    asset.change24hPercent,
-                                    usePersianDigits
-                                )
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (isUnavailableRow) MaterialTheme.colorScheme.onSurfaceVariant else trendColor,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                if (rowDeltaLabel != null) {
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = trendBg,
+                        modifier = Modifier.testTag("delta_chip_${asset.id}")
+                    ) {
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Text(
+                                text = rowDeltaLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = trendColor,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -1401,4 +1489,18 @@ private fun SupportDevelopmentCard(
             )
         }
     }
+}
+
+/**
+ * Title size ladder for the brand header.
+ *
+ * "Nerkhnama" is a single unbreakable word; at 30sp it no longer fits next to the date column and
+ * three icon buttons on a 320dp-wide screen, which is what produced the "Nerkhna / ma" break. The
+ * size steps down with the available width so the header stays on one line in both languages.
+ * Exposed (internal) so a Robolectric test can pin the ladder without measuring fonts.
+ */
+internal fun headerTitleFontSize(isFa: Boolean, screenWidthDp: Int): TextUnit = when {
+    screenWidthDp <= 340 -> if (isFa) 23.sp else 23.sp
+    screenWidthDp <= 380 -> if (isFa) 26.sp else 26.sp
+    else -> if (isFa) 29.sp else 30.sp
 }
