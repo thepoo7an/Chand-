@@ -173,6 +173,7 @@ fun MarketFeedScreen(
                 .fillMaxSize()
                 .widthIn(max = 860.dp)
         ) {
+            val screenWidthDp = LocalConfiguration.current.screenWidthDp
             // Chand?! Hero Header
             Row(
                 modifier = Modifier
@@ -190,7 +191,7 @@ fun MarketFeedScreen(
                         fontFamily = if (isFa) VazirmatnFontFamily else InterFontFamily,
                         fontSize = headerTitleFontSize(
                             isFa = isFa,
-                            screenWidthDp = LocalConfiguration.current.screenWidthDp
+                            screenWidthDp = screenWidthDp
                         ),
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.onBackground,
@@ -226,31 +227,39 @@ fun MarketFeedScreen(
                     )
                 }
 
-                // Jalali Date & Time aligned opposite title like Chand?!
-                Column(horizontalAlignment = Alignment.End) {
-                    val timestampMillis = readyState?.lastUpdatedMillis?.takeIf { it > 0L }
-                        ?: System.currentTimeMillis()
-                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        Text(
-                            text = NumberFormatters.formatJalaliDateTime(
-                                timestampMillis,
-                                prefs.usePersianDigits
-                            ),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1
-                        )
+                // Calendar date only: the clock used to repeat the status-bar time and ate the width the
+                // title needed. On narrow screens the date column is dropped entirely and the functional
+                // "Last sync" time is shown in the meta row instead.
+                if (screenWidthDp >= 360) {
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        modifier = Modifier.testTag("header_date")
+                    ) {
+                        val timestampMillis = readyState?.lastUpdatedMillis?.takeIf { it > 0L }
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Text(
+                                text = NumberFormatters.formatChartJalaliDate(
+                                    timestampSec = timestampMillis / 1000L,
+                                    usePersianDigits = prefs.usePersianDigits,
+                                    includeTime = false,
+                                    includeYear = true
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
+                        if (isRefreshing) {
+                            Text(
+                                text = strings.updating,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
-                    if (isRefreshing) {
-                        Text(
-                            text = strings.updating,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
 
-                Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
 
                 IconButton(
                     onClick = onAlertsClick,
@@ -531,18 +540,44 @@ fun MarketFeedScreen(
                 ),
                 isFa = isFa
             )
-            if (localizedSummary.isNotBlank()) {
-                Text(
-                    text = "${strings.sourceLabel}: $localizedSummary",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            val availableSummary = localizedSummary.isNotBlank()
+            if (availableSummary || readyState?.lastUpdatedMillis != null) {
+                val syncTime = NumberFormatters.formatTime(
+                    readyState?.lastUpdatedMillis ?: 0L,
+                    prefs.usePersianDigits
+                ).ifEmpty { "—" }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 18.dp, vertical = 2.dp)
-                        .testTag("rate_basis_summary")
-                )
+                        .padding(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 2.dp)
+                ) {
+                    Text(
+                        text = "${strings.lastSyncPrefix}: $syncTime",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                        maxLines = 1,
+                        modifier = Modifier.testTag("last_sync_label")
+                    )
+                    if (availableSummary) {
+                        Text(
+                            text = " • ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "${strings.sourceLabel}: $localizedSummary",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .testTag("rate_basis_summary")
+                        )
+                    }
+                }
             }
 
             // Market Feed Content

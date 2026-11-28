@@ -1,9 +1,11 @@
 package ir.thepoo7an.chand
 
 import androidx.activity.compose.setContent
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertDoesNotExist
@@ -181,6 +183,59 @@ class MarketsChromeTest {
         composeRule.onNodeWithTag("status_badge_USD").assertExists()
         composeRule.onNodeWithText(EnStrings.checkUnitLabel).assertExists()
     }
+
+    @Test
+    fun `at 320dp the header has no date column and no clock at all`() {
+        render(AppLanguage.EN)
+
+        // Narrow screens give the whole width to the title; the date column is dropped instead of
+        // squeezing the brand word or duplicating the status-bar clock.
+        composeRule.onNodeWithTag("header_date").assertDoesNotExist()
+    }
+
+    @Test
+    @Config(qualifiers = "w420dp-h800dp")
+    fun `on a wide header the date is a calendar date, never a clock`() {
+        render(AppLanguage.EN)
+
+        val date = composeRule.onNodeWithTag("header_date").fetchSemanticsNode()
+        val texts = date.config.toString()
+        assertTrue("the header date must exist on a wide screen, was $texts", texts.isNotBlank())
+        val clockLike = listOf("AM", "PM", ":").any { texts.contains(it) }
+        assertTrue("the header must not repeat a wall clock, was $texts", !clockLike)
+    }
+
+    @Test
+    fun `the meta row shows a functional last-sync time instead of a clock`() {
+        render(AppLanguage.EN)
+
+        val text = textOf("last_sync_label")
+        assertTrue("the sync line must be present, was '$text'", text.startsWith("${EnStrings.lastSyncPrefix}: "))
+        assertTrue(
+            "the sync line must carry the real fetch time, was '$text'",
+            Regex("[0-9]{1,2}:[0-9]{2}").containsMatchIn(text)
+        )
+    }
+
+    @Test
+    fun `the sync line is localised in Persian and stays on one line at 320dp`() {
+        render(AppLanguage.FA)
+
+        val text = textOf("last_sync_label")
+        assertTrue("the sync line must be Persian, was '$text'", text.startsWith("${FaStrings.lastSyncPrefix}: "))
+        assertTrue(
+            "time must use Persian digits, was '$text'",
+            Regex("[۰-۹]{1,2}:[۰-۹]{2}").containsMatchIn(text)
+        )
+        val bounds = composeRule.onNodeWithTag("last_sync_label").getUnclippedBoundsInRoot()
+        assertTrue("the sync line must fit 320dp, was $bounds", bounds.right <= 320.dp)
+    }
+
+    private fun textOf(tag: String): String =
+        composeRule.onNodeWithTag(tag).fetchSemanticsNode().config
+            .getOrNull(SemanticsProperties.Text)
+            ?.joinToString(" ") { it.text }
+            .orEmpty()
 
     companion object {
         /** 2025-11-27T12:00:00Z — the fixed "now" every card is measured against. */
