@@ -102,6 +102,7 @@ import ir.thepoo7an.chand.network.FreshnessTimeFormatter
 import ir.thepoo7an.chand.network.MarketComparisonHelper
 import ir.thepoo7an.chand.network.TomanRateBasis
 import ir.thepoo7an.chand.ui.components.AssetBadge
+import ir.thepoo7an.chand.ui.components.AssetTrendPresentation
 import ir.thepoo7an.chand.ui.components.MiniSparkline
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
@@ -725,13 +726,19 @@ private fun ChandBentoCard(
     )
     val trendColor = marketColors.trendColor(trendDirection)
     val trendBg = marketColors.trendContainerColor(trendDirection)
+    val ageTier = FreshnessTimeFormatter.resolveAssetTier(asset, referenceNowMillis)
+    // A DELAYED/CACHED badge next to "Updated just now" reads as a contradiction, so the badge only
+    // appears once the age chip itself says the data is old.
     val statusBadgeText = when {
         asset.disputed -> strings.disputedLabel
-        asset.freshness == DataFreshness.DELAYED -> strings.delayedBadge
-        asset.freshness == DataFreshness.CACHED -> strings.cachedBadge
         asset.freshness == DataFreshness.UNAVAILABLE -> strings.unavailableBadge
+        (asset.freshness == DataFreshness.DELAYED || asset.freshness == DataFreshness.CACHED) &&
+            ageTier != FreshnessAgeTier.NORMAL ->
+            if (asset.freshness == DataFreshness.DELAYED) strings.delayedBadge else strings.cachedBadge
         else -> null
     }
+    // Null means "no evidence of a trend": nothing is drawn rather than a misleading "0".
+    val deltaLabel = AssetTrendPresentation.deltaLabel(asset, usePersianDigits, hasDisplayChange)
 
     Surface(
         shape = RoundedCornerShape(24.dp),
@@ -757,7 +764,7 @@ private fun ChandBentoCard(
             .testTag("asset_row_${asset.id}")
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            if (asset.sparkline.size >= 2) {
+            if (AssetTrendPresentation.shouldShowSparkline(asset)) {
                 // Subtle atmospheric micro-sparkline along lower mid
                 MiniSparkline(
                     points = asset.sparkline,
@@ -767,6 +774,7 @@ private fun ChandBentoCard(
                         .height(38.dp)
                         .align(Alignment.Center)
                         .padding(horizontal = 14.dp)
+                        .testTag("sparkline_${asset.id}")
                 )
             }
 
@@ -845,39 +853,25 @@ private fun ChandBentoCard(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                            val deltaLabel = when {
-                                isUnavailable -> "—"
-                                isOilUsd && !asset.isChange24hAvailable -> strings.change24hUnavailable
-                                isOilUsd -> NumberFormatters.formatPercent(asset.change24hPercent, usePersianDigits)
-                                else -> NumberFormatters.formatDeltaWithArrow(
-                                    asset.change24hToman,
-                                    asset.change24hPercent,
-                                    usePersianDigits
-                                )
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(7.dp),
-                                color = if (isUnavailable || !hasDisplayChange) {
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
-                                } else {
-                                    trendBg
-                                },
-                                modifier = Modifier.weight(1f, fill = false)
-                            ) {
-                                Text(
-                                    text = deltaLabel,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (isUnavailable || !hasDisplayChange) {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    } else {
-                                        trendColor
-                                    },
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
+                        if (deltaLabel != null) {
+                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                Surface(
+                                    shape = RoundedCornerShape(7.dp),
+                                    color = trendBg,
+                                    modifier = Modifier
+                                        .weight(1f, fill = false)
+                                        .testTag("delta_chip_${asset.id}")
+                                ) {
+                                    Text(
+                                        text = deltaLabel,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = trendColor,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
                             }
                         }
 
@@ -886,8 +880,13 @@ private fun ChandBentoCard(
                             Text(
                                 text = statusBadgeText,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (asset.disputed) marketColors.gold else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
+                                color = if (asset.disputed) {
+                                    marketColors.gold
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                maxLines = 1,
+                                modifier = Modifier.testTag("status_badge_${asset.id}")
                             )
                         } else if (isOilUsd) {
                             Spacer(modifier = Modifier.width(4.dp))
@@ -960,7 +959,6 @@ private fun ChandBentoCard(
                         }
                     }
 
-                    val ageTier = FreshnessTimeFormatter.resolveAssetTier(asset, referenceNowMillis)
                     val freshnessLabel = FreshnessTimeFormatter.formatRelativeAgeLabel(
                         lastFetchMillis = FreshnessTimeFormatter.lastSuccessfulFetchMillis(asset),
                         nowMillis = referenceNowMillis,
@@ -1054,6 +1052,17 @@ private fun MarketAssetListRow(
     )
     val trendColor = marketColors.trendColor(trendDirection)
     val trendBg = marketColors.trendContainerColor(trendDirection)
+    val ageTier = FreshnessTimeFormatter.resolveAssetTier(asset, referenceNowMillis)
+    val rowDeltaLabel = AssetTrendPresentation.deltaLabel(asset, usePersianDigits, hasDisplayChange)
+    val rowStatusText = when {
+        asset.disputed -> strings.disputedLabel
+        asset.freshness == DataFreshness.UNAVAILABLE -> strings.unavailableBadge
+        (asset.freshness == DataFreshness.DELAYED || asset.freshness == DataFreshness.CACHED) &&
+            ageTier != FreshnessAgeTier.NORMAL ->
+            if (asset.freshness == DataFreshness.DELAYED) strings.delayedBadge else strings.cachedBadge
+        isOilUsd -> strings.liveBadge
+        else -> null
+    }
 
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -1083,15 +1092,6 @@ private fun MarketAssetListRow(
             )
 
             Spacer(modifier = Modifier.width(12.dp))
-
-            val rowStatusText = when {
-                asset.disputed -> strings.disputedLabel
-                asset.freshness == DataFreshness.DELAYED -> strings.delayedBadge
-                asset.freshness == DataFreshness.CACHED -> strings.cachedBadge
-                asset.freshness == DataFreshness.UNAVAILABLE -> strings.unavailableBadge
-                isOilUsd -> strings.liveBadge
-                else -> null
-            }
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -1128,7 +1128,8 @@ private fun MarketAssetListRow(
                                 rowStatusText == strings.liveBadge -> marketColors.gain
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             },
-                            maxLines = 1
+                            maxLines = 1,
+                            modifier = Modifier.testTag("status_badge_${asset.id}")
                         )
                     }
                 }
@@ -1149,7 +1150,6 @@ private fun MarketAssetListRow(
                         )
                     }
                 }
-                val ageTier = FreshnessTimeFormatter.resolveAssetTier(asset, referenceNowMillis)
                 val freshnessLabel = FreshnessTimeFormatter.formatRelativeAgeLabel(
                     lastFetchMillis = FreshnessTimeFormatter.lastSuccessfulFetchMillis(asset),
                     nowMillis = referenceNowMillis,
@@ -1215,7 +1215,7 @@ private fun MarketAssetListRow(
                 }
             }
 
-            if (asset.sparkline.size >= 2) {
+            if (AssetTrendPresentation.shouldShowSparkline(asset)) {
                 MiniSparkline(
                     points = asset.sparkline,
                     lineColor = trendColor,
@@ -1223,6 +1223,7 @@ private fun MarketAssetListRow(
                         .width(44.dp)
                         .height(24.dp)
                         .padding(horizontal = 4.dp)
+                        .testTag("sparkline_${asset.id}")
                 )
 
                 Spacer(modifier = Modifier.width(6.dp))
@@ -1270,27 +1271,21 @@ private fun MarketAssetListRow(
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(3.dp))
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = if (isUnavailableRow) MaterialTheme.colorScheme.surfaceVariant else trendBg
-                ) {
-                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        Text(
-                            text = when {
-                                isUnavailableRow -> strings.unavailableBadge
-                                isOilUsd && !asset.isChange24hAvailable -> strings.change24hUnavailable
-                                isOilUsd -> NumberFormatters.formatPercent(asset.change24hPercent, usePersianDigits)
-                                else -> NumberFormatters.formatDeltaWithArrow(
-                                    asset.change24hToman,
-                                    asset.change24hPercent,
-                                    usePersianDigits
-                                )
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (isUnavailableRow) MaterialTheme.colorScheme.onSurfaceVariant else trendColor,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                if (rowDeltaLabel != null) {
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = trendBg,
+                        modifier = Modifier.testTag("delta_chip_${asset.id}")
+                    ) {
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Text(
+                                text = rowDeltaLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = trendColor,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 }
             }

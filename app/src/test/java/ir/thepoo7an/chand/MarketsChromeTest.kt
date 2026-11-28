@@ -5,6 +5,8 @@ import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ir.thepoo7an.chand.model.AppLanguage
@@ -123,6 +125,52 @@ class MarketsChromeTest {
         assertEquals(29.sp, headerTitleFontSize(isFa = true, screenWidthDp = 412))
         assertEquals("Nerkhnama", EnStrings.appTitle)
         assertEquals("نرخ‌نما", FaStrings.appTitle)
+    }
+
+    @Test
+    fun `a delayed asset shows no sparkline, no delta chip and no delayed badge`() {
+        render(
+            AppLanguage.EN,
+            listOf(
+                sampleAsset(
+                    sparkline = listOf(290_000.0, 291_000.0, 292_890.0),
+                    freshness = DataFreshness.DELAYED,
+                    changeToman = 0.0,
+                    changePct = 0.0
+                )
+            )
+        )
+
+        // "Updated just now" next to DELAYED and a "• 0" chip is the contradiction from the review.
+        composeRule.onNodeWithTag("freshness_chip_USD").assertExists()
+        composeRule.onNodeWithTag("sparkline_USD").assertDoesNotExist()
+        composeRule.onNodeWithTag("delta_chip_USD").assertDoesNotExist()
+        composeRule.onNodeWithTag("status_badge_USD").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a live asset with real change keeps its sparkline and delta chip`() {
+        render(
+            AppLanguage.EN,
+            listOf(
+                sampleAsset(
+                    sparkline = listOf(290_000.0, 291_000.0, 292_890.0),
+                    changeToman = 1_890.0,
+                    changePct = 0.65
+                )
+            )
+        )
+
+        composeRule.onNodeWithTag("sparkline_USD").assertExists()
+        composeRule.onNodeWithTag("delta_chip_USD").assertExists()
+    }
+
+    @Test
+    fun `an asset without any history renders no trend affordance at all`() {
+        render(AppLanguage.FA, listOf(sampleAsset(sparkline = emptyList())))
+
+        composeRule.onNodeWithTag("sparkline_USD").assertDoesNotExist()
+        composeRule.onNodeWithTag("delta_chip_USD").assertDoesNotExist()
     }
 
     companion object {
