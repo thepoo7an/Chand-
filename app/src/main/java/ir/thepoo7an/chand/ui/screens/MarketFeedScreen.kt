@@ -106,6 +106,7 @@ import ir.thepoo7an.chand.ui.components.AssetTrendPresentation
 import ir.thepoo7an.chand.ui.components.MiniSparkline
 import ir.thepoo7an.chand.ui.strings.ChandStrings
 import ir.thepoo7an.chand.ui.strings.NumberFormatters
+import ir.thepoo7an.chand.ui.strings.ProviderLabels
 import ir.thepoo7an.chand.ui.theme.InterFontFamily
 import ir.thepoo7an.chand.ui.theme.LightBg
 import ir.thepoo7an.chand.ui.theme.LightBgBottom
@@ -523,8 +524,11 @@ fun MarketFeedScreen(
                 }
             }
 
-            val localizedSummary = TomanRateBasis.localizeSummary(
-                summary = readyState?.sourceSummary.orEmpty(),
+            val localizedSummary = ProviderLabels.shortSummary(
+                summary = TomanRateBasis.localizeSummary(
+                    summary = readyState?.sourceSummary.orEmpty(),
+                    isFa = isFa
+                ),
                 isFa = isFa
             )
             if (localizedSummary.isNotBlank()) {
