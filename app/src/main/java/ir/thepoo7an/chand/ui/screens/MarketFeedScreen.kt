@@ -985,6 +985,21 @@ private fun ChandBentoCard(
                                 color = marketColors.gain,
                                 maxLines = 1
                             )
+                        } else if (asset.isStablecoinPeg) {
+                            // A dollar peg is context, not news: "$1" alone was a stray, unlabeled number.
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.testTag("peg_chip_${asset.id}")
+                            ) {
+                                Text(
+                                    text = strings.stablecoinPegLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
                         } else if (asset.category == AssetCategory.CRYPTO && asset.priceUsd != null) {
                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                 Text(
@@ -1200,7 +1215,21 @@ private fun MarketAssetListRow(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (asset.category == AssetCategory.CRYPTO && asset.priceUsd != null) {
+                    if (asset.isStablecoinPeg) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.testTag("peg_chip_${asset.id}")
+                        ) {
+                            Text(
+                                text = strings.stablecoinPegLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                    } else if (asset.category == AssetCategory.CRYPTO && asset.priceUsd != null) {
                         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                             Text(
                                 text = NumberFormatters.formatUsd(asset.priceUsd, usePersianDigits),

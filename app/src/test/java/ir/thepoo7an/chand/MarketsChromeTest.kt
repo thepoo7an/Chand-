@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.unit.dp
@@ -349,6 +350,50 @@ class MarketsChromeTest {
         val height = bounds.bottom - bounds.top
         assertTrue("a chart card must keep room for the line, was $height", height >= 188.dp)
         composeRule.onNodeWithTag("sparkline_USD", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `a dollar peg is labelled instead of a stray dollar value`() {
+        render(
+            AppLanguage.EN,
+            listOf(
+                sampleAsset(id = "USDT", price = 25_700_000.0)
+                    .copy(category = AssetCategory.CRYPTO, priceUsd = 1.0, symbol = "USDT")
+            )
+        )
+
+        assertEquals("\$1 = peg", textOf("peg_chip_USDT"))
+        assertTrue(
+            "a bare dollar value must not be rendered any more",
+            composeRule.onAllNodesWithText("\$1", substring = true).fetchSemanticsNodes().isEmpty()
+        )
+    }
+
+    @Test
+    fun `the peg label is localised`() {
+        render(
+            AppLanguage.FA,
+            listOf(
+                sampleAsset(id = "USDT", price = 25_700_000.0)
+                    .copy(category = AssetCategory.CRYPTO, priceUsd = 1.0, symbol = "USDT")
+            )
+        )
+
+        assertEquals(FaStrings.stablecoinPegLabel, textOf("peg_chip_USDT"))
+    }
+
+    @Test
+    fun `a non-pegged crypto keeps its dollar price and gets no peg chip`() {
+        render(
+            AppLanguage.EN,
+            listOf(
+                sampleAsset(id = "BTC", price = 6_500_000_000.0)
+                    .copy(category = AssetCategory.CRYPTO, priceUsd = 65_432.0, symbol = "BTC")
+            )
+        )
+
+        composeRule.onNodeWithTag("peg_chip_BTC", useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNodeWithText("\$65,432", substring = true, useUnmergedTree = true).assertExists()
     }
 
     companion object {

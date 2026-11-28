@@ -137,6 +137,13 @@ data class MarketAsset(
 
     val hasUsablePrimaryPrice: Boolean
         get() = primaryPriceValue.isFinite() && primaryPriceValue > 0.0
+
+    /**
+     * A dollar-pegged stablecoin quotes at ~$1. Printing that as a bare `$1` above the Toman price is
+     * noise with no context, so the card labels the peg instead.
+     */
+    val isStablecoinPeg: Boolean
+        get() = category == AssetCategory.CRYPTO && (priceUsd ?: 0.0) in 0.97..1.03
 }
 
 @Serializable

@@ -243,7 +243,9 @@ data class ChandStrings(
     /** Content description of the info button that opens the sources sheet. */
     val sourcesInfoAction: String = "Show data sources",
     /** Separator between asset names inside one provider row. */
-    val sourcesListSeparator: String = ", "
+    val sourcesListSeparator: String = ", ",
+    /** Label for a dollar-pegged stablecoin, e.g. "$1 = peg" / «ثابت $۱». */
+    val stablecoinPegLabel: String = "\$1 = peg"
 ) {
     /** "+3" suffix for a provider row that feeds more assets than the row can list. */
     fun sourcesMoreCount(count: Int): String = "+" + count
@@ -500,7 +502,8 @@ val FaStrings = ChandStrings(
     sourcesAssetsLabel = "دارایی‌ها",
     sourcesSheetEmpty = "هنوز هیچ منبعی قیمتی ارسال نکرده است.",
     sourcesInfoAction = "نمایش منابع داده",
-    sourcesListSeparator = "، "
+    sourcesListSeparator = "، ",
+    stablecoinPegLabel = "ثابت \$۱"
 )
 
 val EnStrings = ChandStrings(
@@ -730,7 +733,8 @@ val EnStrings = ChandStrings(
     sourcesAssetsLabel = "Feeds",
     sourcesSheetEmpty = "No provider reported a price yet.",
     sourcesInfoAction = "Show data sources",
-    sourcesListSeparator = ", "
+    sourcesListSeparator = ", ",
+    stablecoinPegLabel = "\$1 = peg"
 )
 
 fun stringsFor(language: AppLanguage): ChandStrings =
