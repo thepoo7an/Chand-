@@ -17,7 +17,8 @@ import kotlin.math.abs
  * plus a `• 0.0%` delta plus a trailing `↓`, all of which overflowed a 1x1 cell. The rules here are
  * deliberately stricter than the app's, because the surface is tiny:
  *
- * - The name row shows the **symbol** (`USD`), never the full name (`US Dollar`).
+ * - The name row shows the **symbol** (`USD`), never the full name (`US Dollar`), and the line under
+ *   it never repeats the symbol: it is the fetch time (`10:59`) or the stale marker, nothing more.
  * - A stale quote gets a single `stale` marker instead of a timestamp and a status word; the clock is
  *   only shown when it belongs to a real, fresh fetch.
  * - There is no delta at all unless a real, non-zero change exists — no `0.0%`, no arrow, no `—`.
@@ -29,7 +30,10 @@ import kotlin.math.abs
 data class WidgetHeroModel(
     /** Short label for row 1: the symbol, at most [MAX_ASSET_LABEL_LENGTH] characters. */
     val assetLabel: String,
-    /** `USD · 10:59` when fresh, `USD · stale` when not: at most [MAX_STATUS_LINE_LENGTH] characters. */
+    /**
+     * Second text line: the fetch time (`10:59`) when the quote is fresh, the stale marker otherwise.
+     * Never a status word, a symbol or an arrow, and at most [MAX_STATUS_LINE_LENGTH] characters.
+     */
     val statusLine: String,
     /** Price for row 2, or an em dash when the quote is unusable. */
     val priceText: String,
@@ -44,7 +48,7 @@ data class WidgetHeroModel(
 
     companion object {
         const val MAX_ASSET_LABEL_LENGTH = 6
-        const val MAX_STATUS_LINE_LENGTH = 14
+        const val MAX_STATUS_LINE_LENGTH = 8
         const val MAX_DELTA_LENGTH = 7
         const val MAX_PRICE_LENGTH = 12
     }
@@ -86,9 +90,9 @@ object WidgetHeroPresentation {
             ?: updatedAtMillis
         val clock = NumberFormatters.formatTime(fetchMillis, prefs.usePersianDigits)
         val statusLine = when {
-            isStale -> "$assetLabel · ${strings.staleShortLabel}"
-            clock.isBlank() -> assetLabel
-            else -> "$assetLabel · $clock"
+            isStale -> strings.staleShortLabel
+            clock.isBlank() -> strings.staleShortLabel
+            else -> clock
         }
 
         val priceText = when {

@@ -70,7 +70,8 @@ class WidgetHeroPresentationTest {
         val hero = model(usd(freshness = DataFreshness.DELAYED, fetchedAtMillis = NOW - 7L * 24 * 3_600_000L))
 
         assertTrue(hero.isStale)
-        assertEquals("USD · stale", hero.statusLine)
+        assertEquals("stale", hero.statusLine)
+        assertFalse("the status line never repeats the symbol", hero.statusLine.contains("USD"))
         assertNull("a stale quote must not print a delta, let alone 0.0%", hero.deltaText)
         assertFalse("no arrow, no status word and no clock may survive", hero.statusLine.contains("DELAYED"))
         assertFalse(hero.statusLine.contains(":"))
@@ -83,7 +84,7 @@ class WidgetHeroPresentationTest {
 
         assertTrue(hero.isStale)
         assertNull(hero.deltaText)
-        assertEquals("USD · stale", hero.statusLine)
+        assertEquals("stale", hero.statusLine)
     }
 
     @Test
@@ -93,7 +94,7 @@ class WidgetHeroPresentationTest {
         assertTrue(hero.isStale)
         assertEquals("—", hero.priceText)
         assertNull(hero.deltaText)
-        assertTrue(hero.statusLine.endsWith("stale"))
+        assertEquals("stale", hero.statusLine)
     }
 
     @Test
@@ -101,7 +102,10 @@ class WidgetHeroPresentationTest {
         val hero = model(usd(changeToman = 0.0, changePct = 0.0))
 
         assertFalse(hero.isStale)
-        assertTrue("the clock belongs to a real fetch: ${hero.statusLine}", hero.statusLine.contains(":"))
+        assertTrue(
+            "the second line is the fetch time alone, was '${hero.statusLine}'",
+            Regex("^[0-9]{1,2}:[0-9]{2}$").matches(hero.statusLine)
+        )
         assertNull("a zero change must not be printed as 0.0%", hero.deltaText)
     }
 
@@ -177,7 +181,10 @@ class WidgetHeroPresentationTest {
     @Test
     fun `the Persian widget uses Persian digits and its own stale marker`() {
         val hero = model(usd(), prefs = PREFS_FA)
-        assertTrue("digits must be Persian: ${hero.statusLine}", hero.statusLine.any { it in '\u06F0'..'\u06F9' })
+        assertTrue(
+            "the time must use Persian digits: ${hero.statusLine}",
+            Regex("^[\u06F0-\u06F9]{1,2}:[\u06F0-\u06F9]{2}$").matches(hero.statusLine)
+        )
 
         val stale = model(usd(freshness = DataFreshness.DELAYED), prefs = PREFS_FA)
         assertTrue("the stale marker must be Persian: ${stale.statusLine}", stale.statusLine.contains("کهنه"))

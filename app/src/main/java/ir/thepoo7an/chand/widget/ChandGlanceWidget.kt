@@ -8,6 +8,9 @@ import android.widget.RemoteViews
 import androidx.annotation.DrawableRes
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.datastore.core.DataStore
@@ -64,6 +67,61 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import java.io.File
+
+/**
+ * Type scale and paddings of the single-asset hero widget.
+ *
+ * A 1x1 launcher cell is ~70dp while the default placement is 110dp, so the hero picks a scale from
+ * the size the launcher actually gave it instead of guessing. `WidgetHeroFitTest` measures every string
+ * against these numbers at fontScale 1.0 and 1.3, which is what "no clipping" means here.
+ */
+internal object WidgetHeroMetrics {
+
+    data class HeroScale(
+        val cellSize: Dp,
+        val padding: Dp,
+        val badgeSize: Dp,
+        val badgeGlyphSize: TextUnit,
+        val badgeTextGap: Dp,
+        val nameSize: TextUnit,
+        val statusSize: TextUnit,
+        val priceSize: TextUnit,
+        val deltaSize: TextUnit,
+        val priceDeltaGap: Dp
+    )
+
+    /** A 1x1 cell: two rows, symbol-only, nothing repeated. */
+    val COMPACT = HeroScale(
+        cellSize = 70.dp,
+        padding = 8.dp,
+        badgeSize = 20.dp,
+        badgeGlyphSize = 10.sp,
+        badgeTextGap = 4.dp,
+        nameSize = 9.sp,
+        statusSize = 7.sp,
+        priceSize = 13.sp,
+        deltaSize = 8.sp,
+        priceDeltaGap = 3.dp
+    )
+
+    /** The 2x2 default placement: same two rows, comfortable sizes. */
+    val REGULAR = HeroScale(
+        cellSize = 110.dp,
+        padding = 12.dp,
+        badgeSize = 30.dp,
+        badgeGlyphSize = 15.sp,
+        badgeTextGap = 6.dp,
+        nameSize = 12.sp,
+        statusSize = 9.sp,
+        priceSize = 18.sp,
+        deltaSize = 11.sp,
+        priceDeltaGap = 4.dp
+    )
+
+    /** Below ~80dp the launcher has given us a single cell, so the compact scale is the safe one. */
+    fun forSize(size: DpSize): HeroScale =
+        if (size.width <= 80.dp || size.height <= 80.dp) COMPACT else REGULAR
+}
 
 private object WidgetColors {
     val solidDivider = ColorProvider(day = Color(0xFFECE8E0), night = Color(0xFF1D232E))
@@ -339,6 +397,10 @@ abstract class BaseChandGlanceWidget : GlanceAppWidget(
  * mirroring the top-left Chand?! iOS widget.
  */
 class ChandSingleAssetWidget : BaseChandGlanceWidget() {
+    // The default SizeMode.Single leaves LocalSize unspecified, which is why the hero could not tell a
+    // 1x1 cell from the 2x2 placement and kept overshooting the smaller one.
+    override val sizeMode: SizeMode = SizeMode.Exact
+
     @Composable
     override fun Content(prefs: AppPreferences, snapshot: CachedMarketSnapshot?) {
         val assets = snapshot?.assets.orEmpty()
@@ -370,7 +432,9 @@ private fun SingleHeroWidgetContent(
         modifier = GlanceModifier
             .fillMaxSize()
             .background(ImageProvider(widgetBackgroundDrawableRes(prefs)))
-            .padding(14.dp)
+            // 1x1 cells are ~70dp; 10dp of breathing room plus the compact scale below is what keeps two
+            // rows inside it at fontScale 1.3.
+            .padding(scale.padding)
             .clickable(actionStartActivity<MainActivity>())
     ) {
         if (asset == null) {
@@ -426,24 +490,24 @@ private fun SingleHeroWidgetContent(
                 ) {
                     Box(
                         modifier = GlanceModifier
-                            .size(36.dp)
+                            .size(scale.badgeSize)
                             .background(badgeBg)
-                            .cornerRadius(18.dp)
+                            .cornerRadius(scale.badgeSize / 2)
                             .clickable(actionRunCallback<RefreshAllWidgetsAction>()),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = asset.badgeText,
-                            style = TextStyle(fontSize = 18.sp)
+                            style = TextStyle(fontSize = scale.badgeGlyphSize)
                         )
                     }
-                    Spacer(modifier = GlanceModifier.width(6.dp))
+                    Spacer(modifier = GlanceModifier.width(scale.badgeTextGap))
                     Column(horizontalAlignment = Alignment.Start) {
                         Text(
                             text = hero.assetLabel,
                             style = TextStyle(
                                 color = WidgetColors.title,
-                                fontSize = 12.sp,
+                                fontSize = scale.nameSize,
                                 fontWeight = FontWeight.Medium
                             ),
                             maxLines = 1
@@ -455,7 +519,7 @@ private fun SingleHeroWidgetContent(
                                     if (hero.isStale) DataFreshness.CACHED else DataFreshness.LIVE,
                                     FreshnessAgeTier.NORMAL
                                 ),
-                                fontSize = 9.sp,
+                                fontSize = scale.statusSize,
                                 fontWeight = FontWeight.Medium
                             ),
                             maxLines = 1
@@ -474,18 +538,18 @@ private fun SingleHeroWidgetContent(
                         text = hero.priceText,
                         style = TextStyle(
                             color = WidgetColors.title,
-                            fontSize = 24.sp,
+                            fontSize = scale.priceSize,
                             fontWeight = FontWeight.Bold
                         ),
                         maxLines = 1
                     )
                     if (hero.deltaText != null) {
-                        Spacer(modifier = GlanceModifier.width(4.dp))
+                        Spacer(modifier = GlanceModifier.width(scale.priceDeltaGap))
                         Text(
                             text = hero.deltaText,
                             style = TextStyle(
                                 color = WidgetColors.trendColor(trendDirection),
-                                fontSize = 12.sp,
+                                fontSize = scale.deltaSize,
                                 fontWeight = FontWeight.Medium
                             ),
                             maxLines = 1
