@@ -1025,7 +1025,7 @@ private fun ChandBentoCard(
                         val metaLine = when {
                             !isUnavailable && asset.priceToman > 0.0 ->
                                 "${strings.oilTomanEstimatePrefix} ${NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)} ${strings.tomanUnit}"
-                            asset.sourceLabel.isNotBlank() -> asset.sourceLabel
+                            asset.sourceLabel.isNotBlank() -> ProviderLabels.short(asset.sourceLabel, isFa)
                             else -> ""
                         }
                         if (metaLine.isNotEmpty()) {
@@ -1218,7 +1218,7 @@ private fun MarketAssetListRow(
                     val subEstimate = when {
                         asset.freshness != DataFreshness.UNAVAILABLE && asset.priceToman > 0.0 ->
                             "${strings.oilTomanEstimatePrefix} ${NumberFormatters.formatCardPrice(asset.priceToman, usePersianDigits)} ${strings.tomanUnit}"
-                        asset.sourceLabel.isNotBlank() -> asset.sourceLabel
+                        asset.sourceLabel.isNotBlank() -> ProviderLabels.short(asset.sourceLabel, isFa)
                         else -> ""
                     }
                     if (subEstimate.isNotEmpty()) {
