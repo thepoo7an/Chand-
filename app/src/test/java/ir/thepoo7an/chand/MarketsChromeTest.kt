@@ -232,10 +232,9 @@ class MarketsChromeTest {
     }
 
     private fun textOf(tag: String): String =
-        composeRule.onNodeWithTag(tag).fetchSemanticsNode().config
-            .getOrNull(SemanticsProperties.Text)
-            ?.joinToString(" ") { it.text }
-            .orEmpty()
+        composeRule.onNodeWithTag(tag).fetchSemanticsNode()
+            .config[SemanticsProperties.Text]
+            .joinToString(" ") { it.text }
 
     @Test
     fun `the first category chip is fully inside the screen at rest`() {
