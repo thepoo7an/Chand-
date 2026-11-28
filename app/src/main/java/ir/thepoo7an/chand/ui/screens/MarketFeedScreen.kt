@@ -77,6 +77,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -85,6 +86,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ir.thepoo7an.chand.model.AppLanguage
@@ -184,10 +186,20 @@ fun MarketFeedScreen(
                     Text(
                         text = strings.appTitle,
                         fontFamily = if (isFa) VazirmatnFontFamily else InterFontFamily,
-                        fontSize = if (isFa) 29.sp else 30.sp,
+                        fontSize = headerTitleFontSize(
+                            isFa = isFa,
+                            screenWidthDp = LocalConfiguration.current.screenWidthDp
+                        ),
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.onBackground,
-                        letterSpacing = if (isFa) 0.sp else (-0.6).sp
+                        letterSpacing = if (isFa) 0.sp else (-0.6).sp,
+                        // The brand word must never break mid-word ("Nerkhna / ma"): one line, no wrap.
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .testTag("header_title")
                     )
                     val isLivePulse = readyState?.freshness == DataFreshness.LIVE
                     val isDelayedPulse = readyState?.freshness == DataFreshness.DELAYED
@@ -1401,4 +1413,18 @@ private fun SupportDevelopmentCard(
             )
         }
     }
+}
+
+/**
+ * Title size ladder for the brand header.
+ *
+ * "Nerkhnama" is a single unbreakable word; at 30sp it no longer fits next to the date column and
+ * three icon buttons on a 320dp-wide screen, which is what produced the "Nerkhna / ma" break. The
+ * size steps down with the available width so the header stays on one line in both languages.
+ * Exposed (internal) so a Robolectric test can pin the ladder without measuring fonts.
+ */
+internal fun headerTitleFontSize(isFa: Boolean, screenWidthDp: Int): TextUnit = when {
+    screenWidthDp <= 340 -> if (isFa) 23.sp else 23.sp
+    screenWidthDp <= 380 -> if (isFa) 26.sp else 26.sp
+    else -> if (isFa) 29.sp else 30.sp
 }
