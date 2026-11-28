@@ -22,7 +22,7 @@ class DeltaChipFormattingTest {
             NumberFormatters.formatDeltaWithArrow(-1_890.0, -0.65, usePersianDigits = false)
         )
         assertEquals(
-            "↑1,890 • +0.6%",
+            "↑1.89K • +0.6%",
             NumberFormatters.formatDeltaWithArrow(1_890.0, 0.64, usePersianDigits = false)
         )
     }

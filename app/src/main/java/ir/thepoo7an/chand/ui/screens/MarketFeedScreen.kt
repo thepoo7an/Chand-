@@ -246,7 +246,8 @@ fun MarketFeedScreen(
                         horizontalAlignment = Alignment.End,
                         modifier = Modifier.testTag("header_date")
                     ) {
-                        val timestampMillis = readyState?.lastUpdatedMillis?.takeIf { it > 0L }
+                        val timestampMillis = (readyState?.lastUpdatedMillis ?: 0L).takeIf { it > 0L }
+                            ?: System.currentTimeMillis()
                         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                             Text(
                                 text = NumberFormatters.formatChartJalaliDate(
@@ -257,7 +258,8 @@ fun MarketFeedScreen(
                                 ),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
+                                maxLines = 1,
+                                modifier = Modifier.testTag("header_date_text")
                             )
                         }
                         if (isRefreshing) {

@@ -52,7 +52,7 @@ class MarketSourcesSummaryTest {
         val tgju = groups.first { it.label == "TGJU" }
         assertEquals(2, tgju.assetCount)
         assertEquals("the newest fetch wins", 2_000L, tgju.lastFetchedMillis)
-        assertEquals("US Dollar, Euro", tgju.assetsLabel)
+        assertEquals("Euro, US Dollar", tgju.assetsLabel)
     }
 
     @Test

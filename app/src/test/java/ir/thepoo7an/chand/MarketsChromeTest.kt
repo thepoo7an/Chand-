@@ -200,11 +200,12 @@ class MarketsChromeTest {
     fun `on a wide header the date is a calendar date, never a clock`() {
         render(AppLanguage.EN)
 
-        val date = composeRule.onNodeWithTag("header_date").fetchSemanticsNode()
-        val texts = date.config.toString()
-        assertTrue("the header date must exist on a wide screen, was $texts", texts.isNotBlank())
-        val clockLike = listOf("AM", "PM", ":").any { texts.contains(it) }
-        assertTrue("the header must not repeat a wall clock, was $texts", !clockLike)
+        val date = textOf("header_date_text")
+        assertTrue("the header date must exist on a wide screen, was '$date'", date.isNotBlank())
+        assertTrue(
+            "the header must show a calendar date, not a clock, was '$date'",
+            !date.contains(":") && !date.contains("AM") && !date.contains("PM")
+        )
     }
 
     @Test
