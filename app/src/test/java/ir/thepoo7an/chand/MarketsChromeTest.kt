@@ -6,6 +6,7 @@ import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertDoesNotExist
@@ -236,6 +237,30 @@ class MarketsChromeTest {
             .getOrNull(SemanticsProperties.Text)
             ?.joinToString(" ") { it.text }
             .orEmpty()
+
+    @Test
+    fun `the first category chip is fully inside the screen at rest`() {
+        render(AppLanguage.EN)
+
+        val first = composeRule.onNodeWithTag("category_ALL").getUnclippedBoundsInRoot()
+        assertTrue("the first chip must not be clipped, was $first", first.left >= 0.dp)
+        assertTrue("the first chip must keep its 16dp inset, was $first", first.left >= 15.dp)
+    }
+
+    @Test
+    fun `the last category chip is fully visible once the row is scrolled to the end`() {
+        render(AppLanguage.FA)
+
+        val last = AssetCategory.entries.last()
+        composeRule.onNodeWithTag("category_row").performScrollToIndex(AssetCategory.entries.lastIndex)
+        composeRule.waitForIdle()
+
+        val bounds = composeRule.onNodeWithTag("category_${last.name}").getUnclippedBoundsInRoot()
+        assertTrue(
+            "the last chip must keep its 16dp inset instead of being clipped, was $bounds",
+            bounds.right <= 306.dp
+        )
+    }
 
     companion object {
         /** 2025-11-27T12:00:00Z — the fixed "now" every card is measured against. */

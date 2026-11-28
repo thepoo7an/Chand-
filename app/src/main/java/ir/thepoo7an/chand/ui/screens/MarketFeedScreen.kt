@@ -498,9 +498,12 @@ fun MarketFeedScreen(
             }
 
             // Category Filter Pills
+            // The row scrolls, so the 16dp content padding is what keeps the first and the last chip
+            // away from the screen edge instead of being cut in half by it.
             LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.testTag("category_row")
             ) {
                 items(AssetCategory.entries) { category ->
                     val selected = category == selectedCategory
@@ -520,7 +523,7 @@ fun MarketFeedScreen(
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
-                            modifier = Modifier.padding(horizontal = 14.dp)
+                            modifier = Modifier.padding(horizontal = 12.dp)
                         ) {
                             Text(
                                 text = strings.categoryLabel(category),
